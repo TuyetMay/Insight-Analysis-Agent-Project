@@ -1,0 +1,21 @@
+# 📊 Superstore Business Intelligence Dashboard
+
+A professional business intelligence dashboard built with Streamlit and PostgreSQL for analyzing Superstore sales data.
+
+## 🚀 Features
+
+- **Real-time Data Analysis**: Connect directly to PostgreSQL database
+- **Interactive Filters**: Filter by date range, region, segment, and category
+- **Key Performance Indicators**: Track sales, profit, orders, and profit margin
+- **Visual Analytics**: 
+  - Sales and profit trends over time
+  - Regional and segment analysis
+  - Discount impact analysis
+  - Top performing subcategories
+  - Category distribution
+
+## 📋 Prerequisites
+
+- Python 3.8+
+- PostgreSQL database with Superstore data
+- pip package manager
