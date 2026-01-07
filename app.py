@@ -358,102 +358,126 @@ st.markdown("---")
 st.markdown("Dashboard designed with Streamlit • Interactive visualizations powered by Plotly • AI Assistant • Dataset: Superstore")
 
 # ========== FLOATING CHAT SIDEBAR ==========
-# Chat toggle in sidebar
+# Sidebar - Chat Toggle Button (luôn hiển thị)
 st.sidebar.markdown("---")
 st.sidebar.markdown("## 💬 AI Assistant")
 
-if st.sidebar.button("🤖 Open Chat Assistant", use_container_width=True):
-    st.session_state.show_chat = True
-    st.rerun()
-
-if st.session_state.show_chat:
-    # Create chat interface in sidebar
-    with st.sidebar:
-        st.markdown("### Chat with Dashboard AI")
+if not st.session_state.show_chat:
+    # Nút mở chat
+    if st.sidebar.button("🤖 Open Chat Assistant", use_container_width=True, key="open_chat_main"):
+        st.session_state.show_chat = True
+        st.rerun()
+else:
+    # Nút đóng chat
+    if st.sidebar.button("✕ Close Chat", use_container_width=True, key="close_chat_main"):
+        st.session_state.show_chat = False
+        st.rerun()
+    
+    st.sidebar.markdown("---")
+    
+    # Chat Interface
+    st.sidebar.markdown("### 💬 Dashboard AI Assistant")
+    
+    # Insights section
+    with st.sidebar.expander("💡 Automatic Insights", expanded=False):
+        insights = chatbot.get_insights()
+        st.info(insights)
+    
+    # Quick actions
+    st.sidebar.markdown("**⚡ Quick Questions:**")
+    col1, col2 = st.sidebar.columns(2)
+    
+    with col1:
+        if st.button("📊 Summary", use_container_width=True, key="quick_summary"):
+            user_msg = "Show me a summary"
+            st.session_state.chat_history.append({"role": "user", "content": user_msg})
+            response = chatbot.get_response(user_msg)
+            st.session_state.chat_history.append({"role": "assistant", "content": response})
+            st.rerun()
         
-        # Insights section
-        with st.expander("💡 Automatic Insights", expanded=False):
-            insights = chatbot.get_insights()
-            st.info(insights)
+        if st.button("📈 Trend", use_container_width=True, key="quick_trend"):
+            user_msg = "What's the sales trend?"
+            st.session_state.chat_history.append({"role": "user", "content": user_msg})
+            response = chatbot.get_response(user_msg)
+            st.session_state.chat_history.append({"role": "assistant", "content": response})
+            st.rerun()
+    
+    with col2:
+        if st.button("🏆 Top 5", use_container_width=True, key="quick_top5"):
+            user_msg = "Show top 5 products"
+            st.session_state.chat_history.append({"role": "user", "content": user_msg})
+            response = chatbot.get_response(user_msg)
+            st.session_state.chat_history.append({"role": "assistant", "content": response})
+            st.rerun()
         
-        # Quick actions
-        st.markdown("**⚡ Quick Questions:**")
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            if st.button("📊 Summary", use_container_width=True):
-                st.session_state.chat_history.append({"role": "user", "content": "Show me a summary"})
-                response = chatbot.get_response("show me a summary")
-                st.session_state.chat_history.append({"role": "assistant", "content": response})
-                st.rerun()
-            
-            if st.button("📈 Trend", use_container_width=True):
-                st.session_state.chat_history.append({"role": "user", "content": "What's the sales trend?"})
-                response = chatbot.get_response("what's the sales trend")
-                st.session_state.chat_history.append({"role": "assistant", "content": response})
-                st.rerun()
-        
-        with col2:
-            if st.button("🏆 Top 5", use_container_width=True):
-                st.session_state.chat_history.append({"role": "user", "content": "Show top 5 products"})
-                response = chatbot.get_response("show top 5 products")
-                st.session_state.chat_history.append({"role": "assistant", "content": response})
-                st.rerun()
-            
-            if st.button("🌍 Compare", use_container_width=True):
-                st.session_state.chat_history.append({"role": "user", "content": "Compare regions"})
-                response = chatbot.get_response("compare regions")
-                st.session_state.chat_history.append({"role": "assistant", "content": response})
-                st.rerun()
-        
-        st.markdown("---")
-        
-        # Chat messages container with fixed height
-        chat_container = st.container()
-        
-        with chat_container:
-            if st.session_state.chat_history:
-                # Display messages in reverse order (newest at bottom)
-                for message in st.session_state.chat_history:
-                    if message["role"] == "user":
-                        st.markdown(f"**You:** {message['content']}")
-                    else:
-                        st.markdown(f"**AI:** {message['content']}")
-                    st.markdown("")
+        if st.button("🌍 Compare", use_container_width=True, key="quick_compare"):
+            user_msg = "Compare regions"
+            st.session_state.chat_history.append({"role": "user", "content": user_msg})
+            response = chatbot.get_response(user_msg)
+            st.session_state.chat_history.append({"role": "assistant", "content": response})
+            st.rerun()
+    
+    st.sidebar.markdown("---")
+    
+    # Chat History Display
+    if st.session_state.chat_history:
+        st.sidebar.markdown("**💬 Conversation:**")
+        for message in st.session_state.chat_history[-10:]:  # Show last 10 messages
+            if message["role"] == "user":
+                st.sidebar.markdown(f"""
+                <div style='background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
+                color: white; padding: 10px; border-radius: 10px; margin: 8px 0; 
+                border-bottom-right-radius: 3px;'>
+                <strong>You:</strong><br>{message['content']}
+                </div>
+                """, unsafe_allow_html=True)
             else:
-                st.info("👋 Hi! I'm your dashboard assistant. Ask me anything!")
-                st.markdown("""
-                **Try asking:**
-                - What are the total sales?
-                - Compare regions
-                - Show top 5 products
-                - What's the trend?
-                """)
-        
-        # Chat input at bottom
-        st.markdown("---")
-        user_input = st.text_input("Type your question...", key="chat_input", label_visibility="collapsed")
+                st.sidebar.markdown(f"""
+                <div style='background-color: white; border: 1px solid #e0e0e0; 
+                color: #333; padding: 10px; border-radius: 10px; margin: 8px 0;
+                border-bottom-left-radius: 3px;'>
+                <strong>🤖 AI:</strong><br>{message['content']}
+                </div>
+                """, unsafe_allow_html=True)
+    else:
+        st.sidebar.info("👋 Hi! I'm your dashboard assistant. Ask me anything!")
+        st.sidebar.markdown("""
+        **Try asking:**
+        - What are the total sales?
+        - Compare regions
+        - Show top 5 products
+        - What's the trend?
+        """)
+    
+    st.sidebar.markdown("---")
+    
+    # Chat Input Form
+    with st.sidebar.form(key="chat_input_form", clear_on_submit=True):
+        user_input = st.text_input("Type your question...", key="user_message_input", 
+                                   placeholder="Ask me about the dashboard data...")
         
         col1, col2 = st.columns([3, 1])
         with col1:
-            send_btn = st.button("Send 📤", use_container_width=True)
+            submit_button = st.form_submit_button("Send 📤", use_container_width=True)
         with col2:
-            if st.button("Clear 🗑️", use_container_width=True):
-                st.session_state.chat_history = []
-                st.rerun()
+            clear_button = st.form_submit_button("Clear", use_container_width=True)
         
-        if send_btn and user_input:
+        if submit_button and user_input.strip():
             # Add user message
-            st.session_state.chat_history.append({"role": "user", "content": user_input})
+            st.session_state.chat_history.append({"role": "user", "content": user_input.strip()})
             
             # Get bot response
-            bot_response = chatbot.get_response(user_input)
-            st.session_state.chat_history.append({"role": "assistant", "content": bot_response})
+            try:
+                bot_response = chatbot.get_response(user_input.strip())
+                st.session_state.chat_history.append({"role": "assistant", "content": bot_response})
+            except Exception as e:
+                st.session_state.chat_history.append({
+                    "role": "assistant", 
+                    "content": f"Sorry, I encountered an error: {str(e)}"
+                })
             
             st.rerun()
         
-        # Close button
-        st.markdown("---")
-        if st.button("✕ Close Chat", use_container_width=True):
-            st.session_state.show_chat = False
+        if clear_button:
+            st.session_state.chat_history = []
             st.rerun()
