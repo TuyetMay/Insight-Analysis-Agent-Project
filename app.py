@@ -367,23 +367,85 @@ with st.expander("📊 View Filtered Data Summary"):
 st.markdown("---")
 st.markdown("Dashboard designed with Streamlit • Interactive visualizations powered by Plotly • AI Assistant • Dataset: Superstore")
 
-# ======= CHAT PANEL (RIGHT SIDE) =======
-st.markdown("""
+# ======= FLOATING CHAT BUTTON + SIDEBAR CHAT =======
+
+# Floating button (bottom-right) that toggles the sidebar chat.
+# Uses query params to trigger a Streamlit rerun reliably (no extra components needed).
+
+# --- Query param toggle handler ---
+_qp = st.experimental_get_query_params()
+if "chat" in _qp:
+    st.session_state.show_chat = _qp.get("chat", ["0"])[0] == "1"
+    # clear param after consuming to keep URL clean
+    st.experimental_set_query_params()
+
+# --- Floating button UI (fixed bottom-right) ---
+chat_open_js = "true" if st.session_state.get("show_chat", False) else "false"
+
+_chat_float_html = """
 <style>
-.chat-panel {
-    border: 1px solid rgba(0,0,0,0.08);
-    border-radius: 18px;
-    padding: 14px 14px 10px 14px;
-    background: rgba(255,255,255,0.9);
-    box-shadow: 0 10px 30px rgba(0,0,0,0.08);
+/* Floating chat button */
+#floating-chat-btn {
+    position: fixed;
+    right: 22px;
+    bottom: 22px;
+    z-index: 9999;
 }
-.chat-title {
+#floating-chat-btn button{
+    width: 56px;
+    height: 56px;
+    border-radius: 999px;
+    border: none;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: #fff;
+    font-size: 22px;
+    cursor: pointer;
+    box-shadow: 0 10px 25px rgba(0,0,0,0.25);
+}
+#floating-chat-btn button:hover{
+    transform: scale(1.06);
+}
+</style>
+
+<div id="floating-chat-btn">
+  <button id="floatingChatBtn" title="Chat">💬</button>
+</div>
+
+<script>
+(function(){
+  const btn = document.getElementById("floatingChatBtn");
+  if(!btn) return;
+
+  btn.addEventListener("click", function(){
+    const url = new URL(window.location.href);
+    // toggle
+    const isOpen = url.searchParams.get("chat") === "1" || window.__CHAT_OPEN__ === true;
+    url.searchParams.set("chat", isOpen ? "0" : "1");
+    window.location.href = url.toString();
+  });
+
+  // Try to keep track of current open state (best-effort)
+  window.__CHAT_OPEN__ = __CHAT_OPEN_STATE__;
+})();
+</script>
+"""
+_chat_float_html = _chat_float_html.replace("__CHAT_OPEN_STATE__", chat_open_js)
+st.markdown(_chat_float_html, unsafe_allow_html=True)
+
+
+# --- Sidebar chatbox (below filters) ---
+st.sidebar.markdown("---")
+
+# Chat CSS (ChatGPT-like bubbles)
+st.sidebar.markdown("""
+<style>
+.sidebar-chat-title {
     font-weight: 700;
-    font-size: 16px;
+    font-size: 14px;
     display:flex;
     align-items:center;
     gap:8px;
-    margin-bottom: 8px;
+    margin: 6px 0 10px 0;
 }
 .chat-bubble-user {
     background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
@@ -392,7 +454,7 @@ st.markdown("""
     border-radius: 14px;
     border-bottom-right-radius: 6px;
     margin: 8px 0;
-    font-size: 14px;
+    font-size: 13px;
     line-height: 1.35;
     white-space: pre-wrap;
 }
@@ -404,7 +466,7 @@ st.markdown("""
     border-radius: 14px;
     border-bottom-left-radius: 6px;
     margin: 8px 0;
-    font-size: 14px;
+    font-size: 13px;
     line-height: 1.35;
     white-space: pre-wrap;
 }
@@ -416,81 +478,70 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-if "chat_open" not in st.session_state:
-    st.session_state.chat_open = False
-if "chat_history" not in st.session_state:
-    st.session_state.chat_history = []
+# Title row + Close
+title_cols = st.sidebar.columns([5, 1])
+with title_cols[0]:
+    st.markdown("<div class='sidebar-chat-title'>🤖 Dashboard Assistant</div>", unsafe_allow_html=True)
+with title_cols[1]:
+    if st.button("✕", key="close_sidebar_chat", use_container_width=True):
+        st.session_state.show_chat = False
+        st.rerun()
 
-st.markdown("---")
-left, right = st.columns([3, 1.2], gap="large")
+if st.session_state.show_chat:
+    # Optional: auto insights under filters
+    with st.sidebar.expander("💡 Automatic Insights", expanded=False):
+        if "auto_insights" not in st.session_state:
+            st.session_state.auto_insights = None
 
-with right:
-    # Open / Close
-    if not st.session_state.chat_open:
-        if st.button("💬 Open Chat", use_container_width=True):
-            st.session_state.chat_open = True
-            st.rerun()
-    else:
-        topbar_l, topbar_r = st.columns([3, 1])
-        with topbar_l:
-            st.markdown(" ")
-        with topbar_r:
-            if st.button("✕", use_container_width=True):
-                st.session_state.chat_open = False
+        if st.session_state.auto_insights is None:
+            if st.button("Generate insights", use_container_width=True, key="gen_insights_sidebar"):
+                st.session_state.auto_insights = chatbot.get_insights()
                 st.rerun()
-
-        st.markdown("<div class='chat-panel'>", unsafe_allow_html=True)
-        st.markdown("<div class='chat-title'>🤖 Dashboard Assistant</div>", unsafe_allow_html=True)
-
-        # Auto insights (optional)
-        with st.sidebar.expander("💡 Automatic Insights", expanded=False):
-            if "auto_insights" not in st.session_state:
-                st.session_state.auto_insights = None
-
-            if st.session_state.auto_insights is None:
-                if st.button("Generate insights", use_container_width=True, key="gen_insights"):
-                    st.session_state.auto_insights = chatbot.get_insights()
-                    st.rerun()
-            else:
-                st.info(st.session_state.auto_insights)
-
-            if st.button("Clear insights", use_container_width=True, key="clear_insights"):
-                st.session_state.auto_insights = None
-                st.rerun()
-
-
-        # Show chat history
-        if st.session_state.chat_history:
-            for m in st.session_state.chat_history[-12:]:
-                if m["role"] == "user":
-                    st.markdown(f"<div class='chat-bubble-user'>{m['content']}</div>", unsafe_allow_html=True)
-                else:
-                    st.markdown(f"<div class='chat-bubble-bot'>{m['content']}</div>", unsafe_allow_html=True)
         else:
-            st.markdown(
-                "<div class='chat-bubble-bot'>Chào bạn! Hãy hỏi về KPI / trend / region / segment / discount / top sub-category nhé.</div>",
-                unsafe_allow_html=True
-            )
+            st.info(st.session_state.auto_insights)
 
-        st.markdown("<div class='chat-hint'>Ví dụ: “Region nào profit cao nhất?”, “Sales trend tháng gần đây?”, “Discount ảnh hưởng profit ra sao?”</div>", unsafe_allow_html=True)
+        if st.button("Clear insights", use_container_width=True, key="clear_insights_sidebar"):
+            st.session_state.auto_insights = None
+            st.rerun()
 
-        # Input
-        with st.form("chat_form", clear_on_submit=True):
-            user_msg = st.text_input("Nhập câu hỏi…", placeholder="Hỏi như nhắn tin 🙂")
-            c1, c2 = st.columns([3, 1])
-            with c1:
-                send = st.form_submit_button("Send")
-            with c2:
-                clear = st.form_submit_button("Clear")
+    # Show chat history
+    if st.session_state.chat_history:
+        for m in st.session_state.chat_history[-12:]:
+            if m["role"] == "user":
+                st.sidebar.markdown(f"<div class='chat-bubble-user'>{m['content']}</div>", unsafe_allow_html=True)
+            else:
+                st.sidebar.markdown(f"<div class='chat-bubble-bot'>{m['content']}</div>", unsafe_allow_html=True)
+    else:
+        st.sidebar.markdown(
+            "<div class='chat-bubble-bot'>Chào bạn! Hãy hỏi về KPI / trend / region / segment / discount / top sub-category nhé.</div>",
+            unsafe_allow_html=True
+        )
 
-            if send and user_msg.strip():
-                st.session_state.chat_history.append({"role": "user", "content": user_msg.strip()})
-                ans = chatbot.get_response(user_msg.strip())
-                st.session_state.chat_history.append({"role": "assistant", "content": ans})
-                st.rerun()
+    st.sidebar.markdown(
+        "<div class='chat-hint'>Ví dụ: “Region nào profit cao nhất?”, “Sales trend tháng gần đây?”, “Discount ảnh hưởng profit ra sao?”</div>",
+        unsafe_allow_html=True
+    )
 
-            if clear:
-                st.session_state.chat_history = []
-                st.rerun()
+    # Input (in sidebar)
+    with st.sidebar.form("chat_form_sidebar", clear_on_submit=True):
+        user_msg = st.text_input("Nhập câu hỏi…", placeholder="Hỏi như nhắn tin 🙂", key="chat_input_sidebar")
+        c1, c2 = st.columns([3, 1])
+        with c1:
+            send = st.form_submit_button("Send")
+        with c2:
+            clear = st.form_submit_button("Clear")
 
-        st.markdown("</div>", unsafe_allow_html=True)
+        if send and user_msg.strip():
+            st.session_state.chat_history.append({"role": "user", "content": user_msg.strip()})
+            ans = chatbot.get_response(user_msg.strip())
+            st.session_state.chat_history.append({"role": "assistant", "content": ans})
+            st.rerun()
+
+        if clear:
+            st.session_state.chat_history = []
+            st.rerun()
+else:
+    st.sidebar.caption("Nhấn 💬 ở góc phải dưới để mở chat.")
+    if st.sidebar.button("💬 Open chat", use_container_width=True, key="open_sidebar_chat"):
+        st.session_state.show_chat = True
+        st.rerun()
