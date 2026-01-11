@@ -38,8 +38,8 @@ class DashboardChatbot:
     # ---- Allowlists (keep small & explicit) ----
     _METRICS = {"sales", "profit", "orders", "profit_margin"}
     _TIME_GRAINS = {"none", "week", "month", "quarter", "year"}
-    _DIM_FILTERS = {"region", "segment", "category", "sub_category"}
-    _DIM_BREAKDOWNS = {'region', 'segment', 'category', 'sub_category'}
+    _DIM_FILTERS = {"region", "segment", "category"}
+    _DIM_BREAKDOWNS = {'region', 'segment', 'category'}
 
     def __init__(self, df: pd.DataFrame, kpis: Dict[str, Any], filters: Dict[str, Any]):
         self.df = df.copy()
@@ -142,7 +142,7 @@ Allowed time_grain:
 - "none", "week", "month", "quarter", "year"
 
 Allowed breakdown_by (optional):
-- null, "region", "segment", "category", "sub_category"
+- null, "region", "segment", "category"
 
 Allowed compare_period (only for intent="kpi_compare"):
 - null, "prev_period", "mom", "yoy"
@@ -271,17 +271,6 @@ Now plan this user question:
     # ---------------------------
     # Validation + SQL generation
     # ---------------------------
-    def _parse_date(self, s: str) -> Optional[date]:
-        """Parse YYYY-MM-DD safely. Returns None if invalid."""
-        if not isinstance(s, str):
-            return None
-        s = s.strip()
-        try:
-            return datetime.strptime(s, "%Y-%m-%d").date()
-        except Exception:
-            return None
-
-
     def _validate_plan(self, plan: Dict[str, Any]) -> Dict[str, Any]:
         """Validate and normalize the plan; raise if invalid."""
         if not isinstance(plan, dict):
@@ -324,12 +313,6 @@ Now plan this user question:
         time_grain = plan.get("time_grain")
         if time_grain not in self._TIME_GRAINS:
             raise ValueError(f"Invalid time_grain: {time_grain}")
-
-        # Normalization: if the model sets intent="kpi_value" but also requests a time bucket,
-        # it's effectively a time series. Convert it to intent="kpi_trend" so formatting works.
-        if intent == "kpi_value" and time_grain != "none":
-            intent = "kpi_trend"
-            plan["intent"] = intent
 
         breakdown_by = plan.get("breakdown_by")
         if breakdown_by is not None:

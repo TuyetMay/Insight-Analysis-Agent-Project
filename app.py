@@ -1,6 +1,5 @@
 import streamlit as st
 from config import Config
-from src.data_loader import load_superstore_data, filter_data, calculate_kpis
 from src.visualizations import (
     create_sales_profit_trend,
     create_orders_by_month,
@@ -11,6 +10,8 @@ from src.visualizations import (
     create_top_subcategories,
     create_category_distribution
 )
+import pandas as pd
+from src.data_loader import load_filtered_data, get_filter_options, calculate_kpis
 from src.chatbot import DashboardChatbot
 
 # Page configuration
@@ -207,67 +208,76 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-# Load data
-with st.spinner('Loading data from database...'):
-    df = load_superstore_data()
+# ... (Phần imports và st.set_page_config giữ nguyên) ...
 
-if df.empty:
-    st.error("No data available. Please check your database connection.")
+# --- BẮT ĐẦU ĐOẠN CODE MỚI ---
+
+# 1. Tải danh sách bộ lọc trước (Siêu nhanh, không tải bảng dữ liệu lớn)
+with st.spinner('⏳ Loading filter options...'):
+    filter_options = get_filter_options()
+
+if not filter_options:
+    st.error("❌ Không thể kết nối Database. Vui lòng kiểm tra lại cấu hình.")
     st.stop()
 
-# Sidebar filters
+# 2. Hiển thị Sidebar Filters
 st.sidebar.markdown("## 🔍 Filters")
 
-# Date range filter
-min_date = df['order_date'].min().date()
-max_date = df['order_date'].max().date()
+# Date Filter
+min_date = pd.to_datetime(filter_options['min_date']).date()
+max_date = pd.to_datetime(filter_options['max_date']).date()
 
 date_range = st.sidebar.date_input(
-    "Order Date Range",
+    "Date Range",
     value=(min_date, max_date),
     min_value=min_date,
     max_value=max_date
 )
 
-# Region filter
-all_regions = sorted(df['region'].unique().tolist())
+# Categorical Filters (Dùng dữ liệu từ filter_options)
 selected_regions = st.sidebar.multiselect(
     "Region",
-    options=all_regions,
-    default=all_regions
+    options=filter_options['region'],
+    default=filter_options['region']
 )
 
-# Segment filter
-all_segments = sorted(df['segment'].unique().tolist())
 selected_segments = st.sidebar.multiselect(
     "Segment",
-    options=all_segments,
-    default=all_segments
+    options=filter_options['segment'],
+    default=filter_options['segment']
 )
 
-# Category filter
-all_categories = sorted(df['category'].unique().tolist())
 selected_categories = st.sidebar.multiselect(
     "Category",
-    options=all_categories,
-    default=all_categories
+    options=filter_options['category'],
+    default=filter_options['category']
 )
 
-# Apply filters
+# 3. Tổng hợp bộ lọc
 filters = {
-    'date_range': date_range if len(date_range) == 2 else (min_date, max_date),
+    'date_range': date_range if isinstance(date_range, tuple) and len(date_range) == 2 else (min_date, max_date),
     'region': selected_regions,
     'segment': selected_segments,
     'category': selected_categories
 }
 
-filtered_df = filter_data(df, filters)
+# 4. Tải dữ liệu đã lọc (SQL tối ưu)
+with st.spinner('🚀 Fetching analyzed data...'):
+    filtered_df = load_filtered_data(filters)
 
-# Calculate KPIs
+if filtered_df.empty:
+    st.warning("⚠️ Không có dữ liệu nào khớp với bộ lọc đã chọn.")
+    st.stop()
+
+# Tính toán KPIs trên tập dữ liệu đã lọc
 kpis = calculate_kpis(filtered_df)
 
-# Initialize chatbot with current context
+# Khởi tạo chatbot với dữ liệu mới
 chatbot = DashboardChatbot(filtered_df, kpis, filters)
+
+# --- KẾT THÚC ĐOẠN CODE MỚI ---
+
+# ... (Phần Main title và hiển thị biểu đồ giữ nguyên) ...
 
 # Main title
 st.markdown(f"<div class='main-header'>{Config.APP_ICON} {Config.APP_TITLE}</div>", unsafe_allow_html=True)
