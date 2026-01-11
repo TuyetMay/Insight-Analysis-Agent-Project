@@ -18,6 +18,10 @@ class Config:
     # App settings
     APP_TITLE = os.getenv('APP_TITLE', 'Superstore Business Intelligence Dashboard')
     APP_ICON = os.getenv('APP_ICON', '📊')
+
+    GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "")
+    GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
+
     
     @classmethod
     def get_db_connection_string(cls):

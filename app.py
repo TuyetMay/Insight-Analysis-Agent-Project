@@ -357,127 +357,130 @@ with st.expander("📊 View Filtered Data Summary"):
 st.markdown("---")
 st.markdown("Dashboard designed with Streamlit • Interactive visualizations powered by Plotly • AI Assistant • Dataset: Superstore")
 
-# ========== FLOATING CHAT SIDEBAR ==========
-# Sidebar - Chat Toggle Button (luôn hiển thị)
-st.sidebar.markdown("---")
-st.sidebar.markdown("## 💬 AI Assistant")
+# ======= CHAT PANEL (RIGHT SIDE) =======
+st.markdown("""
+<style>
+.chat-panel {
+    border: 1px solid rgba(0,0,0,0.08);
+    border-radius: 18px;
+    padding: 14px 14px 10px 14px;
+    background: rgba(255,255,255,0.9);
+    box-shadow: 0 10px 30px rgba(0,0,0,0.08);
+}
+.chat-title {
+    font-weight: 700;
+    font-size: 16px;
+    display:flex;
+    align-items:center;
+    gap:8px;
+    margin-bottom: 8px;
+}
+.chat-bubble-user {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    color: white;
+    padding: 10px 12px;
+    border-radius: 14px;
+    border-bottom-right-radius: 6px;
+    margin: 8px 0;
+    font-size: 14px;
+    line-height: 1.35;
+    white-space: pre-wrap;
+}
+.chat-bubble-bot {
+    background: #ffffff;
+    border: 1px solid rgba(0,0,0,0.08);
+    color: #222;
+    padding: 10px 12px;
+    border-radius: 14px;
+    border-bottom-left-radius: 6px;
+    margin: 8px 0;
+    font-size: 14px;
+    line-height: 1.35;
+    white-space: pre-wrap;
+}
+.chat-hint {
+    color: rgba(0,0,0,0.55);
+    font-size: 12px;
+    margin-top: 6px;
+}
+</style>
+""", unsafe_allow_html=True)
 
-if not st.session_state.show_chat:
-    # Nút mở chat
-    if st.sidebar.button("🤖 Open Chat Assistant", use_container_width=True, key="open_chat_main"):
-        st.session_state.show_chat = True
-        st.rerun()
-else:
-    # Nút đóng chat
-    if st.sidebar.button("✕ Close Chat", use_container_width=True, key="close_chat_main"):
-        st.session_state.show_chat = False
-        st.rerun()
-    
-    st.sidebar.markdown("---")
-    
-    # Chat Interface
-    st.sidebar.markdown("### 💬 Dashboard AI Assistant")
-    
-    # Insights section
-    with st.sidebar.expander("💡 Automatic Insights", expanded=False):
-        insights = chatbot.get_insights()
-        st.info(insights)
-    
-    # Quick actions
-    st.sidebar.markdown("**⚡ Quick Questions:**")
-    col1, col2 = st.sidebar.columns(2)
-    
-    with col1:
-        if st.button("📊 Summary", use_container_width=True, key="quick_summary"):
-            user_msg = "Show me a summary"
-            st.session_state.chat_history.append({"role": "user", "content": user_msg})
-            response = chatbot.get_response(user_msg)
-            st.session_state.chat_history.append({"role": "assistant", "content": response})
+if "chat_open" not in st.session_state:
+    st.session_state.chat_open = False
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = []
+
+st.markdown("---")
+left, right = st.columns([3, 1.2], gap="large")
+
+with right:
+    # Open / Close
+    if not st.session_state.chat_open:
+        if st.button("💬 Open Chat", use_container_width=True):
+            st.session_state.chat_open = True
             st.rerun()
-        
-        if st.button("📈 Trend", use_container_width=True, key="quick_trend"):
-            user_msg = "What's the sales trend?"
-            st.session_state.chat_history.append({"role": "user", "content": user_msg})
-            response = chatbot.get_response(user_msg)
-            st.session_state.chat_history.append({"role": "assistant", "content": response})
-            st.rerun()
-    
-    with col2:
-        if st.button("🏆 Top 5", use_container_width=True, key="quick_top5"):
-            user_msg = "Show top 5 products"
-            st.session_state.chat_history.append({"role": "user", "content": user_msg})
-            response = chatbot.get_response(user_msg)
-            st.session_state.chat_history.append({"role": "assistant", "content": response})
-            st.rerun()
-        
-        if st.button("🌍 Compare", use_container_width=True, key="quick_compare"):
-            user_msg = "Compare regions"
-            st.session_state.chat_history.append({"role": "user", "content": user_msg})
-            response = chatbot.get_response(user_msg)
-            st.session_state.chat_history.append({"role": "assistant", "content": response})
-            st.rerun()
-    
-    st.sidebar.markdown("---")
-    
-    # Chat History Display
-    if st.session_state.chat_history:
-        st.sidebar.markdown("**💬 Conversation:**")
-        for message in st.session_state.chat_history[-10:]:  # Show last 10 messages
-            if message["role"] == "user":
-                st.sidebar.markdown(f"""
-                <div style='background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); 
-                color: white; padding: 10px; border-radius: 10px; margin: 8px 0; 
-                border-bottom-right-radius: 3px;'>
-                <strong>You:</strong><br>{message['content']}
-                </div>
-                """, unsafe_allow_html=True)
-            else:
-                st.sidebar.markdown(f"""
-                <div style='background-color: white; border: 1px solid #e0e0e0; 
-                color: #333; padding: 10px; border-radius: 10px; margin: 8px 0;
-                border-bottom-left-radius: 3px;'>
-                <strong>🤖 AI:</strong><br>{message['content']}
-                </div>
-                """, unsafe_allow_html=True)
     else:
-        st.sidebar.info("👋 Hi! I'm your dashboard assistant. Ask me anything!")
-        st.sidebar.markdown("""
-        **Try asking:**
-        - What are the total sales?
-        - Compare regions
-        - Show top 5 products
-        - What's the trend?
-        """)
-    
-    st.sidebar.markdown("---")
-    
-    # Chat Input Form
-    with st.sidebar.form(key="chat_input_form", clear_on_submit=True):
-        user_input = st.text_input("Type your question...", key="user_message_input", 
-                                   placeholder="Ask me about the dashboard data...")
-        
-        col1, col2 = st.columns([3, 1])
-        with col1:
-            submit_button = st.form_submit_button("Send 📤", use_container_width=True)
-        with col2:
-            clear_button = st.form_submit_button("Clear", use_container_width=True)
-        
-        if submit_button and user_input.strip():
-            # Add user message
-            st.session_state.chat_history.append({"role": "user", "content": user_input.strip()})
-            
-            # Get bot response
-            try:
-                bot_response = chatbot.get_response(user_input.strip())
-                st.session_state.chat_history.append({"role": "assistant", "content": bot_response})
-            except Exception as e:
-                st.session_state.chat_history.append({
-                    "role": "assistant", 
-                    "content": f"Sorry, I encountered an error: {str(e)}"
-                })
-            
-            st.rerun()
-        
-        if clear_button:
-            st.session_state.chat_history = []
-            st.rerun()
+        topbar_l, topbar_r = st.columns([3, 1])
+        with topbar_l:
+            st.markdown(" ")
+        with topbar_r:
+            if st.button("✕", use_container_width=True):
+                st.session_state.chat_open = False
+                st.rerun()
+
+        st.markdown("<div class='chat-panel'>", unsafe_allow_html=True)
+        st.markdown("<div class='chat-title'>🤖 Dashboard Assistant</div>", unsafe_allow_html=True)
+
+        # Auto insights (optional)
+        with st.sidebar.expander("💡 Automatic Insights", expanded=False):
+            if "auto_insights" not in st.session_state:
+                st.session_state.auto_insights = None
+
+            if st.session_state.auto_insights is None:
+                if st.button("Generate insights", use_container_width=True, key="gen_insights"):
+                    st.session_state.auto_insights = chatbot.get_insights()
+                    st.rerun()
+            else:
+                st.info(st.session_state.auto_insights)
+
+            if st.button("Clear insights", use_container_width=True, key="clear_insights"):
+                st.session_state.auto_insights = None
+                st.rerun()
+
+
+        # Show chat history
+        if st.session_state.chat_history:
+            for m in st.session_state.chat_history[-12:]:
+                if m["role"] == "user":
+                    st.markdown(f"<div class='chat-bubble-user'>{m['content']}</div>", unsafe_allow_html=True)
+                else:
+                    st.markdown(f"<div class='chat-bubble-bot'>{m['content']}</div>", unsafe_allow_html=True)
+        else:
+            st.markdown(
+                "<div class='chat-bubble-bot'>Chào bạn! Hãy hỏi về KPI / trend / region / segment / discount / top sub-category nhé.</div>",
+                unsafe_allow_html=True
+            )
+
+        st.markdown("<div class='chat-hint'>Ví dụ: “Region nào profit cao nhất?”, “Sales trend tháng gần đây?”, “Discount ảnh hưởng profit ra sao?”</div>", unsafe_allow_html=True)
+
+        # Input
+        with st.form("chat_form", clear_on_submit=True):
+            user_msg = st.text_input("Nhập câu hỏi…", placeholder="Hỏi như nhắn tin 🙂")
+            c1, c2 = st.columns([3, 1])
+            with c1:
+                send = st.form_submit_button("Send")
+            with c2:
+                clear = st.form_submit_button("Clear")
+
+            if send and user_msg.strip():
+                st.session_state.chat_history.append({"role": "user", "content": user_msg.strip()})
+                ans = chatbot.get_response(user_msg.strip())
+                st.session_state.chat_history.append({"role": "assistant", "content": ans})
+                st.rerun()
+
+            if clear:
+                st.session_state.chat_history = []
+                st.rerun()
+
+        st.markdown("</div>", unsafe_allow_html=True)
