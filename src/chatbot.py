@@ -62,6 +62,33 @@ class DashboardChatbot:
     # ---------------------------
     # Fast path: KPI card answers
     # ---------------------------
+
+    def _filter_summary(self) -> str:
+        """Return a human-readable summary of the dashboard filters currently applied."""
+        f = self.filters or {}
+        parts: List[str] = []
+
+        # Date range (always show if present)
+        dr = f.get("date_range")
+        if dr and isinstance(dr, (tuple, list)) and len(dr) == 2:
+            start, end = dr
+            parts.append(f"Order Date: {start} → {end}")
+
+        def _fmt_list(name: str, values: Any) -> str:
+            if not values:
+                return f"{name}: All"
+            if isinstance(values, (tuple, list, set)):
+                vals = [str(x) for x in values]
+                return f"{name}: {', '.join(vals)}"
+            return f"{name}: {values}"
+
+        parts.append(_fmt_list("Region", f.get("region")))
+        parts.append(_fmt_list("Segment", f.get("segment")))
+        parts.append(_fmt_list("Category", f.get("category")))
+
+        parts = [p for p in parts if p]
+        return "; ".join(parts) if parts else "No filters applied"
+
     def _fast_kpi_answer(self, q: str) -> Optional[str]:
         """Answer simple KPI questions directly from `self.kpis`.
 
@@ -100,16 +127,16 @@ class DashboardChatbot:
             )
 
         if re.search(r"\b(total\s+sales|sales\s+total|revenue)\b", ql):
-            return f"Total Sales: {money(total_sales)} (based on current filters)."
+            return f"Total Sales: {money(total_sales)}. Filters applied: {self._filter_summary()}."
 
         if re.search(r"\b(total\s+profit|profit\s+total)\b", ql):
-            return f"Total Profit: {money(total_profit)} (based on current filters)."
+            return f"Total Profit: {money(total_profit)}. Filters applied: {self._filter_summary()}."
 
         if re.search(r"\b(total\s+orders|orders\s+total|number\s+of\s+orders)\b", ql):
-            return f"Total Orders: {total_orders:,} (based on current filters)."
+            return f"Total Orders: {total_orders:,}. Filters applied: {self._filter_summary()}."
 
         if re.search(r"\b(profit\s+margin|margin)\b", ql):
-            return f"Profit Margin: {profit_margin:.2f}% (based on current filters)."
+            return f"Profit Margin: {profit_margin:.2f}%. Filters applied: {self._filter_summary()}."
 
         return None
 
