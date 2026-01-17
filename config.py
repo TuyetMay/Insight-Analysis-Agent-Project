@@ -8,10 +8,10 @@ class Config:
     """Application configuration"""
     
     # Database settings
-    DB_HOST = os.getenv('DB_HOST', 'localhost')
+    DB_HOST = os.getenv('DB_HOST', 'db.yihxtwvezbdgcczwepuj.supabase.co')
     DB_PORT = os.getenv('DB_PORT', '5432')
-    DB_NAME = os.getenv('DB_NAME', 'superstore')
-    DB_USER = os.getenv('DB_USER', 'nguyenthituyetmay')
+    DB_NAME = os.getenv('DB_NAME', 'postgres')
+    DB_USER = os.getenv('DB_USER', 'postgres')
     DB_PASSWORD = os.getenv('DB_PASSWORD', '')
     DB_TABLE = os.getenv('DB_TABLE', 'superstore')
     
