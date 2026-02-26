@@ -59,7 +59,6 @@ def load_filtered_data(filters):
     
     df = execute_query(query, params)
     
-    # Chuẩn hóa kiểu dữ liệu datetime nếu cần
     if not df.empty:
         date_columns = ['order_date', 'ship_date']
         for col in date_columns:

@@ -26,6 +26,9 @@ st.set_page_config(
 # Initialize session state
 if 'chat_history' not in st.session_state:
     st.session_state.chat_history = []
+if 'suggestions' not in st.session_state:
+    st.session_state.suggestions = []
+
 if 'show_chat' not in st.session_state:
     st.session_state.show_chat = False
 
@@ -237,14 +240,22 @@ with col1:
         question = "What is the total sales?"
         st.session_state.chat_history.append({"role": "user", "content": question})
         response = chatbot.get_response(question)
+        suggs = chatbot.get_suggestions(language="vi")
+        if suggs:
+            response += "\n\n**Gợi ý tiếp theo:**\n" + "\n".join([f"- {s['text']}" for s in suggs])
         st.session_state.chat_history.append({"role": "assistant", "content": response})
+        st.session_state.suggestions = chatbot.get_suggestions(language="vi")
         st.rerun()
     
     if st.button("📈 Trends", use_container_width=True):
         question = "Show me sales trends"
         st.session_state.chat_history.append({"role": "user", "content": question})
         response = chatbot.get_response(question)
+        suggs = chatbot.get_suggestions(language="vi")
+        if suggs:
+            response += "\n\n**Gợi ý tiếp theo:**\n" + "\n".join([f"- {s['text']}" for s in suggs])
         st.session_state.chat_history.append({"role": "assistant", "content": response})
+        st.session_state.suggestions = chatbot.get_suggestions(language="vi")
         st.rerun()
 
 with col2:
@@ -252,14 +263,22 @@ with col2:
         question = "Show profit by region"
         st.session_state.chat_history.append({"role": "user", "content": question})
         response = chatbot.get_response(question)
+        suggs = chatbot.get_suggestions(language="vi")
+        if suggs:
+            response += "\n\n**Gợi ý tiếp theo:**\n" + "\n".join([f"- {s['text']}" for s in suggs])
         st.session_state.chat_history.append({"role": "assistant", "content": response})
+        st.session_state.suggestions = chatbot.get_suggestions(language="vi")
         st.rerun()
     
     if st.button("🏆 Top Items", use_container_width=True):
         question = "What are the top categories?"
         st.session_state.chat_history.append({"role": "user", "content": question})
         response = chatbot.get_response(question)
+        suggs = chatbot.get_suggestions(language="vi")
+        if suggs:
+            response += "\n\n**Gợi ý tiếp theo:**\n" + "\n".join([f"- {s['text']}" for s in suggs])
         st.session_state.chat_history.append({"role": "assistant", "content": response})
+        st.session_state.suggestions = chatbot.get_suggestions(language="vi")
         st.rerun()
 
 # Chat input
@@ -277,6 +296,9 @@ with st.sidebar.form("chat_form", clear_on_submit=True):
         
         with st.spinner("Thinking..."):
             response = chatbot.get_response(user_input.strip())
+            suggs = chatbot.get_suggestions(language="vi")
+            if suggs:
+                response += "\n\n**Gợi ý tiếp theo:**\n" + "\n".join([f"- {s['text']}" for s in suggs])
         
         st.session_state.chat_history.append({"role": "assistant", "content": response})
         st.rerun()
@@ -284,4 +306,6 @@ with st.sidebar.form("chat_form", clear_on_submit=True):
     if clear:
         st.session_state.chat_history = []
         st.session_state.insights = None
+        st.session_state.suggestions = []
+
         st.rerun()

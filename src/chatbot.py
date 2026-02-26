@@ -7,9 +7,9 @@ from datetime import date, datetime
 from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
-import google.generativeai as genai
-
+from google import genai
 from config import Config
+from src.chatbot_suggest_question import SuggestionEngine
 from src.database import execute_query
 
 
@@ -45,24 +45,31 @@ class DashboardChatbot:
         self.df = df.copy()
         self.kpis = kpis
         self.filters = filters
+        self.last_plan: Optional[Dict[str, Any]] = None
+        self.suggestion_engine = SuggestionEngine(
+            allowed_metrics=list(self._METRICS),
+            allowed_breakdowns=list(self._DIM_BREAKDOWNS),
+            allowed_compare_periods=["prev_period", "mom", "yoy"],
+            max_suggestions=4,
+        )
 
         # Ensure datetime in df (used for fallback and fast trend computations if needed)
         if "order_date" in self.df.columns and not pd.api.types.is_datetime64_any_dtype(self.df["order_date"]):
             self.df["order_date"] = pd.to_datetime(self.df["order_date"], errors="coerce")
 
-        # Configure Gemini
+        # Configure Gemini (new google-genai SDK)
         self.gemini_ready = False
         api_key = getattr(Config, "GOOGLE_API_KEY", "")
         if api_key:
-            genai.configure(api_key=api_key)
+            # New client-based API
+            # Note: ensure package `google-genai` is installed in your venv.
+            self.client = genai.Client(api_key=api_key)
             self.model_name = getattr(Config, "GEMINI_MODEL", "gemini-1.5-flash")
-            self.model = genai.GenerativeModel(self.model_name)
             self.gemini_ready = True
 
     # ---------------------------
     # Fast path: KPI card answers
     # ---------------------------
-
     def _filter_summary(self) -> str:
         """Return a human-readable summary of the dashboard filters currently applied."""
         f = self.filters or {}
@@ -269,12 +276,17 @@ Now plan this user question:
             raise RuntimeError("Gemini API key missing")
 
         prompt = self._plan_prompt(q)
-        resp = self.model.generate_content(
-            prompt,
-            generation_config={"temperature": 0.0, "max_output_tokens": 300},
+
+        # New SDK: use client.models.generate_content
+        # Keep deterministic output (temperature=0)
+        resp = self.client.models.generate_content(
+            model=self.model_name,
+            contents=prompt,
+            temperature=0.0,
+            max_output_tokens=300,
         )
 
-        text = (resp.text or "").strip()
+        text = (getattr(resp, "text", None) or "").strip()
 
         # Tolerate accidental wrapping text by extracting the first JSON object.
         plan = self._extract_json_object(text)
@@ -809,6 +821,7 @@ Now plan this user question:
     # ---------------------------
     def get_response(self, user_question: str) -> str:
         q = (user_question or "").strip()
+        self.last_plan = None
         if not q:
             return "Ask me about Total Sales, Total Profit, Total Orders, or Profit Margin."
 
@@ -825,8 +838,12 @@ Now plan this user question:
         try:
             plan = self._gemini_plan(q)
             plan = self._validate_plan(plan)
+
+            self.last_plan = plan
+
             result_df = self._run_plan(plan)
             return self._format_answer(plan, result_df)
+
         except Exception as e:
             return f"❌ Sorry — I couldn't answer that. ({str(e)})"
 
@@ -846,17 +863,61 @@ Now plan this user question:
             by_region = df.groupby("region")[["sales", "profit"]].sum().sort_values("profit", ascending=False).head(5)
             by_segment = df.groupby("segment")[["sales", "profit"]].sum().sort_values("profit", ascending=False).head(3)
             prompt = f"""
-You are a business analyst. Provide exactly 3 bullet insights based on the aggregates below.
-Keep it concise, numbers-first, English only.
+                You are a business analyst. Provide exactly 3 bullet insights based on the aggregates below.
+                Keep it concise, numbers-first, English only.
 
-Top regions:
-{by_region.to_string()}
+                Top regions:
+                {by_region.to_string()}
 
-Top segments:
-{by_segment.to_string()}
-""".strip()
+                Top segments:
+                {by_segment.to_string()}
+                """.strip()
 
-            resp = self.model.generate_content(prompt, generation_config={"temperature": 0.3, "max_output_tokens": 200})
-            return (resp.text or "").strip()
+            resp = self.client.models.generate_content(
+                model=self.model_name,
+                contents=prompt,
+                temperature=0.3,
+                max_output_tokens=200,
+            )
+            return (getattr(resp, "text", "") or "").strip()
         except Exception:
             return "Could not generate insights at this moment."
+
+    def get_suggestions(self, *, language: str = "vi") -> List[Dict[str, Any]]:
+        """Return suggestions in a JSON-serializable format.
+
+        Format: [{"text": "...", "plan": {...} | None}, ...]
+        """
+        dashboard_defaults: Dict[str, Any] = {}
+
+        # Dashboard date range (from current filters)
+        s0, e0 = self._get_dashboard_date_range()
+        dashboard_defaults["start_date"] = s0
+        dashboard_defaults["end_date"] = e0
+
+        # Pass current filters (already in self.filters)
+        dashboard_defaults["filters"] = {
+            "region": self.filters.get("region", []),
+            "segment": self.filters.get("segment", []),
+            "category": self.filters.get("category", []),
+            "sub_category": self.filters.get("sub_category", []),
+        }
+
+        suggs = self.suggestion_engine.suggest_from_plan(
+            self.last_plan or {},
+            dashboard_defaults=dashboard_defaults,
+            language=language,
+        )
+
+        return [{"text": s.text, "plan": s.plan} for s in suggs]
+
+    def get_response_from_plan(self, plan: Dict[str, Any]) -> str:
+        """Execute a suggestion plan WITHOUT calling Gemini again."""
+        try:
+            plan = self._validate_plan(plan)
+            self.last_plan = plan
+            df = self._run_plan(plan)
+            return self._format_answer(plan, df)
+        except Exception as e:
+            self.last_plan = None
+            return f"❌ Sorry — I couldn't run that suggestion. ({str(e)})"
