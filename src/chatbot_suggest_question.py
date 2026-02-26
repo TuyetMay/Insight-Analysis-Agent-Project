@@ -1,38 +1,74 @@
+# src/chatbot_suggest_question.py
+"""
+Suggestion Engine - two modes:
+
+1. RuleBasedSuggestionEngine  (fast, deterministic, no LLM needed)
+   - Derives suggestions from a validated plan by applying fixed transformations.
+   - Used as fallback when Gemini is unavailable.
+
+2. RAGSuggestionEngine  (smart, grounded in real data)
+   - Uses Gemini + RAG context to generate suggestions the chatbot CAN answer.
+   - Each suggestion carries a plan JSON so it can be re-run without calling LLM again.
+   - Falls back to rule-based on any error.
+
+Output format: List[Suggestion]  →  [{"text": "...", "plan": {...}|None}]
+"""
+
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Dict, List, Optional, Tuple
 import copy
+import json
+import re
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, TYPE_CHECKING
+
+from google.genai import types as genai_types
+
+if TYPE_CHECKING:
+    from src.rag_engine import RAGContext
 
 
 @dataclass(frozen=True)
 class Suggestion:
-    """A safe follow-up suggestion.
-
-    - `text` is what you show in UI (chip/button).
-    - `plan` is an OPTIONAL machine-readable payload you can send back to your backend
-      to run without calling the LLM again.
+    """
+    A follow-up suggestion rendered as a clickable chip.
+    - text : what the user sees.
+    - plan : optional JSON plan that can be executed without calling the LLM again.
     """
     text: str
     plan: Optional[Dict[str, Any]] = None
 
 
-class SuggestionEngine:
-    """Plan-aware suggestion engine (anti-hallucination).
+# ─────────────────────────────────────────────────────────────
+# 1. Rule-based engine  (deterministic, fallback)
+# ─────────────────────────────────────────────────────────────
 
-    Design principles
-    - Suggestions are derived from a *validated plan* (or dashboard state) using a small
-      set of allowed transformations (relations).
-    - Every suggested plan stays within allow-lists (metrics/dimensions/compare_period, etc.)
-      so it can be executed safely.
-
-    Typical usage
-    - After you produce an `answer_payload` (or at least a validated `plan`),
-      call `engine.suggest_from_plan(validated_plan, dashboard_defaults=...)`.
-    - Render `Suggestion.text` as clickable chips.
-    - On click, send `Suggestion.plan` back to backend and run it through your existing
-      validate -> SQL generation -> execution pipeline (NO LLM needed).
+class RuleBasedSuggestionEngine:
     """
+    Generates suggestions by applying a fixed set of transformations to a validated plan.
+    Safe, offline, no LLM required.
+    """
+
+    _METRICS = {"sales", "profit", "orders", "profit_margin"}
+    _BREAKDOWNS = {"region", "segment", "category", "sub_category"}
+    _COMPARE_PERIODS = {"prev_period", "mom", "yoy"}
+
+    _METRIC_LABELS = {
+        "sales": "Sales", "profit": "Profit",
+        "orders": "Orders", "profit_margin": "Profit Margin",
+    }
+    _DIM_LABELS = {
+        "region": "Region", "segment": "Segment",
+        "category": "Category", "sub_category": "Sub-Category",
+    }
+    _GRAIN_LABELS = {
+        "month": "Month", "quarter": "Quarter", "year": "Year", "week": "Week",
+    }
+    _COMPARE_LABELS = {
+        "yoy": "YoY (vs last year)",
+        "mom": "MoM (vs last month)",
+        "prev_period": "vs previous period",
+    }
 
     def __init__(
         self,
@@ -42,268 +78,467 @@ class SuggestionEngine:
         allowed_compare_periods: Optional[List[str]] = None,
         max_suggestions: int = 4,
     ) -> None:
-        self.allowed_metrics = set(allowed_metrics or ["sales", "profit", "orders", "profit_margin"])
-        self.allowed_breakdowns = set(allowed_breakdowns or ["region", "segment", "category", "sub_category"])
-        self.allowed_compare_periods = set(allowed_compare_periods or ["prev_period", "mom", "yoy"])
+        self.allowed_metrics = set(allowed_metrics or self._METRICS)
+        self.allowed_breakdowns = set(allowed_breakdowns or self._BREAKDOWNS)
+        self.allowed_compare_periods = set(allowed_compare_periods or self._COMPARE_PERIODS)
         self.max_suggestions = max(1, int(max_suggestions))
 
-    # -------------------------
-    # Public API
-    # -------------------------
-    def suggest_from_plan(
+    def suggest(
         self,
         plan: Dict[str, Any],
-        *,
         dashboard_defaults: Optional[Dict[str, Any]] = None,
-        language: str = "vi",
     ) -> List[Suggestion]:
-        """Generate follow-up suggestions from an already validated plan.
-
-        `dashboard_defaults` (optional) can include:
-          - start_date, end_date (if plan doesn't have)
-          - filters (if plan doesn't have)
-        """
         if not isinstance(plan, dict) or not plan.get("intent"):
-            return self.suggest_from_dashboard_state(dashboard_defaults or {}, language=language)
+            return self._fallback(dashboard_defaults)
 
-        base = self._normalize_base_plan(plan, dashboard_defaults=dashboard_defaults or {})
+        base = self._normalize(plan, dashboard_defaults or {})
         intent = base.get("intent")
-
-        suggestions: List[Suggestion] = []
-
-        # 1) Core transformations (context-aware)
         b = base.get("breakdown_by")
 
-        # If the user already asked with a breakdown (e.g., profit by region),
-        # keep suggestions on the same topic: rank/compare/trend. Avoid metric switching.
+        candidates: List[Suggestion] = []
+
         if b:
-            suggestions.extend(self._suggest_rank_if_breakdown_exists(base, language=language))
-            suggestions.extend(self._suggest_compare(base, language=language))
-            suggestions.extend(self._suggest_time_grain_variations(base, language=language))
+            candidates += self._rank_from_breakdown(base)
+            candidates += self._compare(base)
+            candidates += self._time_grains(base)
         else:
-            # No breakdown yet: suggest breakdowns and (optionally) metric switches.
-            suggestions.extend(self._suggest_breakdowns(base, language=language))
-            suggestions.extend(self._suggest_compare(base, language=language))
-            suggestions.extend(self._suggest_time_grain_variations(base, language=language))
-            suggestions.extend(self._suggest_metric_switch(base, language=language))
+            candidates += self._breakdowns(base)
+            candidates += self._compare(base)
+            candidates += self._time_grains(base)
+            candidates += self._metric_switch(base)
 
-        # 2) Intent-specific transformations
-        if intent == "kpi_value":
-            # handled in core transformations above
-            pass
-        elif intent == "kpi_trend":
-            suggestions.extend(self._suggest_breakdowns(base, language=language))
+        if intent == "kpi_trend":
+            candidates += self._breakdowns(base)
         elif intent == "kpi_rank":
-            suggestions.extend(self._suggest_rank_variations(base, language=language))
-            suggestions.extend(self._suggest_breakdowns(base, language=language))
-        elif intent == "kpi_compare":
-            # Show breakdown compare or trend compare
-            suggestions.extend(self._suggest_breakdowns(base, language=language))
-        # intent == "clarify": you likely won't suggest; user must answer clarifying question
+            candidates += self._rank_variations(base)
 
-        # De-duplicate by text
-        uniq: List[Suggestion] = []
-        seen = set()
-        for s in suggestions:
-            if not s.text or s.text in seen:
-                continue
-            seen.add(s.text)
-            uniq.append(s)
+        return self._dedup(candidates)
 
-        return uniq[: self.max_suggestions]
+    # ── helpers ───────────────────────────────────────────────
 
-    def suggest_from_dashboard_state(self, state: Dict[str, Any], *, language: str = "vi") -> List[Suggestion]:
-        """Fallback when you do not have a validated plan (e.g., Fast Path KPI answer).
-
-        `state` can include:
-          - last_metric: e.g. "profit"
-          - filters: current dashboard filters
-          - start_date/end_date: current dashboard date range
-        """
-        metric = (state or {}).get("last_metric") or "sales"
+    def _fallback(self, defaults: Optional[Dict[str, Any]]) -> List[Suggestion]:
+        metric = (defaults or {}).get("last_metric") or "sales"
         if metric not in self.allowed_metrics:
             metric = "sales"
-
         base = {
-            "intent": "kpi_value",
-            "metrics": [metric],
-            "time_grain": "none",
-            "breakdown_by": None,
-            "compare_period": None,
-            "top_k": None,
+            "intent": "kpi_value", "metrics": [metric], "time_grain": "none",
+            "breakdown_by": None, "compare_period": None, "top_k": None,
             "order_by": metric,
-            "start_date": (state or {}).get("start_date"),
-            "end_date": (state or {}).get("end_date"),
-            "filters": (state or {}).get("filters") or {"region": [], "segment": [], "category": []},
+            "start_date": (defaults or {}).get("start_date"),
+            "end_date": (defaults or {}).get("end_date"),
+            "filters": (defaults or {}).get("filters") or {"region": [], "segment": [], "category": []},
         }
-        return self.suggest_from_plan(base, dashboard_defaults=state, language=language)
+        return self.suggest(base, defaults)
 
-    # -------------------------
-    # Internal helpers
-    # -------------------------
-    def _normalize_base_plan(self, plan: Dict[str, Any], *, dashboard_defaults: Dict[str, Any]) -> Dict[str, Any]:
-        """Make a best-effort base plan (assumes plan was validated upstream)."""
+    def _normalize(self, plan: Dict[str, Any], defaults: Dict[str, Any]) -> Dict[str, Any]:
         p = copy.deepcopy(plan)
-        p.setdefault("metrics", ["sales"])
-        if isinstance(p["metrics"], str):
-            p["metrics"] = [p["metrics"]]
-        p["metrics"] = [m for m in p["metrics"] if m in self.allowed_metrics] or ["sales"]
-
+        metrics = p.get("metrics", ["sales"])
+        if isinstance(metrics, str):
+            metrics = [metrics]
+        p["metrics"] = [m for m in metrics if m in self.allowed_metrics] or ["sales"]
         p.setdefault("time_grain", "none")
-        p.setdefault("breakdown_by", None)
-        if p["breakdown_by"] is not None and p["breakdown_by"] not in self.allowed_breakdowns:
-            p["breakdown_by"] = None
-
+        bd = p.get("breakdown_by")
+        if bd is not None and bd not in self.allowed_breakdowns:
+            bd = None
+        p["breakdown_by"] = bd
         p.setdefault("compare_period", None)
-        if p["compare_period"] is not None and p["compare_period"] not in self.allowed_compare_periods:
-            p["compare_period"] = None
-
         p.setdefault("top_k", None)
         p.setdefault("order_by", p["metrics"][0])
-
-        # Dates and filters
-        p.setdefault("start_date", dashboard_defaults.get("start_date"))
-        p.setdefault("end_date", dashboard_defaults.get("end_date"))
-        p.setdefault("filters", dashboard_defaults.get("filters") or {"region": [], "segment": [], "category": []})
+        p.setdefault("start_date", defaults.get("start_date"))
+        p.setdefault("end_date", defaults.get("end_date"))
+        p.setdefault("filters", defaults.get("filters") or {"region": [], "segment": [], "category": []})
         return p
 
-    def _mk_text(self, template_key: str, *, language: str, **kwargs: Any) -> str:
-        """Very small i18n for suggestion phrasing."""
-        metric = kwargs.get("metric")
-        breakdown = kwargs.get("breakdown")
-        grain = kwargs.get("grain")
-        topk = kwargs.get("topk")
-        compare = kwargs.get("compare")
-
-        if language.lower().startswith("vi"):
-            mapping = {
-                "trend": f"Xu hướng {metric} theo {grain}",
-                "breakdown": f"{metric} theo {breakdown}",
-                "rank": f"Top {topk} {breakdown} theo {metric}",
-                "compare": f"So sánh {metric} với kỳ {compare}",
-                "switch_metric": f"Xem {metric} thay vì chỉ số hiện tại",
-            }
-        else:
-            mapping = {
-                "trend": f"Trend of {metric} by {grain}",
-                "breakdown": f"{metric} by {breakdown}",
-                "rank": f"Top {topk} {breakdown} by {metric}",
-                "compare": f"Compare {metric} vs {compare}",
-                "switch_metric": f"Switch metric to {metric}",
-            }
-
-        return mapping.get(template_key, "")
-
-    def _clone_with(self, base: Dict[str, Any], **updates: Any) -> Dict[str, Any]:
+    def _clone(self, base: Dict[str, Any], **updates: Any) -> Dict[str, Any]:
         p = copy.deepcopy(base)
-        for k, v in updates.items():
-            p[k] = v
+        p.update(updates)
         return p
 
-    # -------------------------
-    # Suggestion builders
-    # -------------------------
-    def _suggest_breakdowns(self, base: Dict[str, Any], *, language: str) -> List[Suggestion]:
+    def _lm(self, m: str) -> str:
+        return self._METRIC_LABELS.get(m, m.replace("_", " ").title())
+
+    def _ld(self, d: str) -> str:
+        return self._DIM_LABELS.get(d, d.replace("_", " ").title())
+
+    def _lg(self, g: str) -> str:
+        return self._GRAIN_LABELS.get(g, g.title())
+
+    def _lc(self, c: str) -> str:
+        return self._COMPARE_LABELS.get(c, c)
+
+    def _dedup(self, candidates: List[Suggestion]) -> List[Suggestion]:
+        seen: set = set()
+        result: List[Suggestion] = []
+        for s in candidates:
+            if s.text and s.text not in seen:
+                seen.add(s.text)
+                result.append(s)
+            if len(result) >= self.max_suggestions:
+                break
+        return result
+
+    # ── builders ──────────────────────────────────────────────
+
+    def _breakdowns(self, base: Dict[str, Any]) -> List[Suggestion]:
         metric = base["metrics"][0]
         current = base.get("breakdown_by")
         out: List[Suggestion] = []
-
-        # If already has breakdown, suggest drill-down if possible
-        drill_map = {"category": "sub_category"}
-        if current in drill_map and drill_map[current] in self.allowed_breakdowns:
-            b = drill_map[current]
-            p = self._clone_with(base, intent="kpi_value", breakdown_by=b, top_k=None)
-            text = self._mk_text("breakdown", language=language, metric=metric.title(), breakdown=b.replace("_", " ").title())
-            out.append(Suggestion(text=text, plan=p))
-
-        # Otherwise propose common breakdowns not currently used
         for b in ["region", "segment", "category", "sub_category"]:
-            if b not in self.allowed_breakdowns:
+            if b not in self.allowed_breakdowns or b == current:
                 continue
-            if b == current:
-                continue
-            p = self._clone_with(base, intent="kpi_value", breakdown_by=b, top_k=None)
-            text = self._mk_text("breakdown", language=language, metric=metric.title(), breakdown=b.replace("_", " ").title())
-            out.append(Suggestion(text=text, plan=p))
-
+            p = self._clone(base, intent="kpi_value", breakdown_by=b, top_k=None)
+            out.append(Suggestion(text=f"{self._lm(metric)} by {self._ld(b)}", plan=p))
         return out
 
-    def _suggest_time_grain_variations(self, base: Dict[str, Any], *, language: str) -> List[Suggestion]:
+    def _time_grains(self, base: Dict[str, Any]) -> List[Suggestion]:
         metric = base["metrics"][0]
-        out: List[Suggestion] = []
         current = base.get("time_grain") or "none"
-        # If not already a trend, suggest a monthly trend (safe default)
+        out: List[Suggestion] = []
         for grain in ["month", "quarter", "year"]:
             if grain == current:
                 continue
-            p = self._clone_with(base, intent="kpi_trend", time_grain=grain, breakdown_by=None, top_k=None)
-            text = self._mk_text("trend", language=language, metric=metric.title(), grain=grain.title())
-            out.append(Suggestion(text=text, plan=p))
+            p = self._clone(base, intent="kpi_trend", time_grain=grain, breakdown_by=None, top_k=None)
+            out.append(Suggestion(text=f"{self._lm(metric)} trend by {self._lg(grain)}", plan=p))
         return out
 
-    def _suggest_compare(self, base: Dict[str, Any], *, language: str) -> List[Suggestion]:
+    def _compare(self, base: Dict[str, Any]) -> List[Suggestion]:
         metric = base["metrics"][0]
         out: List[Suggestion] = []
         for c in ["yoy", "mom", "prev_period"]:
-            if c not in self.allowed_compare_periods:
+            if c not in self.allowed_compare_periods or base.get("compare_period") == c:
                 continue
-            if base.get("compare_period") == c:
-                continue
-            p = self._clone_with(base, intent="kpi_compare", compare_period=c, top_k=None)
-            compare_label = {"yoy": "năm trước", "mom": "tháng trước", "prev_period": "kỳ trước"}.get(c, c)
-            if not language.lower().startswith("vi"):
-                compare_label = {"yoy": "YoY", "mom": "MoM", "prev_period": "previous period"}.get(c, c)
-            text = self._mk_text("compare", language=language, metric=metric.title(), compare=compare_label)
-            out.append(Suggestion(text=text, plan=p))
+            p = self._clone(base, intent="kpi_compare", compare_period=c, top_k=None, metrics=[metric])
+            out.append(Suggestion(text=f"Compare {self._lm(metric)} {self._lc(c)}", plan=p))
         return out
 
-    def _suggest_rank_if_breakdown_exists(self, base: Dict[str, Any], *, language: str) -> List[Suggestion]:
-        """If the user already asks by a breakdown, suggest top-k ranking."""
+    def _rank_from_breakdown(self, base: Dict[str, Any]) -> List[Suggestion]:
         metric = base["metrics"][0]
         b = base.get("breakdown_by")
-        if not b:
+        if not b or b not in self.allowed_breakdowns:
             return []
-        if b not in self.allowed_breakdowns:
-            return []
-
         out: List[Suggestion] = []
-        for k in (3, 5):
-            p = self._clone_with(base, intent="kpi_rank", top_k=k, order_by=metric)
-            text = self._mk_text(
-                "rank",
-                language=language,
-                metric=metric.title(),
-                breakdown=b.replace("_", " ").title(),
-                topk=k,
-            )
-            out.append(Suggestion(text=text, plan=p))
+        for k in [3, 5]:
+            p = self._clone(base, intent="kpi_rank", top_k=k, order_by=metric)
+            out.append(Suggestion(text=f"Top {k} {self._ld(b)} by {self._lm(metric)}", plan=p))
         return out
 
-    def _suggest_rank_variations(self, base: Dict[str, Any], *, language: str) -> List[Suggestion]:
+    def _rank_variations(self, base: Dict[str, Any]) -> List[Suggestion]:
         metric = base["metrics"][0]
         b = base.get("breakdown_by") or "sub_category"
-        if b not in self.allowed_breakdowns:
-            b = next(iter(self.allowed_breakdowns))
         out: List[Suggestion] = []
         for k in [3, 5, 10]:
             if base.get("top_k") == k:
                 continue
-            p = self._clone_with(base, intent="kpi_rank", top_k=k, order_by=metric, breakdown_by=b)
-            text = self._mk_text("rank", language=language, metric=metric.title(), breakdown=b.replace("_", " ").title(), topk=k)
-            out.append(Suggestion(text=text, plan=p))
+            p = self._clone(base, intent="kpi_rank", top_k=k, order_by=metric, breakdown_by=b)
+            out.append(Suggestion(text=f"Top {k} {self._ld(b)} by {self._lm(metric)}", plan=p))
         return out
 
-    def _suggest_metric_switch(self, base: Dict[str, Any], *, language: str) -> List[Suggestion]:
-        """Suggest switching to other core metrics while keeping filters/time/breakdown."""
+    def _metric_switch(self, base: Dict[str, Any]) -> List[Suggestion]:
         current = base["metrics"][0]
-        candidates = ["sales", "profit", "orders", "profit_margin"]
         out: List[Suggestion] = []
-        for m in candidates:
-            if m not in self.allowed_metrics:
+        for m in ["sales", "profit", "orders", "profit_margin"]:
+            if m not in self.allowed_metrics or m == current:
                 continue
-            if m == current:
-                continue
-            p = self._clone_with(base, metrics=[m], order_by=m)
-            text = self._mk_text("switch_metric", language=language, metric=m.replace("_", " ").title())
-            out.append(Suggestion(text=text, plan=p))
+            p = self._clone(base, metrics=[m], order_by=m)
+            out.append(Suggestion(text=f"View {self._lm(m)}", plan=p))
         return out
+
+
+# ─────────────────────────────────────────────────────────────
+# 2. RAGSuggestionEngine  (Gemini + RAG context)
+# ─────────────────────────────────────────────────────────────
+
+class RAGSuggestionEngine:
+    """
+    Generates suggestions using Gemini + RAG context.
+
+    Flow:
+        last Q + last A + chat history
+                 |
+         RAG Retrieve → rag_context  (real verified data facts)
+                 |
+         Gemini Prompt:
+           "Given these real data facts: [rag_context]
+            Generate N follow-up questions the data CAN answer.
+            Return JSON array with plan per suggestion."
+                 |
+         Parse JSON → List[{text, plan}]
+                 |
+         Fallback: RuleBasedSuggestionEngine
+    """
+
+    _VALID_INTENTS = {"kpi_value", "kpi_trend", "kpi_rank", "kpi_compare"}
+    _VALID_METRICS = {"sales", "profit", "orders", "profit_margin"}
+    _VALID_BREAKDOWNS = {"region", "segment", "category", "sub_category"}
+    _VALID_GRAINS = {"none", "week", "month", "quarter", "year"}
+    _VALID_COMPARES = {"prev_period", "mom", "yoy"}
+
+    def __init__(
+        self,
+        gemini_client: Any,
+        model_name: str,
+        rule_engine: Optional[RuleBasedSuggestionEngine] = None,
+        max_suggestions: int = 4,
+    ) -> None:
+        self.client = gemini_client
+        self.model_name = model_name
+        self.rule_engine = rule_engine or RuleBasedSuggestionEngine(max_suggestions=max_suggestions)
+        self.max_suggestions = max_suggestions
+
+    def suggest(
+        self,
+        last_question: str,
+        last_answer: str,
+        rag_context: "RAGContext",
+        last_plan: Optional[Dict[str, Any]] = None,
+        dashboard_defaults: Optional[Dict[str, Any]] = None,
+    ) -> List[Suggestion]:
+        try:
+            suggestions = self._gemini_suggest(
+                last_question=last_question,
+                last_answer=last_answer,
+                rag_context=rag_context,
+                last_plan=last_plan,
+                dashboard_defaults=dashboard_defaults,
+            )
+            if suggestions:
+                return suggestions[:self.max_suggestions]
+        except Exception:
+            pass
+
+        # Fallback: rule-based
+        return self.rule_engine.suggest(
+            plan=last_plan or {},
+            dashboard_defaults=dashboard_defaults,
+        )
+
+    def _build_prompt(
+        self,
+        last_question: str,
+        last_answer: str,
+        rag_context: "RAGContext",
+        last_plan: Optional[Dict[str, Any]],
+        dashboard_defaults: Optional[Dict[str, Any]],
+    ) -> str:
+        defaults = dashboard_defaults or {}
+        start_date = defaults.get("start_date", "unknown")
+        end_date = defaults.get("end_date", "unknown")
+        filters = defaults.get("filters", {})
+
+        data_facts = rag_context.as_prompt_section(max_chunks=8)
+        chat_history = rag_context.chat_summary or "(no history)"
+
+        plan_str = ""
+        if last_plan and isinstance(last_plan, dict):
+            plan_str = f"\nLast executed plan: {json.dumps(last_plan)}"
+
+        return f"""
+You are a Business Intelligence assistant for the Superstore Dashboard.
+
+=== VERIFIED DATA FACTS FROM DATABASE ===
+{data_facts}
+
+=== RECENT CONVERSATION HISTORY ===
+{chat_history}
+
+=== PREVIOUS Q&A ===
+User asked: {last_question}
+Bot answered: {last_answer[:300]}...{plan_str}
+
+=== TASK ===
+Generate exactly {self.max_suggestions} smart follow-up questions. RULES:
+1. Only suggest questions that THE DATA ABOVE CAN ANSWER. No hallucination.
+2. Each question must explore a different angle not yet covered.
+3. Prioritize: comparisons, trends, rankings, breakdowns by dimension.
+4. Write in English, concise (max 60 chars per text).
+5. Base questions on the actual data facts shown above.
+
+=== TECHNICAL CONSTRAINTS ===
+- Dashboard date range: {start_date} to {end_date}
+- Active filters: {json.dumps(filters)}
+- Valid metrics: sales, profit, orders, profit_margin
+- Valid dimensions: region, segment, category, sub_category
+- Valid time grains: week, month, quarter, year
+- Valid compare periods: yoy, mom, prev_period
+- Valid intents: kpi_value, kpi_trend, kpi_rank, kpi_compare
+
+=== OUTPUT FORMAT ===
+Return ONLY a valid JSON array. No markdown. No explanation.
+Each element:
+{{
+  "text": "Short question text shown to user (< 60 chars)",
+  "plan": {{
+    "intent": "kpi_value|kpi_trend|kpi_rank|kpi_compare",
+    "metrics": ["sales"],
+    "time_grain": "none",
+    "breakdown_by": null,
+    "start_date": "{start_date}",
+    "end_date": "{end_date}",
+    "compare_period": null,
+    "top_k": null,
+    "order_by": "sales",
+    "filters": {{"region": [], "segment": [], "category": []}}
+  }}
+}}
+
+OUTPUT (JSON array only):""".strip()
+
+    def _gemini_suggest(
+        self,
+        last_question: str,
+        last_answer: str,
+        rag_context: "RAGContext",
+        last_plan: Optional[Dict[str, Any]],
+        dashboard_defaults: Optional[Dict[str, Any]],
+    ) -> List[Suggestion]:
+        prompt = self._build_prompt(
+            last_question=last_question,
+            last_answer=last_answer,
+            rag_context=rag_context,
+            last_plan=last_plan,
+            dashboard_defaults=dashboard_defaults,
+        )
+
+        # ✅ Correct SDK: use config=GenerateContentConfig(...)
+        resp = self.client.models.generate_content(
+            model=self.model_name,
+            contents=prompt,
+            config=genai_types.GenerateContentConfig(
+                temperature=0.3,
+                max_output_tokens=800,
+            ),
+        )
+
+        raw = (getattr(resp, "text", None) or "").strip()
+        items = self._parse_json_array(raw)
+
+        suggestions: List[Suggestion] = []
+        for item in items:
+            text = (item.get("text") or "").strip()
+            if not text:
+                continue
+            plan = item.get("plan")
+            validated_plan = self._validate_plan_lightly(plan, dashboard_defaults)
+            suggestions.append(Suggestion(text=text, plan=validated_plan))
+
+        return suggestions
+
+    @staticmethod
+    def _parse_json_array(raw: str) -> List[Dict[str, Any]]:
+        try:
+            result = json.loads(raw)
+            if isinstance(result, list):
+                return result
+        except Exception:
+            pass
+
+        cleaned = re.sub(r"```(?:json)?", "", raw).strip()
+        try:
+            result = json.loads(cleaned)
+            if isinstance(result, list):
+                return result
+        except Exception:
+            pass
+
+        m = re.search(r"\[.*\]", cleaned, flags=re.DOTALL)
+        if m:
+            try:
+                result = json.loads(m.group(0))
+                if isinstance(result, list):
+                    return result
+            except Exception:
+                pass
+        return []
+
+    def _validate_plan_lightly(
+        self,
+        plan: Any,
+        dashboard_defaults: Optional[Dict[str, Any]],
+    ) -> Optional[Dict[str, Any]]:
+        if not isinstance(plan, dict):
+            return None
+
+        intent = plan.get("intent")
+        if intent not in self._VALID_INTENTS:
+            return None
+
+        metrics = plan.get("metrics", [])
+        if isinstance(metrics, str):
+            metrics = [metrics]
+        metrics = [m for m in metrics if m in self._VALID_METRICS]
+        if not metrics:
+            return None
+
+        time_grain = plan.get("time_grain", "none")
+        if time_grain not in self._VALID_GRAINS:
+            time_grain = "none"
+
+        breakdown_by = plan.get("breakdown_by")
+        if breakdown_by is not None and breakdown_by not in self._VALID_BREAKDOWNS:
+            breakdown_by = None
+
+        compare_period = plan.get("compare_period")
+        if compare_period is not None and compare_period not in self._VALID_COMPARES:
+            compare_period = None
+
+        top_k = plan.get("top_k")
+        if top_k is not None:
+            try:
+                top_k = max(1, min(50, int(top_k)))
+            except Exception:
+                top_k = None
+
+        if intent == "kpi_rank" and (not breakdown_by or top_k is None):
+            return None
+        if intent == "kpi_compare" and compare_period is None:
+            return None
+
+        defaults = dashboard_defaults or {}
+        start_date = plan.get("start_date") or defaults.get("start_date", "2000-01-01")
+        end_date = plan.get("end_date") or defaults.get("end_date", "2100-01-01")
+
+        raw_filters = plan.get("filters") or {}
+        filters = {
+            "region": list(raw_filters.get("region") or []),
+            "segment": list(raw_filters.get("segment") or []),
+            "category": list(raw_filters.get("category") or []),
+        }
+
+        return {
+            "intent": intent,
+            "metrics": metrics,
+            "time_grain": time_grain,
+            "breakdown_by": breakdown_by,
+            "start_date": str(start_date),
+            "end_date": str(end_date),
+            "compare_period": compare_period,
+            "top_k": top_k,
+            "order_by": plan.get("order_by") or metrics[0],
+            "filters": filters,
+        }
+
+
+# ─────────────────────────────────────────────────────────────
+# Backward compat alias
+# ─────────────────────────────────────────────────────────────
+
+class SuggestionEngine(RuleBasedSuggestionEngine):
+    """
+    Backward-compat alias for old app.py imports.
+    New code should use RuleBasedSuggestionEngine or RAGSuggestionEngine.
+    """
+
+    def suggest_from_plan(
+        self,
+        plan: Dict[str, Any],
+        dashboard_defaults: Optional[Dict[str, Any]] = None,
+        language: str = "en",
+    ) -> List[Suggestion]:
+        return self.suggest(plan, dashboard_defaults)
+
+    def suggest_from_dashboard_state(
+        self,
+        state: Dict[str, Any],
+        language: str = "en",
+    ) -> List[Suggestion]:
+        return self._fallback(state)

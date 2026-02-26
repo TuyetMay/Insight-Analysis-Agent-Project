@@ -148,7 +148,6 @@ selected_categories = st.sidebar.multiselect(
     options=filter_options['category'],
     default=filter_options['category']
 )
-
 filters = {
     'date_range': date_range if isinstance(date_range, tuple) and len(date_range) == 2 else (min_date, max_date),
     'region': selected_regions,
@@ -187,30 +186,28 @@ with col4:
 st.markdown("## 📈 Sales and Profit Over Time")
 col1, col2 = st.columns([2, 1])
 with col1:
-    st.plotly_chart(create_sales_profit_trend(filtered_df), use_container_width=True)
+    st.plotly_chart(create_sales_profit_trend(filtered_df), width="stretch")
 with col2:
-    st.plotly_chart(create_orders_by_month(filtered_df), use_container_width=True)
+    st.plotly_chart(create_orders_by_month(filtered_df), width="stretch")
 
 st.markdown("## 🌍 Profit Breakdown")
 col1, col2, col3 = st.columns(3)
 with col1:
-    st.plotly_chart(create_profit_by_region(filtered_df), use_container_width=True)
+    st.plotly_chart(create_profit_by_region(filtered_df), width="stretch")
 with col2:
-    st.plotly_chart(create_profit_by_segment(filtered_df), use_container_width=True)
+    st.plotly_chart(create_profit_by_segment(filtered_df), width="stretch")
 with col3:
-    st.plotly_chart(create_profit_heatmap(filtered_df), use_container_width=True)
-
+    st.plotly_chart(create_profit_heatmap(filtered_df), width="stretch")
 st.markdown("## 💡 Product Insights")
 col1, col2, col3 = st.columns(3)
 with col1:
-    st.plotly_chart(create_discount_impact(filtered_df), use_container_width=True)
+    st.plotly_chart(create_discount_impact(filtered_df), width="stretch")
 with col2:
-    st.plotly_chart(create_top_subcategories(filtered_df), use_container_width=True)
+    st.plotly_chart(create_top_subcategories(filtered_df), width="stretch")
 with col3:
-    st.plotly_chart(create_category_distribution(filtered_df), use_container_width=True)
-
+    st.plotly_chart(create_category_distribution(filtered_df), width="stretch")
 with st.expander("📊 View Data"):
-    st.dataframe(filtered_df.head(100), use_container_width=True)
+    st.dataframe(filtered_df.head(100), width="stretch")
 
 st.markdown("---")
 st.markdown("Dashboard by Streamlit • Plotly • AI Assistant")
@@ -236,47 +233,47 @@ st.sidebar.markdown("**Quick Questions:**")
 col1, col2 = st.sidebar.columns(2)
 
 with col1:
-    if st.button("💰 Total Sales", use_container_width=True):
+    if st.button("💰 Total Sales", width="stretch"):
         question = "What is the total sales?"
         st.session_state.chat_history.append({"role": "user", "content": question})
         response = chatbot.get_response(question)
         suggs = chatbot.get_suggestions(language="vi")
         if suggs:
-            response += "\n\n**Gợi ý tiếp theo:**\n" + "\n".join([f"- {s['text']}" for s in suggs])
+            response += "\n\n**Suggested next step**\n" + "\n".join([f"- {s['text']}" for s in suggs])
         st.session_state.chat_history.append({"role": "assistant", "content": response})
         st.session_state.suggestions = chatbot.get_suggestions(language="vi")
         st.rerun()
     
-    if st.button("📈 Trends", use_container_width=True):
+    if st.button("📈 Trends", width="stretch"):
         question = "Show me sales trends"
         st.session_state.chat_history.append({"role": "user", "content": question})
         response = chatbot.get_response(question)
         suggs = chatbot.get_suggestions(language="vi")
         if suggs:
-            response += "\n\n**Gợi ý tiếp theo:**\n" + "\n".join([f"- {s['text']}" for s in suggs])
+            response += "\n\n**Suggested next step**\n" + "\n".join([f"- {s['text']}" for s in suggs])
         st.session_state.chat_history.append({"role": "assistant", "content": response})
         st.session_state.suggestions = chatbot.get_suggestions(language="vi")
         st.rerun()
 
 with col2:
-    if st.button("🌍 By Region", use_container_width=True):
+    if st.button("🌍 By Region", width="stretch"):
         question = "Show profit by region"
         st.session_state.chat_history.append({"role": "user", "content": question})
         response = chatbot.get_response(question)
         suggs = chatbot.get_suggestions(language="vi")
         if suggs:
-            response += "\n\n**Gợi ý tiếp theo:**\n" + "\n".join([f"- {s['text']}" for s in suggs])
+            response += "\n\n** Suggested next step**\n" + "\n".join([f"- {s['text']}" for s in suggs])
         st.session_state.chat_history.append({"role": "assistant", "content": response})
         st.session_state.suggestions = chatbot.get_suggestions(language="vi")
         st.rerun()
     
-    if st.button("🏆 Top Items", use_container_width=True):
+    if st.button("🏆 Top Items", width="stretch"):
         question = "What are the top categories?"
         st.session_state.chat_history.append({"role": "user", "content": question})
         response = chatbot.get_response(question)
         suggs = chatbot.get_suggestions(language="vi")
         if suggs:
-            response += "\n\n**Gợi ý tiếp theo:**\n" + "\n".join([f"- {s['text']}" for s in suggs])
+            response += "\n\n**Suggested next step**\n" + "\n".join([f"- {s['text']}" for s in suggs])
         st.session_state.chat_history.append({"role": "assistant", "content": response})
         st.session_state.suggestions = chatbot.get_suggestions(language="vi")
         st.rerun()
@@ -287,9 +284,9 @@ with st.sidebar.form("chat_form", clear_on_submit=True):
     
     col1, col2 = st.columns([3, 1])
     with col1:
-        submit = st.form_submit_button("Send 📤", use_container_width=True)
+        submit = st.form_submit_button("Send 📤", width="stretch")
     with col2:
-        clear = st.form_submit_button("Clear", use_container_width=True)
+        clear = st.form_submit_button("Clear", width="stretch")
     
     if submit and user_input.strip():
         st.session_state.chat_history.append({"role": "user", "content": user_input.strip()})
@@ -298,7 +295,7 @@ with st.sidebar.form("chat_form", clear_on_submit=True):
             response = chatbot.get_response(user_input.strip())
             suggs = chatbot.get_suggestions(language="vi")
             if suggs:
-                response += "\n\n**Gợi ý tiếp theo:**\n" + "\n".join([f"- {s['text']}" for s in suggs])
+                response += "\n\n**Suggested next step**\n" + "\n".join([f"- {s['text']}" for s in suggs])
         
         st.session_state.chat_history.append({"role": "assistant", "content": response})
         st.rerun()
