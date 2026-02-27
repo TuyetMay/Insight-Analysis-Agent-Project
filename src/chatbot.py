@@ -1,14 +1,4 @@
 # src/chatbot.py
-"""
-DashboardChatbot - full RAG pipeline.
-
-Key fixes vs previous version:
-1. Gemini API: use config=GenerateContentConfig(...) — NOT temperature= as kwarg
-2. Fast KPI path: skip when query contains dimension breakdown ("by region", etc.)
-3. All output in English only
-4. "profit by region" now correctly triggers Gemini → breakdown SQL, not fast path
-"""
-
 from __future__ import annotations
 
 import json
@@ -32,33 +22,11 @@ from src.rag_engine import RAGEngine, RAGContext
 
 
 class DashboardChatbot:
-    """
-    Superstore Dashboard Chatbot with RAG pipeline.
-
-    Pipeline:
-        User Question
-            ↓
-        [Fast KPI Path]  ← only for pure aggregates with NO dimension/time hints
-            ↓ (else)
-        [RAG Retrieve]   ← knowledge base built from tabular data
-            ↓
-        [Gemini Planner] + RAG context → Plan JSON  (never raw SQL)
-            ↓
-        [Plan Validator] ← allowlist-based security
-            ↓
-        [SQL Builder]    ← parameterized queries only
-            ↓
-        [Answer Formatter]
-            ↓
-        [RAGSuggestionEngine]  ← Gemini + RAG → grounded suggestions
-    """
-
     _METRICS = {"sales", "profit", "orders", "profit_margin"}
     _TIME_GRAINS = {"none", "week", "month", "quarter", "year"}
     _DIM_FILTERS = {"region", "segment", "category", "sub_category"}
     _DIM_BREAKDOWNS = {"region", "segment", "category", "sub_category"}
 
-    # Pattern that indicates the user wants a breakdown/dimension split
     _BREAKDOWN_PATTERN = re.compile(
         r"\b(by|per|across|for each|breakdown|group by|split by)\s+"
         r"(region|segment|category|sub.?category|product|state|city|ship\s*mode)\b",
@@ -76,7 +44,6 @@ class DashboardChatbot:
         if "order_date" in self.df.columns and not pd.api.types.is_datetime64_any_dtype(self.df["order_date"]):
             self.df["order_date"] = pd.to_datetime(self.df["order_date"], errors="coerce")
 
-        # ── Gemini ───────────────────────────────────────────────────
         self.gemini_ready = False
         api_key = getattr(Config, "GOOGLE_API_KEY", "")
         if api_key:
@@ -84,11 +51,9 @@ class DashboardChatbot:
             self.model_name = getattr(Config, "GEMINI_MODEL", "gemini-1.5-flash")
             self.gemini_ready = True
 
-        # ── RAG Engine ───────────────────────────────────────────────
         self.rag = RAGEngine()
         self.rag.build(df=self.df, kpis=self.kpis, filters=self.filters)
 
-        # ── Suggestion engines ───────────────────────────────────────
         self._rule_engine = RuleBasedSuggestionEngine(
             allowed_metrics=list(self._METRICS),
             allowed_breakdowns=list(self._DIM_BREAKDOWNS),
@@ -104,7 +69,6 @@ class DashboardChatbot:
                 max_suggestions=4,
             )
 
-        # Backward-compat alias
         self.suggestion_engine = SuggestionEngine(
             allowed_metrics=list(self._METRICS),
             allowed_breakdowns=list(self._DIM_BREAKDOWNS),
@@ -112,9 +76,9 @@ class DashboardChatbot:
             max_suggestions=4,
         )
 
-    # ─────────────────────────────────────────────────────────────
-    # Fast path (no Gemini, no RAG)
-    # ─────────────────────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────
+    # Fast path
+    # ─────────────────────────────────────────────────────────
 
     def _filter_summary(self) -> str:
         f = self.filters or {}
@@ -137,11 +101,9 @@ class DashboardChatbot:
         return " | ".join(parts) if parts else "No filters applied"
 
     def _has_breakdown_hint(self, q: str) -> bool:
-        """Return True if the question explicitly requests a dimension breakdown."""
         return bool(self._BREAKDOWN_PATTERN.search(q))
 
     def _has_time_hint(self, q: str) -> bool:
-        """Return True if the question references a specific time period."""
         ql = q.lower()
         if re.search(r"\b(20\d{2})\b", ql):
             return True
@@ -154,19 +116,11 @@ class DashboardChatbot:
         return False
 
     def _fast_kpi_answer(self, q: str) -> Optional[str]:
-        """
-        Answer simple pure-aggregate KPI questions directly from self.kpis.
-        Skips if the question asks for a breakdown OR a specific time period.
-        """
         ql = (q or "").strip().lower()
         if not ql:
             return None
-
-        # ✅ FIX: skip fast path when user wants a dimension breakdown
         if self._has_breakdown_hint(q):
             return None
-
-        # Skip fast path when a specific time period is requested
         if self._has_time_hint(q):
             return None
 
@@ -180,26 +134,26 @@ class DashboardChatbot:
 
         if re.search(r"\b(kpi|summary|overview|dashboard)\b", ql):
             return (
-                f"**Current KPIs** ({self._filter_summary()}):\n"
-                f"- Total Sales: {money(ts)}\n"
-                f"- Total Profit: {money(tp)}\n"
-                f"- Total Orders: {to_:,}\n"
-                f"- Profit Margin: {pm:.2f}%"
+                "Here's a quick overview of your current KPIs:\n\n"
+                f"- **Total Sales:** {money(ts)}\n"
+                f"- **Total Profit:** {money(tp)}\n"
+                f"- **Total Orders:** {to_:,}\n"
+                f"- **Profit Margin:** {pm:.2f}%"
             )
         if re.search(r"\b(total\s+sales|sales\s+total|revenue)\b", ql):
-            return f"**Total Sales:** {money(ts)}\n_{self._filter_summary()}_"
+            return f"Total sales came in at **{money(ts)}**."
         if re.search(r"\b(total\s+profit|profit\s+total)\b", ql):
-            return f"**Total Profit:** {money(tp)}\n_{self._filter_summary()}_"
+            return f"Total profit reached **{money(tp)}**."
         if re.search(r"\b(total\s+orders|orders\s+total|number\s+of\s+orders)\b", ql):
-            return f"**Total Orders:** {to_:,}\n_{self._filter_summary()}_"
+            return f"The total number of orders was **{to_:,}**."
         if re.search(r"\b(profit\s+margin|margin)\b", ql):
-            return f"**Profit Margin:** {pm:.2f}%\n_{self._filter_summary()}_"
+            return f"The profit margin stood at **{pm:.2f}%**."
 
         return None
 
-    # ─────────────────────────────────────────────────────────────
-    # Gemini: NL → Plan JSON  (with RAG context)
-    # ─────────────────────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────
+    # Gemini: NL → Plan JSON
+    # ─────────────────────────────────────────────────────────
 
     def _plan_prompt_with_rag(self, user_question: str, rag_context: RAGContext) -> str:
         regions, segments, categories = self._get_current_filter_lists()
@@ -269,8 +223,6 @@ OUTPUT (JSON only):""".strip()
             raise RuntimeError("Gemini API key not configured.")
 
         prompt = self._plan_prompt_with_rag(q, rag_context)
-
-        # ✅ Correct SDK call: config=GenerateContentConfig(...)
         resp = self.client.models.generate_content(
             model=self.model_name,
             contents=prompt,
@@ -279,7 +231,6 @@ OUTPUT (JSON only):""".strip()
                 max_output_tokens=400,
             ),
         )
-
         text = (getattr(resp, "text", None) or "").strip()
         return self._extract_json_object(text)
 
@@ -299,9 +250,9 @@ OUTPUT (JSON only):""".strip()
             raise ValueError("Gemini did not return valid JSON.")
         return json.loads(m.group(0))
 
-    # ─────────────────────────────────────────────────────────────
-    # Plan validation  (allowlist-based security)
-    # ─────────────────────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────
+    # Plan validation
+    # ─────────────────────────────────────────────────────────
 
     def _parse_date(self, s: str) -> Optional[date]:
         if not isinstance(s, str):
@@ -351,7 +302,6 @@ OUTPUT (JSON only):""".strip()
         if time_grain not in self._TIME_GRAINS:
             raise ValueError(f"Invalid time_grain: {time_grain}")
 
-        # Auto-upgrade kpi_value + time_grain → kpi_trend
         if intent == "kpi_value" and time_grain != "none":
             intent = "kpi_trend"
             plan["intent"] = intent
@@ -438,9 +388,9 @@ OUTPUT (JSON only):""".strip()
             "filters": norm_filters,
         }
 
-    # ─────────────────────────────────────────────────────────────
-    # SQL builder  (parameterized, no user values in string)
-    # ─────────────────────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────
+    # SQL builder
+    # ─────────────────────────────────────────────────────────
 
     def _build_sql(self, plan: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
         table = getattr(Config, "DB_TABLE", "superstore")
@@ -561,48 +511,86 @@ OUTPUT (JSON only):""".strip()
         sql, params = self._build_sql(plan)
         return execute_query(sql, params=params)
 
-    # ─────────────────────────────────────────────────────────────
-    # Answer formatter  (English only)
-    # ─────────────────────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────
+    # Answer formatter
+    # ─────────────────────────────────────────────────────────
 
     @staticmethod
     def _fmt_money(x: float) -> str:
         return f"${x:,.0f}"
 
-    def _explain_query(self, plan: Dict[str, Any]) -> str:
-        parts = [f"{plan['start_date']} to {plan['end_date']}"]
+    def _natural_context(self, plan: Dict[str, Any]) -> str:
+        """
+        Builds a concise, readable context line.
+        Examples:
+            "Jan 2014 – Dec 2017"
+            "Jan 2014 – Dec 2017  ·  West, East"
+        Returns empty string when no meaningful restriction to surface.
+        """
+        sd = plan.get("start_date", "")
+        ed = plan.get("end_date", "")
+
+        def fmt_date(d: str) -> str:
+            try:
+                return datetime.strptime(d, "%Y-%m-%d").strftime("%b %Y")
+            except Exception:
+                return d
+
+        date_part = f"{fmt_date(sd)} – {fmt_date(ed)}" if sd and ed else ""
+
         f = plan.get("filters") or {}
-        for dim in ["region", "segment", "category"]:
-            vals = f.get(dim) or []
-            if vals:
-                parts.append(f"{dim}={', '.join(vals)}")
-        if plan.get("breakdown_by"):
-            parts.append(f"by {plan['breakdown_by']}")
-        if plan.get("time_grain") and plan["time_grain"] != "none":
-            parts.append(f"grain={plan['time_grain']}")
-        if plan.get("intent") == "kpi_compare":
-            parts.append(f"compare={plan.get('compare_period')}")
-        return " | ".join(parts)
+        regions, segments, categories = self._get_current_filter_lists()
+
+        filter_parts: List[str] = []
+        fv_r = f.get("region") or []
+        fv_s = f.get("segment") or []
+        fv_c = f.get("category") or []
+
+        if fv_r and set(fv_r) != set(regions):
+            filter_parts.append(", ".join(fv_r))
+        if fv_s and set(fv_s) != set(segments):
+            filter_parts.append(", ".join(fv_s))
+        if fv_c and set(fv_c) != set(categories):
+            filter_parts.append(", ".join(fv_c))
+
+        parts = [p for p in [date_part] + filter_parts if p]
+        return "  ·  ".join(parts)
+
+    # legacy alias
+    def _explain_query(self, plan: Dict[str, Any]) -> str:
+        return self._natural_context(plan)
 
     def _format_answer(self, plan: Dict[str, Any], df: pd.DataFrame) -> str:
         if plan["intent"] == "clarify":
             return plan.get("clarifying_question", "Could you clarify your question?")
 
-        explain = self._explain_query(plan)
+        ctx = self._natural_context(plan)
+        ctx_line = f"\n*{ctx}*" if ctx else ""
+
         intent = plan["intent"]
         metrics = plan["metrics"]
         time_grain = plan["time_grain"]
         breakdown_by = plan.get("breakdown_by")
 
         metric_labels = {
-            "orders": "Total Orders", "sales": "Total Sales",
-            "profit": "Total Profit", "profit_margin": "Profit Margin",
+            "orders": "Total Orders",
+            "sales": "Total Sales",
+            "profit": "Total Profit",
+            "profit_margin": "Profit Margin",
+        }
+
+        # Natural sentence openers for single-value answers
+        metric_openers = {
+            "sales":         "Total sales came in at",
+            "profit":        "Total profit reached",
+            "orders":        "The total number of orders was",
+            "profit_margin": "The profit margin stood at",
         }
 
         if df is None or df.empty:
-            return f"No data found. ({explain})"
+            return f"No data found for the selected filters.{ctx_line}"
 
-        # Compare
+        # ── kpi_compare ───────────────────────────────────────
         if intent == "kpi_compare":
             row = df.iloc[0]
             m = row["metric"]
@@ -610,32 +598,47 @@ OUTPUT (JSON only):""".strip()
             prev = float(row["previous"])
             change = ((cur - prev) / abs(prev) * 100.0) if prev != 0 else None
 
-            fmt_val = (
-                (lambda v: self._fmt_money(v)) if m in {"sales", "profit"}
-                else ((lambda v: f"{v:.2f}%") if m == "profit_margin" else (lambda v: f"{int(v):,}"))
-            )
+            def fmt_val(v: float) -> str:
+                if m in {"sales", "profit"}:
+                    return self._fmt_money(v)
+                if m == "profit_margin":
+                    return f"{v:.2f}%"
+                return f"{int(v):,}"
+
+            cp_label = {
+                "yoy": "year-over-year",
+                "mom": "month-over-month",
+                "prev_period": "vs the previous period",
+            }.get(plan.get("compare_period", ""), "vs previous")
+
             delta_s = f"{change:+.1f}%" if change is not None else "n/a"
-            cp_label = {"yoy": "last year", "mom": "last month", "prev_period": "previous period"}.get(
-                plan.get("compare_period", ""), "previous"
-            )
+            direction = "up" if (change or 0) >= 0 else "down"
+
             return "\n".join([
-                f"**{metric_labels[m]}** ({explain})",
-                f"- Current period ({row['current_start']} – {row['current_end']}): {fmt_val(cur)}",
-                f"- Previous period ({row['prev_start']} – {row['prev_end']}): {fmt_val(prev)}",
-                f"- Change vs {cp_label}: {delta_s}",
+                f"Here's the **{metric_labels[m]}** comparison ({cp_label}):{ctx_line}",
+                "",
+                f"- **Current** ({row['current_start']} – {row['current_end']}): {fmt_val(cur)}",
+                f"- **Previous** ({row['prev_start']} – {row['prev_end']}): {fmt_val(prev)}",
+                f"- **Change:** {delta_s} ({direction})",
             ])
 
-        # KPI value (no time breakdown)
+        # ── kpi_value (no time grain) ─────────────────────────
         if intent == "kpi_value" and time_grain == "none":
-            header = f"**{' & '.join(metric_labels[m] for m in metrics)}** ({explain})"
             if breakdown_by:
-                lines = [header]
-                show = df.sort_values(by=plan.get("order_by") or metrics[0], ascending=False).head(20)
+                dim_label = breakdown_by.replace("_", " ").title()
+                m0 = plan.get("order_by") or metrics[0]
+                lines = [
+                    f"Here's how **{metric_labels[metrics[0]]}** breaks down by **{dim_label}**:{ctx_line}",
+                    "",
+                ]
+                show = df.sort_values(by=m0, ascending=False).head(20)
                 for rank, (_, r) in enumerate(show.iterrows(), start=1):
-                    b = r.get("breakdown")
+                    b = r.get("breakdown", "—")
                     val_parts = []
                     for m in metrics:
                         v = r.get(m)
+                        if v is None:
+                            continue
                         if m in {"sales", "profit"}:
                             val_parts.append(f"{metric_labels[m]}: {self._fmt_money(float(v))}")
                         elif m == "profit_margin":
@@ -645,18 +648,41 @@ OUTPUT (JSON only):""".strip()
                     lines.append(f"{rank}. **{b}** — " + " | ".join(val_parts))
                 return "\n".join(lines)
 
+            # Single aggregate
             r0 = df.iloc[0]
-            lines = [header]
+            if len(metrics) == 1:
+                m = metrics[0]
+                v = float(r0[m])
+                vs = (
+                    self._fmt_money(v) if m in {"sales", "profit"}
+                    else (f"{v:.2f}%" if m == "profit_margin" else f"{int(v):,}")
+                )
+                opener = metric_openers.get(m, f"{metric_labels[m]} is")
+                return f"{opener} **{vs}**.{ctx_line}"
+
+            # Multiple metrics together
+            lines = [f"Here's a summary of the selected metrics:{ctx_line}", ""]
             for m in metrics:
                 v = float(r0[m])
-                vs = self._fmt_money(v) if m in {"sales", "profit"} else (f"{v:.2f}%" if m == "profit_margin" else f"{int(v):,}")
-                lines.append(f"- {metric_labels[m]}: {vs}")
+                vs = (
+                    self._fmt_money(v) if m in {"sales", "profit"}
+                    else (f"{v:.2f}%" if m == "profit_margin" else f"{int(v):,}")
+                )
+                lines.append(f"- **{metric_labels[m]}:** {vs}")
             return "\n".join(lines)
 
-        # Trend
+        # ── kpi_trend ─────────────────────────────────────────
         if intent == "kpi_trend" and time_grain != "none":
-            header = f"**Trend: {' & '.join(metric_labels[m] for m in metrics)}** ({explain})"
-            lines = [header]
+            grain_label = {
+                "week": "week", "month": "month",
+                "quarter": "quarter", "year": "year",
+            }.get(time_grain, time_grain)
+            metric_str = " & ".join(metric_labels[m] for m in metrics)
+
+            lines = [
+                f"Here's the **{metric_str}** trend by {grain_label}:{ctx_line}",
+                "",
+            ]
             show = df.copy()
             if "period" in show.columns:
                 show = show.sort_values("period").tail(24)
@@ -666,38 +692,47 @@ OUTPUT (JSON only):""".strip()
                 show = show[show["breakdown"].isin(top_b)]
 
             for _, r in show.iterrows():
-                p = str(r.get("period", ""))[:10]
+                p = str(r.get("period", ""))[:7]
                 val_parts = []
                 for m in metrics:
                     v = float(r[m])
-                    vs = self._fmt_money(v) if m in {"sales", "profit"} else (f"{v:.2f}%" if m == "profit_margin" else f"{int(v):,}")
-                    val_parts.append(f"{metric_labels[m]}: {vs}")
-                prefix = f"{p}"
+                    vs = (
+                        self._fmt_money(v) if m in {"sales", "profit"}
+                        else (f"{v:.2f}%" if m == "profit_margin" else f"{int(v):,}")
+                    )
+                    val_parts.append(vs)
+                prefix = p
                 if breakdown_by:
                     prefix += f" | {r.get('breakdown')}"
-                lines.append(f"- {prefix}: " + " | ".join(val_parts))
+                lines.append(f"- **{prefix}:** " + " / ".join(val_parts))
 
-            if len(lines) > 30:
-                lines = lines[:30] + ["- ... (truncated)"]
+            if len(lines) > 32:
+                lines = lines[:32] + ["- *(truncated – showing most recent 30 periods)*"]
             return "\n".join(lines)
 
-        # Rank
+        # ── kpi_rank ──────────────────────────────────────────
         if intent == "kpi_rank":
             m0 = metrics[0]
-            header = f"**Top {plan['top_k']} {breakdown_by.replace('_', ' ').title()} by {metric_labels[m0]}** ({explain})"
-            lines = [header]
+            dim_label = (breakdown_by or "item").replace("_", " ").title()
+            lines = [
+                f"Here are the **top {plan['top_k']} {dim_label}s** ranked by {metric_labels[m0]}:{ctx_line}",
+                "",
+            ]
             for i, (_, r) in enumerate(df.head(plan["top_k"]).iterrows(), start=1):
-                b = r.get("breakdown")
+                b = r.get("breakdown", "—")
                 v = float(r[m0])
-                vs = self._fmt_money(v) if m0 in {"sales", "profit"} else (f"{v:.2f}%" if m0 == "profit_margin" else f"{int(v):,}")
-                lines.append(f"{i}. **{b}**: {vs}")
+                vs = (
+                    self._fmt_money(v) if m0 in {"sales", "profit"}
+                    else (f"{v:.2f}%" if m0 == "profit_margin" else f"{int(v):,}")
+                )
+                lines.append(f"{i}. **{b}** — {vs}")
             return "\n".join(lines)
 
-        return f"Done. ({explain})"
+        return f"Done.{ctx_line}"
 
-    # ─────────────────────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────
     # Helpers
-    # ─────────────────────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────
 
     def _get_current_filter_lists(self) -> Tuple[List[str], List[str], List[str]]:
         f = self.filters or {}
@@ -729,9 +764,9 @@ OUTPUT (JSON only):""".strip()
             },
         }
 
-    # ─────────────────────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────
     # Public: get_response
-    # ─────────────────────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────
 
     def get_response(self, user_question: str) -> str:
         q = (user_question or "").strip()
@@ -742,7 +777,6 @@ OUTPUT (JSON only):""".strip()
         if not q:
             return "Ask me about Sales, Profit, Orders, or Profit Margin."
 
-        # 1) Fast KPI path — pure aggregates, no breakdown, no time filter
         fast = self._fast_kpi_answer(q)
         if fast:
             self._last_answer = fast
@@ -750,14 +784,11 @@ OUTPUT (JSON only):""".strip()
             self.rag.add_turn("assistant", fast)
             return fast
 
-        # 2) Gemini not configured
         if not self.gemini_ready:
             return "⚠️ Gemini API Key not configured in .env"
 
-        # 3) RAG Retrieve → inject into Gemini plan prompt
         rag_ctx = self.rag.retrieve(q, k=7)
 
-        # 4) Gemini → Plan JSON → validate → SQL → answer
         try:
             plan = self._gemini_plan(q, rag_ctx)
             plan = self._validate_plan(plan)
@@ -772,15 +803,11 @@ OUTPUT (JSON only):""".strip()
         self.rag.add_turn("assistant", answer)
         return answer
 
-    # ─────────────────────────────────────────────────────────────
-    # Public: get_suggestions  (RAG-powered)
-    # ─────────────────────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────
+    # Public: get_suggestions
+    # ─────────────────────────────────────────────────────────
 
     def get_suggestions(self, *, language: str = "en") -> List[Dict[str, Any]]:
-        """
-        Generate smart suggestions grounded in real data via RAG + Gemini.
-        Falls back to rule-based if Gemini fails.
-        """
         dashboard_defaults = self._get_dashboard_defaults()
 
         if not self._last_question:
@@ -812,12 +839,11 @@ OUTPUT (JSON only):""".strip()
 
         return [{"text": s.text, "plan": s.plan} for s in suggs]
 
-    # ─────────────────────────────────────────────────────────────
-    # Public: run suggestion plan directly (no LLM)
-    # ─────────────────────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────
+    # Public: run suggestion plan directly
+    # ─────────────────────────────────────────────────────────
 
     def get_response_from_plan(self, plan: Dict[str, Any]) -> str:
-        """Execute a suggestion plan directly, WITHOUT calling Gemini."""
         try:
             plan = self._validate_plan(plan)
             self.last_plan = plan
@@ -830,9 +856,9 @@ OUTPUT (JSON only):""".strip()
             self.last_plan = None
             return f"❌ Could not run that suggestion. ({str(e)})"
 
-    # ─────────────────────────────────────────────────────────────
-    # Public: get_insights (optional)
-    # ─────────────────────────────────────────────────────────────
+    # ─────────────────────────────────────────────────────────
+    # Public: get_insights
+    # ─────────────────────────────────────────────────────────
 
     def get_insights(self) -> str:
         if not self.gemini_ready:
@@ -864,7 +890,6 @@ write exactly 3 concise bullet-point insights. Numbers-first, English only.
             return "Could not generate insights at this time."
 
     def rebuild_rag(self) -> None:
-        """Rebuild the RAG index when df or filters change externally."""
         self.rag.build(df=self.df, kpis=self.kpis, filters=self.filters)
 
     @property
