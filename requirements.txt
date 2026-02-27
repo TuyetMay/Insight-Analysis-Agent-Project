@@ -31,3 +31,4 @@ grpcio==1.76.0
 grpcio-status==1.71.2
 
 psycopg2-binary==2.9.11
+google-genai==1.65.0
