@@ -33,6 +33,37 @@ class DashboardChatbot:
         re.IGNORECASE,
     )
 
+    # Keyword maps for rule-based NL parsing
+    _METRIC_KEYWORDS: Dict[str, str] = {
+        "sale": "sales", "sales": "sales", "revenue": "sales", "income": "sales",
+        "profit": "profit", "margin": "profit_margin", "profit margin": "profit_margin",
+        "profitability": "profit_margin",
+        "order": "orders", "orders": "orders", "transaction": "orders",
+    }
+    _BREAKDOWN_KEYWORDS: Dict[str, str] = {
+        "region": "region", "regions": "region",
+        "segment": "segment", "segments": "segment",
+        "category": "category", "categories": "category",
+        "sub-category": "sub_category", "subcategory": "sub_category",
+        "sub_category": "sub_category", "sub category": "sub_category",
+        "subcategories": "sub_category", "sub-categories": "sub_category",
+        "product": "sub_category",
+    }
+    _TOP_PATTERN = re.compile(r"\btop[\s-]?(\d+)\b", re.IGNORECASE)
+    _GRAIN_KEYWORDS: Dict[str, str] = {
+        "daily": "week", "weekly": "week", "week": "week",
+        "monthly": "month", "month": "month",
+        "quarterly": "quarter", "quarter": "quarter",
+        "yearly": "year", "annual": "year", "year": "year",
+    }
+    _COMPARE_KEYWORDS: Dict[str, str] = {
+        "yoy": "yoy", "year over year": "yoy", "year-over-year": "yoy",
+        "mom": "mom", "month over month": "mom", "month-over-month": "mom",
+        "previous period": "prev_period", "prior period": "prev_period",
+        "last period": "prev_period", "vs previous": "prev_period",
+        "compared to previous": "prev_period",
+    }
+
     def __init__(self, df: pd.DataFrame, kpis: Dict[str, Any], filters: Dict[str, Any]):
         self.df = df.copy()
         self.kpis = kpis
@@ -152,6 +183,124 @@ class DashboardChatbot:
         return None
 
     # ─────────────────────────────────────────────────────────
+    # Rule-based NL → Plan  (no LLM, handles simple queries)
+    # ─────────────────────────────────────────────────────────
+
+    def _rule_based_plan(self, q: str) -> Optional[Dict[str, Any]]:
+        """
+        Parse simple natural-language queries into a plan dict without calling Gemini.
+        Handles patterns like:
+          - "sales by region"
+          - "total profit by category"
+          - "top 5 sub-category by profit"
+          - "profit trend by month"
+          - "compare sales yoy"
+        Returns a validated plan dict, or None if pattern not recognized.
+        """
+        ql = q.lower().strip()
+        s0, e0 = self._get_dashboard_date_range()
+        regions, segments, categories = self._get_current_filter_lists()
+
+        base_plan: Dict[str, Any] = {
+            "intent": "kpi_value",
+            "metrics": ["sales"],
+            "time_grain": "none",
+            "breakdown_by": None,
+            "start_date": s0,
+            "end_date": e0,
+            "compare_period": None,
+            "top_k": None,
+            "order_by": "sales",
+            "filters": {"region": [], "segment": [], "category": []},
+        }
+
+        # ── Detect metric ────────────────────────────────────
+        detected_metric = "sales"
+        for kw, metric in sorted(self._METRIC_KEYWORDS.items(), key=lambda x: -len(x[0])):
+            if kw in ql:
+                detected_metric = metric
+                break
+        base_plan["metrics"] = [detected_metric]
+        base_plan["order_by"] = detected_metric
+
+        # ── Detect breakdown ─────────────────────────────────
+        detected_breakdown: Optional[str] = None
+        for kw, dim in sorted(self._BREAKDOWN_KEYWORDS.items(), key=lambda x: -len(x[0])):
+            if kw in ql:
+                detected_breakdown = dim
+                break
+        # Also check via the existing regex pattern
+        if detected_breakdown is None:
+            m = self._BREAKDOWN_PATTERN.search(q)
+            if m:
+                raw = m.group(2).lower().replace(" ", "_").replace("-", "_")
+                # Normalize "sub_category" variants
+                if "sub" in raw:
+                    raw = "sub_category"
+                if raw in self._DIM_BREAKDOWNS:
+                    detected_breakdown = raw
+
+        # ── Detect top-k ─────────────────────────────────────
+        top_match = self._TOP_PATTERN.search(ql)
+        top_k: Optional[int] = int(top_match.group(1)) if top_match else None
+
+        # ── Detect time grain ────────────────────────────────
+        detected_grain = "none"
+        for kw, grain in sorted(self._GRAIN_KEYWORDS.items(), key=lambda x: -len(x[0])):
+            if kw in ql:
+                detected_grain = grain
+                break
+
+        # ── Detect compare period ────────────────────────────
+        detected_compare: Optional[str] = None
+        compare_triggers = re.search(
+            r"\b(compare|vs|versus|compared|growth|change|difference)\b", ql
+        )
+        if compare_triggers:
+            for kw, cp in sorted(self._COMPARE_KEYWORDS.items(), key=lambda x: -len(x[0])):
+                if kw in ql:
+                    detected_compare = cp
+                    break
+            if detected_compare is None:
+                # default compare to prev_period if "compare" detected but no period specified
+                detected_compare = "prev_period"
+
+        # ── Build intent ──────────────────────────────────────
+        if detected_compare:
+            if len(base_plan["metrics"]) != 1:
+                base_plan["metrics"] = [detected_metric]
+            base_plan["intent"] = "kpi_compare"
+            base_plan["compare_period"] = detected_compare
+        elif top_k and detected_breakdown:
+            base_plan["intent"] = "kpi_rank"
+            base_plan["breakdown_by"] = detected_breakdown
+            base_plan["top_k"] = top_k
+        elif detected_grain != "none":
+            base_plan["intent"] = "kpi_trend"
+            base_plan["time_grain"] = detected_grain
+            base_plan["breakdown_by"] = detected_breakdown
+        elif detected_breakdown:
+            base_plan["intent"] = "kpi_value"
+            base_plan["breakdown_by"] = detected_breakdown
+        else:
+            # Nothing recognizable beyond maybe a metric — let Gemini handle it
+            return None
+
+        # ── Must have at least breakdown or grain or compare ──
+        has_something = (
+            detected_breakdown is not None
+            or detected_grain != "none"
+            or detected_compare is not None
+        )
+        if not has_something:
+            return None
+
+        try:
+            return self._validate_plan(base_plan)
+        except Exception:
+            return None
+
+    # ─────────────────────────────────────────────────────────
     # Gemini: NL → Plan JSON
     # ─────────────────────────────────────────────────────────
 
@@ -161,62 +310,79 @@ class DashboardChatbot:
         rag_section = rag_context.as_prompt_section(max_chunks=7)
 
         return f"""
-You are a query planner for a Postgres Superstore analytics database.
-Return ONLY a valid JSON object. Do NOT include markdown. Do NOT write SQL.
+    You are a STRICT JSON query planner for a Postgres "Superstore" analytics dataset.
 
-=== REAL DATA FACTS FROM DASHBOARD ===
-{rag_section}
+    You must output ONLY ONE valid JSON object that matches the schema below.
+    No markdown. No SQL. No explanations. No extra keys.
+    If the question cannot be answered with the schema (missing required info or unsupported dimension), output intent="clarify".
 
-=== VALID INTENTS ===
-- "kpi_value"   : one or more KPI totals (optionally grouped by breakdown_by)
-- "kpi_trend"   : time series of one or two metrics
-- "kpi_rank"    : ranked top-k list (requires breakdown_by and top_k)
-- "kpi_compare" : compare metric to a prior period (requires compare_period)
-- "clarify"     : when the question is ambiguous or missing required info
+    === VERIFIED DATA FACTS (use these only; do not invent facts) ===
+    {rag_section}
 
-=== VALID METRICS ===
-"sales" | "profit" | "orders" | "profit_margin"
+    === SUPPORTED INTENTS ===
+    - kpi_value   : totals for 1–2 metrics, optionally grouped by breakdown_by
+    - kpi_trend   : time series for 1–2 metrics (requires time_grain != "none")
+    - kpi_rank    : ranked top-k list (requires breakdown_by and top_k)
+    - kpi_compare : compare 1 metric to a prior period (requires compare_period)
+    - clarify     : ask ONE clarifying question when needed
 
-=== VALID TIME GRAIN ===
-"none" | "week" | "month" | "quarter" | "year"
+    === SUPPORTED METRICS ===
+    sales | profit | orders | profit_margin
 
-=== VALID BREAKDOWN ===
-null | "region" | "segment" | "category" | "sub_category"
+    === SUPPORTED TIME GRAIN ===
+    none | week | month | quarter | year
 
-=== VALID COMPARE PERIOD ===
-null | "prev_period" | "mom" | "yoy"
+    === SUPPORTED BREAKDOWN (dimension) ===
+    null | region | segment | category | sub_category
 
-=== DATE RULES ===
-- Dates must be "YYYY-MM-DD"
-- Default range when not specified: start="{default_start}", end="{default_end}"
-- Use real data facts above to pick correct year/month when user refers to a period
+    === SUPPORTED COMPARE PERIOD ===
+    null | prev_period | mom | yoy
 
-=== FILTER RULES ===
-- filters object must have keys: region, segment, category
-- Values must ONLY come from current dashboard selections:
-  regions={json.dumps(regions)}
-  segments={json.dumps(segments)}
-  categories={json.dumps(categories)}
-- Empty array [] = include all (current filter)
+    === FILTER RULES (STRICT) ===
+    - filters must include exactly: region, segment, category
+    - values must be chosen ONLY from the CURRENT dashboard selections below
+    - [] means "no extra filtering beyond current dashboard state"
 
-=== JSON SCHEMA ===
-{{
-  "intent": "kpi_value",
-  "metrics": ["sales"],
-  "time_grain": "none",
-  "breakdown_by": null,
-  "start_date": "{default_start}",
-  "end_date": "{default_end}",
-  "compare_period": null,
-  "top_k": null,
-  "order_by": "sales",
-  "filters": {{"region": [], "segment": [], "category": []}}
-}}
+    Current selectable values:
+    regions={json.dumps(regions)}
+    segments={json.dumps(segments)}
+    categories={json.dumps(categories)}
 
-=== USER QUESTION ===
-{user_question}
+    === DATE RULES ===
+    - Dates must be YYYY-MM-DD
+    - If user does not specify dates, use the default range:
+    start_date="{default_start}", end_date="{default_end}"
+    - If user mentions an ambiguous period (e.g., "last month", "Q2"), and VERIFIED DATA FACTS do not clearly resolve it,
+    use intent="clarify" instead of guessing.
 
-OUTPUT (JSON only):""".strip()
+    === IMPORTANT BEHAVIOR ===
+    - If user asks for an unsupported breakdown like state/city/ship mode/product:
+    - If it can be reasonably mapped to sub_category (only when user clearly means product category level),
+        use breakdown_by="sub_category".
+    - Otherwise use intent="clarify".
+    - If user requests "top N" but does not specify a breakdown, use intent="clarify".
+    - For kpi_compare: metrics must contain exactly 1 item.
+    - For kpi_rank: time_grain must be "none".
+
+    === OUTPUT JSON SCHEMA (copy keys exactly) ===
+    {{
+    "intent": "kpi_value",
+    "metrics": ["sales"],
+    "time_grain": "none",
+    "breakdown_by": null,
+    "start_date": "{default_start}",
+    "end_date": "{default_end}",
+    "compare_period": null,
+    "top_k": null,
+    "order_by": "sales",
+    "filters": {{"region": [], "segment": [], "category": []}}
+    }}
+
+    === USER QUESTION ===
+    {user_question}
+
+    Return ONLY the JSON object:
+    """.strip()
 
     def _gemini_plan(self, q: str, rag_context: RAGContext) -> Dict[str, Any]:
         if not self.gemini_ready:
@@ -512,6 +678,235 @@ OUTPUT (JSON only):""".strip()
         return execute_query(sql, params=params)
 
     # ─────────────────────────────────────────────────────────
+    # Insight generator  (LLM-powered, rule-based fallback)
+    # ─────────────────────────────────────────────────────────
+
+    def _generate_insight(self, plan: Dict[str, Any], df: pd.DataFrame) -> str:
+        """
+        Generate a natural-language analytical insight using Gemini LLM.
+        Falls back to rule-based insight if Gemini is unavailable or fails.
+        """
+        if df is None or df.empty:
+            return ""
+
+        # Try LLM insight first
+        if self.gemini_ready:
+            llm_insight = self._llm_insight(plan, df)
+            if llm_insight:
+                return f"\n\n---\n💡 **Insight:** {llm_insight}"
+
+        # Fallback: rule-based insight
+        rule_insight = self._rule_based_insight(plan, df)
+        if rule_insight:
+            return f"\n\n---\n💡 **Insight:** " + "  \n".join(rule_insight)
+        return ""
+
+    def _build_data_summary(self, plan: Dict[str, Any], df: pd.DataFrame) -> str:
+        """Serialize the query result into a compact text table for the prompt."""
+        intent = plan.get("intent")
+        metrics = plan.get("metrics", ["sales"])
+        m0 = plan.get("order_by") or metrics[0]
+        breakdown_by = plan.get("breakdown_by")
+
+        def fmt(v: Any, col: str) -> str:
+            try:
+                fv = float(v)
+                if col in {"sales", "profit"}:
+                    return f"${fv:,.0f}"
+                if col == "profit_margin":
+                    return f"{fv:.1f}%"
+                if col == "orders":
+                    return f"{int(fv):,}"
+                return f"{fv:,.2f}"
+            except Exception:
+                return str(v)
+
+        lines: List[str] = []
+
+        if intent == "kpi_compare" and "current" in df.columns:
+            row = df.iloc[0]
+            metric = str(row.get("metric", m0))
+            cur = float(row["current"])
+            prev = float(row["previous"])
+            chg = ((cur - prev) / abs(prev) * 100) if prev != 0 else None
+            lines.append(f"Metric: {metric}")
+            lines.append(f"Current ({row['current_start']} – {row['current_end']}): {fmt(cur, metric)}")
+            lines.append(f"Previous ({row['prev_start']} – {row['prev_end']}): {fmt(prev, metric)}")
+            lines.append(f"Change: {chg:+.1f}%" if chg is not None else "Change: n/a")
+
+        elif "breakdown" in df.columns:
+            sorted_df = df.sort_values(by=m0, ascending=False).head(15).reset_index(drop=True)
+            total = float(sorted_df[m0].sum()) if m0 in sorted_df.columns else 0
+            lines.append(f"Breakdown by: {breakdown_by}  |  Ranked by: {m0}  |  Total: {fmt(total, m0)}")
+            for i, (_, r) in enumerate(sorted_df.iterrows(), 1):
+                vals = "  ".join(
+                    f"{col}={fmt(r[col], col)}"
+                    for col in metrics
+                    if col in r
+                )
+                lines.append(f"  {i}. {r['breakdown']}: {vals}")
+
+        elif "period" in df.columns:
+            show = df.sort_values("period").tail(24)
+            for _, r in show.iterrows():
+                p = str(r.get("period", ""))[:7]
+                vals = "  ".join(
+                    f"{col}={fmt(r[col], col)}"
+                    for col in metrics
+                    if col in r
+                )
+                lines.append(f"  {p}: {vals}")
+
+        else:
+            # Single aggregate
+            r0 = df.iloc[0]
+            for col in metrics:
+                if col in r0:
+                    lines.append(f"{col}: {fmt(r0[col], col)}")
+
+        return "\n".join(lines)
+
+    def _llm_insight(self, plan: Dict[str, Any], df: pd.DataFrame) -> str:
+        """
+        Call Gemini to generate a short, varied analytical insight
+        based on the actual query result data.
+        """
+        data_summary = self._build_data_summary(plan, df)
+        intent = plan.get("intent", "kpi_value")
+        metrics = plan.get("metrics", ["sales"])
+        breakdown_by = plan.get("breakdown_by")
+        compare_period = plan.get("compare_period")
+        time_grain = plan.get("time_grain", "none")
+        ctx = self._natural_context(plan)
+
+        intent_hint = {
+            "kpi_rank":    "This is a ranked list. Comment on the leader, notable gaps, concentration, or any surprising entries.",
+            "kpi_value":   f"This is a breakdown by {breakdown_by}. Comment on the distribution, dominant players, or any imbalance.",
+            "kpi_trend":   f"This is a time-series by {time_grain}. Comment on the overall trajectory, peak, recent momentum, or seasonality.",
+            "kpi_compare": f"This compares {metrics[0]} across two periods ({compare_period}). Comment on the magnitude of change, what it signals, and whether it's concerning or positive.",
+        }.get(intent, "Provide a brief analytical observation.")
+
+        prompt = f"""You are a concise business analyst. Write an insight based ONLY on the numbers provided.
+
+            === RESULT (VERIFIED) ===
+            Context: {ctx or 'full dataset'}
+            {data_summary}
+
+            === TASK ===
+            {intent_hint}
+
+            Hard rules:
+            - Exactly 2 or 3 sentences. No more.
+            - Use the actual figures/names from the RESULT (do not invent).
+            - No table reprint. No bullets. No headings.
+            - Avoid generic openers like "The data shows" or "Overall".
+            - Bold (**...**) only the most important 1–3 names/numbers.
+            - If the result is not sufficient to infer a meaningful insight, write:
+            "Not enough signal in this slice to draw a strong conclusion."
+
+            Output plain text only:"""
+
+        try:
+            resp = self.client.models.generate_content(
+                model=self.model_name,
+                contents=prompt,
+                config=genai_types.GenerateContentConfig(
+                    temperature=0.7,          # Higher temp = more varied phrasing
+                    max_output_tokens=150,
+                ),
+            )
+            text = (getattr(resp, "text", "") or "").strip()
+            # Sanity check: must be non-trivial
+            if len(text) > 20:
+                return text
+        except Exception:
+            pass
+        return ""
+
+    def _rule_based_insight(self, plan: Dict[str, Any], df: pd.DataFrame) -> List[str]:
+        """
+        Deterministic fallback insight generator.
+        Returns a list of insight strings (joined with line breaks by caller).
+        """
+        intent = plan.get("intent")
+        metrics = plan.get("metrics", ["sales"])
+        m0 = plan.get("order_by") or metrics[0]
+        breakdown_by = plan.get("breakdown_by")
+
+        def fmt_val(v: float, metric: str) -> str:
+            if metric in {"sales", "profit"}:
+                return f"${v:,.0f}"
+            if metric == "profit_margin":
+                return f"{v:.1f}%"
+            return f"{int(v):,}"
+
+        insights: List[str] = []
+
+        if intent in {"kpi_rank", "kpi_value"} and breakdown_by and "breakdown" in df.columns and m0 in df.columns:
+            sorted_df = df.sort_values(by=m0, ascending=False).reset_index(drop=True)
+            n = len(sorted_df)
+            if n >= 1:
+                top_name = sorted_df.iloc[0]["breakdown"]
+                top_val = float(sorted_df.iloc[0][m0])
+                insights.append(f"**{top_name}** leads with {fmt_val(top_val, m0)}.")
+            if n >= 2:
+                second_name = sorted_df.iloc[1]["breakdown"]
+                second_val = float(sorted_df.iloc[1][m0])
+                if top_val != 0:
+                    gap_pct = abs(top_val - second_val) / abs(top_val) * 100
+                    if gap_pct > 50:
+                        insights.append(f"Gap to **{second_name}** ({fmt_val(second_val, m0)}) is significant ({gap_pct:.0f}%).")
+                    elif gap_pct < 10:
+                        insights.append(f"**{second_name}** ({fmt_val(second_val, m0)}) is very close behind.")
+                    else:
+                        insights.append(f"**{second_name}** follows at {fmt_val(second_val, m0)}.")
+            if n >= 3:
+                total_val = float(sorted_df[m0].sum())
+                top2_val = float(sorted_df.head(2)[m0].sum())
+                if total_val > 0:
+                    share = top2_val / total_val * 100
+                    if share >= 60:
+                        top2 = " & ".join(str(sorted_df.iloc[i]["breakdown"]) for i in range(2))
+                        insights.append(f"**{top2}** together account for {share:.0f}% of total.")
+            if m0 in {"profit", "profit_margin"}:
+                negatives = sorted_df[sorted_df[m0] < 0]
+                if not negatives.empty:
+                    neg_names = ", ".join(f"**{r['breakdown']}**" for _, r in negatives.iterrows())
+                    insights.append(f"⚠️ {neg_names} {'is' if len(negatives) == 1 else 'are'} at a loss.")
+
+        elif intent == "kpi_trend" and "period" in df.columns and m0 in df.columns:
+            sorted_df = df.sort_values("period").reset_index(drop=True)
+            n = len(sorted_df)
+            if n >= 2:
+                first_val = float(sorted_df.iloc[0][m0])
+                last_val = float(sorted_df.iloc[-1][m0])
+                if first_val != 0:
+                    chg = (last_val - first_val) / abs(first_val) * 100
+                    direction = "grown" if chg > 0 else "declined"
+                    insights.append(f"Overall {direction} by **{abs(chg):.1f}%** over the period.")
+            if n >= 1:
+                peak_idx = sorted_df[m0].idxmax()
+                peak_row = sorted_df.loc[peak_idx]
+                insights.append(f"Peak: **{str(peak_row['period'])[:7]}** at {fmt_val(float(peak_row[m0]), m0)}.")
+
+        elif intent == "kpi_compare" and "current" in df.columns:
+            row = df.iloc[0]
+            cur, prev = float(row["current"]), float(row["previous"])
+            metric = str(row.get("metric", m0))
+            if prev != 0:
+                chg = (cur - prev) / abs(prev) * 100
+                if abs(chg) >= 20:
+                    word = "strong growth" if chg > 0 else "sharp decline"
+                    insights.append(f"**{word}** of {abs(chg):.1f}% — worth investigating drivers.")
+                elif abs(chg) < 5:
+                    insights.append("Performance is **stable** with minimal period-over-period change.")
+                else:
+                    d = "ahead of" if chg > 0 else "behind"
+                    insights.append(f"Current period is **{d}** the prior by {abs(chg):.1f}%.")
+
+        return insights
+
+    # ─────────────────────────────────────────────────────────
     # Answer formatter
     # ─────────────────────────────────────────────────────────
 
@@ -614,13 +1009,15 @@ OUTPUT (JSON only):""".strip()
             delta_s = f"{change:+.1f}%" if change is not None else "n/a"
             direction = "up" if (change or 0) >= 0 else "down"
 
-            return "\n".join([
+            answer = "\n".join([
                 f"Here's the **{metric_labels[m]}** comparison ({cp_label}):{ctx_line}",
                 "",
                 f"- **Current** ({row['current_start']} – {row['current_end']}): {fmt_val(cur)}",
                 f"- **Previous** ({row['prev_start']} – {row['prev_end']}): {fmt_val(prev)}",
                 f"- **Change:** {delta_s} ({direction})",
             ])
+            answer += self._generate_insight(plan, df)
+            return answer
 
         # ── kpi_value (no time grain) ─────────────────────────
         if intent == "kpi_value" and time_grain == "none":
@@ -646,7 +1043,9 @@ OUTPUT (JSON only):""".strip()
                         else:
                             val_parts.append(f"{metric_labels[m]}: {int(v):,}")
                     lines.append(f"{rank}. **{b}** — " + " | ".join(val_parts))
-                return "\n".join(lines)
+                answer = "\n".join(lines)
+                answer += self._generate_insight(plan, df)
+                return answer
 
             # Single aggregate
             r0 = df.iloc[0]
@@ -708,7 +1107,10 @@ OUTPUT (JSON only):""".strip()
 
             if len(lines) > 32:
                 lines = lines[:32] + ["- *(truncated – showing most recent 30 periods)*"]
-            return "\n".join(lines)
+
+            answer = "\n".join(lines)
+            answer += self._generate_insight(plan, df)
+            return answer
 
         # ── kpi_rank ──────────────────────────────────────────
         if intent == "kpi_rank":
@@ -726,7 +1128,10 @@ OUTPUT (JSON only):""".strip()
                     else (f"{v:.2f}%" if m0 == "profit_margin" else f"{int(v):,}")
                 )
                 lines.append(f"{i}. **{b}** — {vs}")
-            return "\n".join(lines)
+
+            answer = "\n".join(lines)
+            answer += self._generate_insight(plan, df)
+            return answer
 
         return f"Done.{ctx_line}"
 
@@ -777,6 +1182,7 @@ OUTPUT (JSON only):""".strip()
         if not q:
             return "Ask me about Sales, Profit, Orders, or Profit Margin."
 
+        # ── 1. Fast KPI path (no breakdown, no time filter) ──────────
         fast = self._fast_kpi_answer(q)
         if fast:
             self._last_answer = fast
@@ -784,19 +1190,45 @@ OUTPUT (JSON only):""".strip()
             self.rag.add_turn("assistant", fast)
             return fast
 
+        # ── 2. Rule-based NL parser (instant, no LLM) ────────────────
+        rule_plan = self._rule_based_plan(q)
+        if rule_plan and not self.gemini_ready:
+            # No Gemini → rule-based is the only option
+            try:
+                self.last_plan = rule_plan
+                result_df = self._run_plan(rule_plan)
+                answer = self._format_answer(rule_plan, result_df)
+            except Exception as e:
+                answer = f"❌ Sorry, I couldn't answer that. ({str(e)})"
+            self._last_answer = answer
+            self.rag.add_turn("user", q)
+            self.rag.add_turn("assistant", answer)
+            return answer
+
         if not self.gemini_ready:
             return "⚠️ Gemini API Key not configured in .env"
 
+        # ── 3. Gemini plan (richer NL understanding) ──────────────────
         rag_ctx = self.rag.retrieve(q, k=7)
-
+        gemini_ok = False
         try:
             plan = self._gemini_plan(q, rag_ctx)
             plan = self._validate_plan(plan)
             self.last_plan = plan
             result_df = self._run_plan(plan)
             answer = self._format_answer(plan, result_df)
-        except Exception as e:
-            answer = f"❌ Sorry, I couldn't answer that. ({str(e)})"
+            gemini_ok = True
+        except Exception as gemini_err:
+            # ── 4. Fallback: rule-based plan if Gemini failed ─────────
+            if rule_plan:
+                try:
+                    self.last_plan = rule_plan
+                    result_df = self._run_plan(rule_plan)
+                    answer = self._format_answer(rule_plan, result_df)
+                except Exception as e:
+                    answer = f"❌ Sorry, I couldn't answer that. ({str(e)})"
+            else:
+                answer = f"❌ Sorry, I couldn't answer that. ({str(gemini_err)})"
 
         self._last_answer = answer
         self.rag.add_turn("user", q)
@@ -861,6 +1293,8 @@ OUTPUT (JSON only):""".strip()
     # ─────────────────────────────────────────────────────────
 
     def get_insights(self) -> str:
+        print("gemini_ready =", self.gemini_ready, "model =", getattr(self, "model_name", None))
+
         if not self.gemini_ready:
             return "Configure Gemini API Key to see auto-insights."
         if self.df.empty:
@@ -870,12 +1304,19 @@ OUTPUT (JSON only):""".strip()
         rag_section = rag_ctx.as_prompt_section(max_chunks=6)
 
         prompt = f"""
-You are a business analyst. Based on the verified data facts below,
-write exactly 3 concise bullet-point insights. Numbers-first, English only.
+            You are a business analyst. Using ONLY the verified data facts below, write exactly 3 bullet-point insights.
 
-{rag_section}
-""".strip()
+            === VERIFIED FACTS ===
+            {rag_section}
 
+            Rules:
+            - Output exactly 3 lines.
+            - Each line must start with "- ".
+            - Numbers-first: each bullet must include at least one numeric value from the VERIFIED FACTS.
+            - No fluff, no generic statements, no recommendations without evidence.
+            - English only.
+
+            Output:""".strip()
         try:
             resp = self.client.models.generate_content(
                 model=self.model_name,
@@ -886,8 +1327,8 @@ write exactly 3 concise bullet-point insights. Numbers-first, English only.
                 ),
             )
             return (getattr(resp, "text", "") or "").strip()
-        except Exception:
-            return "Could not generate insights at this time."
+        except Exception as e:
+            return f"Could not generate insights at this time. ({type(e).__name__}: {e})"
 
     def rebuild_rag(self) -> None:
         self.rag.build(df=self.df, kpis=self.kpis, filters=self.filters)
