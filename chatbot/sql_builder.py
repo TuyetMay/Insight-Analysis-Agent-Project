@@ -113,8 +113,18 @@ class SQLBuilder:
         prev_df = execute_query(sql2, params2)
 
         metric = plan["metrics"][0]
-        cur_val  = float(cur_df.iloc[0][metric])  if cur_df  is not None and not cur_df.empty  else 0.0
-        prev_val = float(prev_df.iloc[0][metric]) if prev_df is not None and not prev_df.empty else 0.0
+
+        def safe_float(df: pd.DataFrame) -> float:
+            if df is None or df.empty:
+                return 0.0
+            val = df.iloc[0].get(metric)
+            try:
+                return float(val) if val is not None else 0.0
+            except (TypeError, ValueError):
+                return 0.0
+
+        cur_val  = safe_float(cur_df)
+        prev_val = safe_float(prev_df)
 
         return pd.DataFrame([{
             "metric":        metric,

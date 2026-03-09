@@ -190,6 +190,6 @@ Plain text only:"""
 
     @staticmethod
     def _fv(v: float, metric: str) -> str:
-        if metric in {"sales", "profit"}:  return f"${v:,.0f}"
-        if metric == "profit_margin":      return f"{v:.1f}%"
+        if metric in {"sales", "profit"}:  return f"\\${v:,.0f}"
+        if metric == "profit_margin":      return f"{v:.2f}%"
         return f"{int(v):,}"

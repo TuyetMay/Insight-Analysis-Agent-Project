@@ -184,6 +184,6 @@ class AnswerFormatter:
 
     @staticmethod
     def _fv(v: float, metric: str) -> str:
-        if metric in {"sales", "profit"}:  return f"${v:,.0f}"
+        if metric in {"sales", "profit"}:  return f"\\${v:,.0f}"   # escape $
         if metric == "profit_margin":      return f"{v:.2f}%"
         return f"{int(v):,}"
