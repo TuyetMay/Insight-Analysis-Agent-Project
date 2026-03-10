@@ -134,12 +134,25 @@ class AnswerFormatter:
         if len(metrics) == 1:
             m  = metrics[0]
             vs = self._fv(float(r0[m]), m)
-            return f"{_METRIC_OPENERS.get(m, f'{_METRIC_LABELS[m]} is')} **{vs}**.{ctx_line}"
+            opener = _METRIC_OPENERS.get(m, f"{_METRIC_LABELS[m]} is")
 
-        lines = [f"Here's a summary of the selected metrics:{ctx_line}", ""]
-        for m in metrics:
-            lines.append(f"- **{_METRIC_LABELS[m]}:** {self._fv(float(r0[m]), m)}")
-        return "\n".join(lines)
+            # Add supporting context metrics naturally
+            extras = []
+            if m == "sales" and "profit" in r0:
+                extras.append(f"profit of {self._fv(float(r0['profit']), 'profit')}")
+            if m == "profit" and "sales" in r0:
+                sales_v = float(r0["sales"])
+                prof_v  = float(r0[m])
+                margin  = (prof_v / sales_v * 100) if sales_v else 0
+                extras.append(f"a **{margin:.1f}% margin** on {self._fv(sales_v, 'sales')} revenue")
+            if m == "orders" and "sales" in r0:
+                orders_v = float(r0[m])
+                sales_v  = float(r0["sales"])
+                avg      = sales_v / orders_v if orders_v else 0
+                extras.append(f"averaging **{self._fv(avg, 'sales')}** per order")
+
+            extra_str = f", with {extras[0]}" if extras else ""
+            return f"{opener} **{vs}**{extra_str}.{ctx_line}"
 
     def _format_trend(self, plan: Dict[str, Any], df: pd.DataFrame,
                       metrics: List[str], grain: str, breakdown: Any, ctx_line: str) -> str:

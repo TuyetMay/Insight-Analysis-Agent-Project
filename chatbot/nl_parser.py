@@ -83,7 +83,32 @@ class NLParser:
         self.model_name   = model_name or ""
 
     # ── Tier 1: fast KPI ─────────────────────────────────────
+    # THÊM helper này vào class NLParser (trước fast_kpi_answer)
+    def _build_context_line(self) -> str:
+        """Build a natural-language filter context string."""
+        f = self.filters or {}
+        parts = []
+        dr = f.get("date_range")
+        if dr and isinstance(dr, (tuple, list)) and len(dr) == 2:
+            from datetime import date as _date
+            fmt = lambda d: d.strftime("%b %d, %Y") if hasattr(d, "strftime") else str(d)
+            parts.append(f"from **{fmt(dr[0])}** to **{fmt(dr[1])}**")
 
+        regions = list(f.get("region") or [])
+        segments = list(f.get("segment") or [])
+        categories = list(f.get("category") or [])
+
+        # Only mention if filtered (not all selected)
+        if regions:
+            parts.append(f"in **{', '.join(regions)}**")
+        if segments:
+            parts.append(f"for segment **{', '.join(segments)}**")
+        if categories:
+            parts.append(f"across **{', '.join(categories)}**")
+
+        return " ".join(parts) if parts else ""
+
+    # CẬP NHẬT fast_kpi_answer — thay toàn bộ các return statement
     def fast_kpi_answer(self, q: str) -> Optional[str]:
         """Return a plain-text answer for simple KPI totals — no DB round-trip needed."""
         ql = (q or "").strip().lower()
@@ -97,25 +122,54 @@ class NLParser:
 
         def money(x: float) -> str: return f"${x:,.0f}"
 
+        ctx = self._build_context_line()
+        ctx_suffix = ""
+
         if re.search(r"\b(kpi|summary|overview|dashboard)\b", ql):
             return (
-                "Here's a quick overview of your current KPIs:\n\n"
-                f"- **Total Sales:** {money(ts)}\n"
-                f"- **Total Profit:** {money(tp)}\n"
-                f"- **Total Orders:** {to_:,}\n"
-                f"- **Profit Margin:** {pm:.2f}%"
+                f"Here's a snapshot of your current business performance{' — ' + ctx if ctx else ''}:\n\n"
+                f"- 💰 **Total Sales:** {money(ts)}\n"
+                f"- 📈 **Total Profit:** {money(tp)}\n"
+                f"- 📦 **Total Orders:** {to_:,}\n"
+                f"- 📊 **Profit Margin:** {pm:.2f}%"
             )
         if re.search(r"\b(total\s+sales|sales\s+total|revenue)\b", ql):
-            return f"Total sales came in at **{money(ts)}**."
+            return (
+                f"Total revenue came in at **{money(ts)}**"
+                + (f", generated {ctx}" if ctx else "")
+                + f". That reflects **{to_:,} orders** at an average of "
+                + f"**{money(ts / to_ if to_ else 0)}** per order."
+                + ctx_suffix
+            )
         if re.search(r"\b(total\s+profit|profit\s+total)\b", ql):
-            return f"Total profit reached **{money(tp)}**."
+            health = "healthy" if pm >= 10 else "tight"
+            return (
+                f"Total profit reached **{money(tp)}**"
+                + (f", recorded {ctx}" if ctx else "")
+                + f" — representing a **{pm:.2f}% margin** on **{money(ts)}** in revenue."
+                f" Profitability looks **{health}** for this period."
+                + ctx_suffix
+            )
         if re.search(r"\b(total\s+orders|orders\s+total|number\s+of\s+orders)\b", ql):
-            return f"The total number of orders was **{to_:,}**."
+            avg_val = ts / to_ if to_ else 0
+            return (
+                f"A total of **{to_:,} orders** were placed"
+                + (f" {ctx}" if ctx else "")
+                + f", with an average order value of **{money(avg_val)}**."
+                f" These orders generated **{money(ts)}** in revenue and **{money(tp)}** in profit."
+                + ctx_suffix
+            )
         if re.search(r"\b(profit\s+margin|margin)\b", ql):
-            return f"The profit margin stood at **{pm:.2f}%**."
+            benchmark = "above" if pm >= 12 else "below"
+            return (
+                f"The profit margin stands at **{pm:.2f}%**"
+                + (f" {ctx}" if ctx else "")
+                + f", with **{money(tp)}** profit on **{money(ts)}** revenue."
+                f" This is **{benchmark} the typical 12% retail benchmark**."
+                + ctx_suffix
+            )
         return None
-
-    # ── Tier 2: rule-based plan ───────────────────────────────
+        # ── Tier 2: rule-based plan ───────────────────────────────
 
     def rule_based_plan(self, q: str) -> Optional[Dict[str, Any]]:
         """Parse simple NL into a plan dict — no LLM required."""
