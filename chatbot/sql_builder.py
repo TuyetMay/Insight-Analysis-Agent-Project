@@ -55,15 +55,23 @@ class SQLBuilder:
         params: Dict[str, Any] = {"start": plan["start_date"], "end": plan["end_date"]}
 
         if f.get("region"):
-            where_parts.append("region = ANY(%(regions)s)")
-            params["regions"] = f["region"]
+            placeholders = ", ".join(f"%(region_{i})s" for i in range(len(f["region"])))
+            where_parts.append(f"region IN ({placeholders})")
+            for i, v in enumerate(f["region"]):
+                params[f"region_{i}"] = v
+
         if f.get("segment"):
-            where_parts.append("segment = ANY(%(segments)s)")
-            params["segments"] = f["segment"]
+            placeholders = ", ".join(f"%(segment_{i})s" for i in range(len(f["segment"])))
+            where_parts.append(f"segment IN ({placeholders})")
+            for i, v in enumerate(f["segment"]):
+                params[f"segment_{i}"] = v
+
         if f.get("category"):
-            where_parts.append("category = ANY(%(categories)s)")
-            params["categories"] = f["category"]
-        
+            placeholders = ", ".join(f"%(category_{i})s" for i in range(len(f["category"])))
+            where_parts.append(f"category IN ({placeholders})")
+            for i, v in enumerate(f["category"]):
+                params[f"category_{i}"] = v
+                        
 
         where_sql = " AND ".join(where_parts)
 

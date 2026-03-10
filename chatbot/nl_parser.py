@@ -251,7 +251,8 @@ class NLParser:
             contents=prompt,
             config=genai_types.GenerateContentConfig(temperature=0.0, max_output_tokens=400),
         )
-        return self._extract_json((getattr(resp, "text", None) or "").strip())
+        plan = self._extract_json((getattr(resp, "text", None) or "").strip())
+        return self._inject_mentioned_filters(plan, q)
 
     # ── Helpers ───────────────────────────────────────────────
 
@@ -296,40 +297,74 @@ class NLParser:
         s0, e0 = self._date_range()
         rag_section = rag_context.as_prompt_section(max_chunks=7)
         return f"""
-You are a STRICT JSON query planner for a Postgres "Superstore" analytics dataset.
-Output ONLY one valid JSON object. No markdown, no SQL, no explanations.
+        You are a STRICT JSON query planner for a Postgres "Superstore" analytics dataset.
+        Output ONLY one valid JSON object. No markdown, no SQL, no explanations.
 
-=== VERIFIED DATA FACTS ===
-{rag_section}
+        === VERIFIED DATA FACTS ===
+        {rag_section}
 
-=== SUPPORTED INTENTS ===
-kpi_value | kpi_trend | kpi_rank | kpi_compare | clarify
+        === SUPPORTED INTENTS ===
+        kpi_value | kpi_trend | kpi_rank | kpi_compare | clarify
 
-=== SUPPORTED VALUES ===
-metrics: sales | profit | orders | profit_margin
-time_grain: none | week | month | quarter | year
-breakdown_by: null | region | segment | category | sub_category
-compare_period: null | prev_period | mom | yoy
+        === SUPPORTED VALUES ===
+        metrics: sales | profit | orders | profit_margin
+        time_grain: none | week | month | quarter | year
+        breakdown_by: null | region | segment | category | sub_category
+        compare_period: null | prev_period | mom | yoy
 
-=== CURRENT DASHBOARD FILTERS ===
-regions={json.dumps(regions)}
-segments={json.dumps(segments)}
-categories={json.dumps(categories)}
-default_start="{s0}", default_end="{e0}"
+        === CURRENT DASHBOARD FILTERS ===
+        regions={json.dumps(regions)}
+        segments={json.dumps(segments)}
+        categories={json.dumps(categories)}
+        default_start="{s0}", default_end="{e0}"
 
-=== RULES ===
-- filters values must be ONLY from current selections above ([] = no extra filter)
-- intent="clarify" when question cannot be answered or is ambiguous
-- kpi_compare: metrics must have exactly 1 item
-- kpi_rank: requires breakdown_by AND top_k; time_grain must be "none"
-- If intent="clarify": add "clarifying_question": "<one question>"
+        === RULES ===
+        - filters values must be ONLY from current selections above ([] = no extra filter)
+        - intent="clarify" when question cannot be answered or is ambiguous
+        - kpi_compare: metrics must have exactly 1 item
+        - kpi_rank: requires breakdown_by AND top_k; time_grain must be "none"
+        - If intent="clarify": add "clarifying_question": "<one question>"
 
-=== JSON SCHEMA ===
-{{"intent":"kpi_value","metrics":["sales"],"time_grain":"none","breakdown_by":null,"start_date":"{s0}","end_date":"{e0}","compare_period":null,"top_k":null,"order_by":"sales","filters":{{"region":[],"segment":[],"category":[]}}}}
+        === JSON SCHEMA ===
+        {{"intent":"kpi_value","metrics":["sales"],"time_grain":"none","breakdown_by":null,"start_date":"{s0}","end_date":"{e0}","compare_period":null,"top_k":null,"order_by":"sales","filters":{{"region":[],"segment":[],"category":[]}}}}
 
-USER QUESTION: {q}
+        USER QUESTION: {q}
 
-Return ONLY the JSON object:""".strip()
+        Return ONLY the JSON object:""".strip()
+    
+    def _inject_mentioned_filters(self, plan: Dict[str, Any], q: str) -> Dict[str, Any]:
+        """
+        If user explicitly mentions specific region/segment/category values in the question,
+        inject them into plan filters so SQL WHERE clause narrows correctly.
+        """
+        ql = q.lower()
+        f  = self.filters or {}
+
+        all_regions    = list(f.get("region")    or [])
+        all_segments   = list(f.get("segment")   or [])
+        all_categories = list(f.get("category")  or [])
+
+        filters = plan.get("filters") or {"region": [], "segment": [], "category": []}
+
+        # Only override if Gemini left the filter empty
+        if not filters.get("region"):
+            mentioned = [r for r in all_regions if r.lower() in ql]
+            # Only inject if user mentioned a SUBSET (not all)
+            if mentioned and len(mentioned) < len(all_regions):
+                filters["region"] = mentioned
+
+        if not filters.get("segment"):
+            mentioned = [s for s in all_segments if s.lower() in ql]
+            if mentioned and len(mentioned) < len(all_segments):
+                filters["segment"] = mentioned
+
+        if not filters.get("category"):
+            mentioned = [c for c in all_categories if c.lower() in ql]
+            if mentioned and len(mentioned) < len(all_categories):
+                filters["category"] = mentioned
+
+        plan["filters"] = filters
+        return plan
 
     @staticmethod
     def _extract_json(text: str) -> Dict[str, Any]:
@@ -342,3 +377,5 @@ Return ONLY the JSON object:""".strip()
         if m:
             return json.loads(m.group(0))
         raise ValueError("Gemini did not return valid JSON.")
+    
+

@@ -10,7 +10,7 @@ from charts.breakdown import create_profit_by_region, create_profit_by_segment, 
 from charts.products import create_category_distribution, create_discount_impact, create_top_subcategories
 from charts.trends import create_orders_by_month, create_sales_profit_trend
 from config import Config
-from core.data_loader import load_filtered_data, get_filter_options, calculate_kpis
+from core.data_loader import load_filtered_data, get_filter_options, calculate_kpis, load_filtered_data_safe
 from chatbot import DashboardChatbot
 from ui import inject_styles, render_filters, render_chat_sidebar
 
@@ -55,7 +55,8 @@ filters = render_filters(filter_options)
 # ─────────────────────────────────────────────────────────────
 
 with st.spinner("🚀 Loading data…"):
-    df = load_filtered_data(filters)
+    df = load_filtered_data_safe(filters)
+
 
 if df.empty:
     st.warning("⚠️ No data available for the selected filters.")
