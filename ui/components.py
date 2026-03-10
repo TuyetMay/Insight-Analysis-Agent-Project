@@ -201,9 +201,6 @@ def render_chat_sidebar(chatbot: Any) -> None:
         st.sidebar.markdown('<div class="chip-label">⚡ Quick questions</div>', unsafe_allow_html=True)
         _quick_buttons(chatbot, thinking_placeholder)
 
-    st.sidebar.markdown('<div class="chip-label">⚡ Quick questions</div>', unsafe_allow_html=True)
-    _quick_buttons(chatbot, thinking_placeholder)
-
     st.sidebar.markdown('<div class="input-area"></div>', unsafe_allow_html=True)
     _chat_form(chatbot, thinking_placeholder)
 

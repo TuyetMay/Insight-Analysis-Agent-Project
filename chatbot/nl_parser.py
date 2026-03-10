@@ -85,29 +85,26 @@ class NLParser:
     # ── Tier 1: fast KPI ─────────────────────────────────────
     # THÊM helper này vào class NLParser (trước fast_kpi_answer)
     def _build_context_line(self) -> str:
-        """Build a natural-language filter context string."""
         f = self.filters or {}
         parts = []
         dr = f.get("date_range")
         if dr and isinstance(dr, (tuple, list)) and len(dr) == 2:
-            from datetime import date as _date
             fmt = lambda d: d.strftime("%b %d, %Y") if hasattr(d, "strftime") else str(d)
             parts.append(f"from **{fmt(dr[0])}** to **{fmt(dr[1])}**")
 
-        regions = list(f.get("region") or [])
-        segments = list(f.get("segment") or [])
-        categories = list(f.get("category") or [])
+        regions    = list(f.get("region")    or [])
+        segments   = list(f.get("segment")   or [])
+        categories = list(f.get("category")  or [])
 
-        # Only mention if filtered (not all selected)
-        if regions:
+        # Chỉ mention nếu filter thực sự hạn chế (≤ 2 giá trị)
+        if 0 < len(regions) <= 2:
             parts.append(f"in **{', '.join(regions)}**")
-        if segments:
-            parts.append(f"for segment **{', '.join(segments)}**")
-        if categories:
+        if 0 < len(segments) <= 2:
+            parts.append(f"for **{', '.join(segments)}** segment")
+        if 0 < len(categories) <= 2:
             parts.append(f"across **{', '.join(categories)}**")
 
         return " ".join(parts) if parts else ""
-
     # CẬP NHẬT fast_kpi_answer — thay toàn bộ các return statement
     def fast_kpi_answer(self, q: str) -> Optional[str]:
         """Return a plain-text answer for simple KPI totals — no DB round-trip needed."""

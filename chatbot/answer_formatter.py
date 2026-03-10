@@ -151,8 +151,11 @@ class AnswerFormatter:
                 avg      = sales_v / orders_v if orders_v else 0
                 extras.append(f"averaging **{self._fv(avg, 'sales')}** per order")
 
+
             extra_str = f", with {extras[0]}" if extras else ""
             return f"{opener} **{vs}**{extra_str}.{ctx_line}"
+        lines = [...] 
+        return "\n".join(lines)  
 
     def _format_trend(self, plan: Dict[str, Any], df: pd.DataFrame,
                       metrics: List[str], grain: str, breakdown: Any, ctx_line: str) -> str:
@@ -190,7 +193,14 @@ class AnswerFormatter:
         for i, (_, r) in enumerate(df.head(plan["top_k"]).iterrows(), 1):
             b  = r.get("breakdown", "—")
             vs = self._fv(float(r[m0]), m0)
-            lines.append(f"{i}. **{b}** — {vs}")
+            secondary = ""
+            if m0 == "sales" and "profit" in r:
+                pm = (float(r["profit"]) / float(r[m0]) * 100) if float(r[m0]) else 0
+                secondary = f" *(margin: {pm:.1f}%)*"
+            elif m0 == "profit" and "sales" in r:
+                secondary = f" *(on {self._fv(float(r['sales']), 'sales')} revenue)*"
+            
+            lines.append(f"{i}. **{b}** — {vs}{secondary}")
         return "\n".join(lines)
 
     # ── Value formatter ───────────────────────────────────────

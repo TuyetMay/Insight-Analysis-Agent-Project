@@ -63,6 +63,7 @@ class SQLBuilder:
         if f.get("category"):
             where_parts.append("category = ANY(%(categories)s)")
             params["categories"] = f["category"]
+        
 
         where_sql = " AND ".join(where_parts)
 
@@ -90,8 +91,11 @@ class SQLBuilder:
         ]
         if group_parts:
             lines.append("GROUP BY " + ", ".join(group_parts))
-
-        if plan["intent"] == "kpi_rank":
+        if plan["intent"] == "kpi_value" and not bucket_sql and not breakdown_by:
+            supporting = [m for m in ["sales", "profit"] if m not in metrics]
+            for m in supporting:
+                select_parts.append(f"{_METRIC_EXPR[m]} AS {m}")
+        elif plan["intent"] == "kpi_rank":
             lines += [f"ORDER BY {order_by} DESC NULLS LAST", "LIMIT %(top_k)s"]
             params["top_k"] = top_k
         elif breakdown_by and not bucket_sql:

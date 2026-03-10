@@ -140,6 +140,24 @@ class KnowledgeBaseBuilder:
                 chunks.append(Chunk(f"yearly_{yr}",
                     f"Year {yr}: Sales=${s:,.0f}, Profit=${p:,.0f}, Orders={o:,}, Margin={pm:.1f}%.",
                     {"type": "trend", "grain": "year", "year": yr}))
+            
+            if len(yearly) >= 2:
+                yoy_lines = []
+                for i in range(1, len(yearly)):
+                    prev_s = float(yearly.iloc[i-1]["sales"])
+                    curr_s = float(yearly.iloc[i]["sales"])
+                    prev_y = int(yearly.iloc[i-1]["year"])
+                    curr_y = int(yearly.iloc[i]["year"])
+                    chg = ((curr_s - prev_s) / prev_s * 100) if prev_s else 0
+                    prev_p = float(yearly.iloc[i-1].get("profit", 0))
+                    curr_p = float(yearly.iloc[i].get("profit", 0))
+                    prof_chg = ((curr_p - prev_p) / abs(prev_p) * 100) if prev_p else 0
+                    yoy_lines.append(
+                        f"{prev_y}→{curr_y}: Sales {chg:+.1f}%, Profit {prof_chg:+.1f}%"
+                    )
+                chunks.append(Chunk("yoy_comparison",
+                    f"Year-over-year changes: {'; '.join(yoy_lines)}.",
+                    {"type": "trend", "topic": "yoy"}))
 
             if len(yearly) >= 2:
                 first_s, last_s = float(yearly.iloc[0]["sales"]), float(yearly.iloc[-1]["sales"])

@@ -146,6 +146,24 @@ Plain text only:"""
                 else:
                     d = "ahead of" if chg > 0 else "behind"
                     insights.append(f"Current period is **{d}** the prior by {abs(chg):.1f}%.")
+        
+        elif intent == "kpi_value" and not breakdown and "sales" in df.columns:
+            r0 = df.iloc[0]
+            ts = float(r0.get("sales", 0))
+            tp = float(r0.get("profit", 0))
+            pm = (tp / ts * 100) if ts else 0
+            to_ = int(r0.get("orders", 0)) if "orders" in r0 else None
+            
+            if pm < 5:
+                insights.append(f"⚠️ Profit margin of **{pm:.1f}%** is dangerously low — review cost structure.")
+            elif pm > 20:
+                insights.append(f"Margin of **{pm:.1f}%** is strong — well above typical retail benchmarks.")
+            else:
+                insights.append(f"Margin of **{pm:.1f}%** is within normal range for retail operations.")
+            
+            if to_:
+                avg = ts / to_
+                insights.append(f"Average order value: **${avg:,.0f}** across **{to_:,}** transactions.")
 
         return insights
 
