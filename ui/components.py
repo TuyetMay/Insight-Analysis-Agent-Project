@@ -197,6 +197,9 @@ def render_chat_sidebar(chatbot: Any) -> None:
                 st.sidebar.markdown(_bot_bubble(msg["content"]), unsafe_allow_html=True)
 
     thinking_placeholder = st.sidebar.empty()
+    if not history:
+        st.sidebar.markdown('<div class="chip-label">⚡ Quick questions</div>', unsafe_allow_html=True)
+        _quick_buttons(chatbot, thinking_placeholder)
 
     st.sidebar.markdown('<div class="chip-label">⚡ Quick questions</div>', unsafe_allow_html=True)
     _quick_buttons(chatbot, thinking_placeholder)
@@ -211,10 +214,10 @@ def render_chat_sidebar(chatbot: Any) -> None:
 
 def _quick_buttons(chatbot: Any, thinking_placeholder: Any) -> None:
     quick_qs = [
-        ("💰 Total Sales",  "What is the total sales?"),
-        ("🌍 By Region",    "Show profit by region"),
-        ("📈 Trends",       "Monthly sales trend"),
-        ("🏆 Top Products", "Top 5 sub-categories by profit"),
+        ("💰 Total Sales",   "What is the total sales?"),
+        ("📦 Total Orders",  "What is the total orders?"),
+        ("💹 Total Profit",  "What is the total profit?"),
+        ("📊 Profit Margin", "What is the profit margin?"),
     ]
     cols = st.sidebar.columns(2)
     for i, (label, question) in enumerate(quick_qs):
@@ -252,8 +255,10 @@ def _process_question(chatbot: Any, question: str, thinking_placeholder: Any) ->
     history = st.session_state.setdefault("chat_history", [])
     history.append({"role": "user", "content": question})
 
-    # Show thinking animation
-    thinking_placeholder.markdown(_thinking_bubble(), unsafe_allow_html=True)
+    thinking_placeholder.markdown(
+        _user_bubble(question) + _thinking_bubble(),
+        unsafe_allow_html=True
+    )
 
     # Get response
     response = chatbot.get_response(question)
