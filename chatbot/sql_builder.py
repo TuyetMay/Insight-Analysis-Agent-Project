@@ -54,24 +54,14 @@ class SQLBuilder:
         where_parts = ["order_date >= %(start)s", "order_date <= %(end)s"]
         params: Dict[str, Any] = {"start": plan["start_date"], "end": plan["end_date"]}
 
-        if f.get("region"):
-            placeholders = ", ".join(f"%(region_{i})s" for i in range(len(f["region"])))
-            where_parts.append(f"region IN ({placeholders})")
-            for i, v in enumerate(f["region"]):
-                params[f"region_{i}"] = v
-
-        if f.get("segment"):
-            placeholders = ", ".join(f"%(segment_{i})s" for i in range(len(f["segment"])))
-            where_parts.append(f"segment IN ({placeholders})")
-            for i, v in enumerate(f["segment"]):
-                params[f"segment_{i}"] = v
-
-        if f.get("category"):
-            placeholders = ", ".join(f"%(category_{i})s" for i in range(len(f["category"])))
-            where_parts.append(f"category IN ({placeholders})")
-            for i, v in enumerate(f["category"]):
-                params[f"category_{i}"] = v
-                        
+        # ✅ FIX: added sub_category to WHERE clause builders
+        for col in ("region", "segment", "category", "sub_category"):
+            vals = f.get(col)
+            if vals:
+                placeholders = ", ".join(f"%({col}_{i})s" for i in range(len(vals)))
+                where_parts.append(f"{col} IN ({placeholders})")
+                for i, v in enumerate(vals):
+                    params[f"{col}_{i}"] = v
 
         where_sql = " AND ".join(where_parts)
 

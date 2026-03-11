@@ -24,12 +24,16 @@ class PlanValidator:
     def __init__(self, df_date_range: Tuple[str, str],
                  allowed_regions: List[str],
                  allowed_segments: List[str],
-                 allowed_categories: List[str]) -> None:
+                 allowed_categories: List[str],
+                 allowed_sub_categories: Optional[List[str]] = None) -> None:
         self._date_range = df_date_range
         self._allowed = {
-            "region":   set(allowed_regions),
-            "segment":  set(allowed_segments),
-            "category": set(allowed_categories),
+            "region":       set(allowed_regions),
+            "segment":      set(allowed_segments),
+            "category":     set(allowed_categories),
+            # sub_category is open — validated as non-empty strings only
+            # (values come from df at runtime, not a fixed enum)
+            "sub_category": set(allowed_sub_categories or []),
         }
 
     # ── Public ────────────────────────────────────────────────
@@ -55,7 +59,7 @@ class PlanValidator:
                 "compare_period": None, "top_k": None,
                 "order_by": "sales",
                 "start_date": s0, "end_date": e0,
-                "filters": {"region": [], "segment": [], "category": []},
+                "filters": {"region": [], "segment": [], "category": [], "sub_category": []},
             }
 
         metrics = self._validated_metrics(plan.get("metrics"))
@@ -165,14 +169,20 @@ class PlanValidator:
         if not isinstance(raw, dict):
             raise ValueError("filters must be an object.")
         result: Dict[str, List[str]] = {}
-        for dim in ("region", "segment", "category"):
+
+        # ✅ FIX: added sub_category to filter dimensions
+        for dim in ("region", "segment", "category", "sub_category"):
             vals = raw.get(dim) or []
             if not isinstance(vals, list):
                 raise ValueError(f"filters.{dim} must be an array.")
             vals = [str(v) for v in vals]
-            bad = sorted(set(vals) - self._allowed[dim])
-            if bad:
-                raise ValueError(f"filters.{dim} contains unknown values: {bad}")
+
+            # region/segment/category: validate against known allowed set
+            # sub_category: allow any non-empty string (values are dynamic from df)
+            if dim != "sub_category":
+                bad = sorted(set(vals) - self._allowed[dim])
+                if bad:
+                    raise ValueError(f"filters.{dim} contains unknown values: {bad}")
             result[dim] = vals
         return result
 

@@ -172,7 +172,7 @@ class NLParser:
             "intent": "kpi_value", "metrics": ["sales"], "time_grain": "none",
             "breakdown_by": None, "start_date": s0, "end_date": e0,
             "compare_period": None, "top_k": None, "order_by": "sales",
-            "filters": {"region": [], "segment": [], "category": []},
+            "filters": {"region": [], "segment": [], "category": [], "sub_category": []},
         }
 
         # Metric
@@ -220,6 +220,31 @@ class NLParser:
             if detected_compare is None:
                 detected_compare = "prev_period"
 
+        # ── Sub-category value detection (no keyword needed) ─────
+        # User can name sub_category values directly without saying "by sub_category"
+        # e.g. "profit of envelopes and paper and copiers"
+        # Detect this BEFORE the intent-building so it can set detected_breakdown.
+        if detected_breakdown is None and not self.df.empty and "sub_category" in self.df.columns:
+            all_sub_cats = [
+                str(v) for v in self.df["sub_category"].dropna().unique().tolist()
+            ]
+            mentioned_sub = [v for v in all_sub_cats if v.lower() in ql]
+            if mentioned_sub and len(mentioned_sub) < len(all_sub_cats):
+                detected_breakdown = "sub_category"
+
+        # ── Same logic for region/segment/category without keyword ─
+        if detected_breakdown is None:
+            f = self.filters or {}
+            for dim, all_vals in [
+                ("region",   list(f.get("region")   or [])),
+                ("segment",  list(f.get("segment")  or [])),
+                ("category", list(f.get("category") or [])),
+            ]:
+                mentioned = [v for v in all_vals if v.lower() in ql]
+                if mentioned and len(mentioned) < len(all_vals):
+                    detected_breakdown = dim
+                    break
+
         # Build intent
         if detected_compare:
             plan.update(intent="kpi_compare", compare_period=detected_compare)
@@ -232,7 +257,7 @@ class NLParser:
         else:
             return None  # nothing recognisable — let Gemini handle it
 
-        # ✅ FIX 1: rule_based_plan must also inject explicit user filters
+        # ✅ FIX: also inject filters on the rule-based path
         return self._inject_mentioned_filters(plan, q)
 
     # ── Tier 3: Gemini plan ───────────────────────────────────
@@ -338,11 +363,9 @@ class NLParser:
         Detects explicit dimension values named in the user's question and:
           1. Injects them as SQL filters (narrows the WHERE clause)
           2. Sets breakdown_by to that dimension if Gemini left it null
-             (e.g. "sales of west, east and south" → breakdown_by="region")
 
-        ✅ FIX: Always overrides Gemini's filter output.
-        ✅ FIX2: Also sets breakdown_by when user names specific dimension values
-                 so the answer shows per-row breakdown instead of a single total.
+        Handles: region, segment, category (from dashboard sidebar filters)
+                 sub_category (extracted live from self.df)
         """
         ql = q.lower()
         f  = self.filters or {}
@@ -351,22 +374,34 @@ class NLParser:
         all_segments   = list(f.get("segment")   or [])
         all_categories = list(f.get("category")  or [])
 
-        filters = plan.get("filters") or {"region": [], "segment": [], "category": []}
+        # sub_category values come from the loaded DataFrame, not sidebar filters
+        all_sub_categories: List[str] = []
+        if not self.df.empty and "sub_category" in self.df.columns:
+            all_sub_categories = [
+                str(v) for v in self.df["sub_category"].dropna().unique().tolist()
+            ]
+
+        filters = plan.get("filters") or {
+            "region": [], "segment": [], "category": [], "sub_category": []
+        }
+        if "sub_category" not in filters:
+            filters["sub_category"] = []
 
         _DIM_MAP = {
-            "region":   all_regions,
-            "segment":  all_segments,
-            "category": all_categories,
+            "region":       all_regions,
+            "segment":      all_segments,
+            "category":     all_categories,
+            "sub_category": all_sub_categories,
         }
 
         for key, all_vals in _DIM_MAP.items():
+            if not all_vals:
+                continue
             mentioned = [v for v in all_vals if v.lower() in ql]
             # Narrow filter when user explicitly named a STRICT SUBSET
             if mentioned and len(mentioned) < len(all_vals):
                 filters[key] = mentioned
-                # ✅ FIX2: If user names specific values from a dimension but Gemini
-                # didn't set breakdown_by, infer it — "sales of west, east, south"
-                # should show a per-region breakdown, not a single aggregate.
+                # Infer breakdown_by when Gemini left it null
                 if plan.get("breakdown_by") is None and plan.get("intent") in (
                     "kpi_value", "kpi_trend", None
                 ):
