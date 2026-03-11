@@ -320,8 +320,11 @@ class NLParser:
         - kpi_compare: metrics must have exactly 1 item
         - kpi_rank: requires breakdown_by AND top_k; time_grain must be "none"
         - If intent="clarify": add "clarifying_question": "<one question>"
-        - IMPORTANT: If the user explicitly names specific dimension values (e.g. "central, east, south"),
-          set filters.region to ONLY those named values — do NOT include unlisted values like "West".
+        - IMPORTANT: If the user explicitly names specific dimension values (e.g. "west, east and south"):
+          (a) set filters to ONLY those named values — do NOT include unlisted ones.
+          (b) ALSO set breakdown_by to that dimension so each value gets its own row.
+          Example: "total sales of west, east and south" →
+            breakdown_by="region", filters.region=["West","East","South"]
 
         === JSON SCHEMA ===
         {{"intent":"kpi_value","metrics":["sales"],"time_grain":"none","breakdown_by":null,"start_date":"{s0}","end_date":"{e0}","compare_period":null,"top_k":null,"order_by":"sales","filters":{{"region":[],"segment":[],"category":[]}}}}
@@ -332,19 +335,14 @@ class NLParser:
 
     def _inject_mentioned_filters(self, plan: Dict[str, Any], q: str) -> Dict[str, Any]:
         """
-        Detects explicit dimension values named in the user's question and injects
-        them as filters, narrowing the query to only what the user asked for.
+        Detects explicit dimension values named in the user's question and:
+          1. Injects them as SQL filters (narrows the WHERE clause)
+          2. Sets breakdown_by to that dimension if Gemini left it null
+             (e.g. "sales of west, east and south" → breakdown_by="region")
 
-        ✅ FIX: Previously this method was guarded by `if not filters.get("region")`
-        which meant it was skipped whenever Gemini already returned values (even wrong ones).
-        Now it ALWAYS overrides when the user explicitly mentions a proper subset.
-
-        Example:
-          Dashboard has 4 regions: [Central, East, South, West]
-          User asks "...central, east, south"
-          → mentioned = ["Central", "East", "South"]  (3 < 4, so inject)
-          → filters["region"] = ["Central", "East", "South"]  ✅
-          → West is excluded from the SQL WHERE clause
+        ✅ FIX: Always overrides Gemini's filter output.
+        ✅ FIX2: Also sets breakdown_by when user names specific dimension values
+                 so the answer shows per-row breakdown instead of a single total.
         """
         ql = q.lower()
         f  = self.filters or {}
@@ -355,15 +353,24 @@ class NLParser:
 
         filters = plan.get("filters") or {"region": [], "segment": [], "category": []}
 
-        for all_vals, key in [
-            (all_regions,    "region"),
-            (all_segments,   "segment"),
-            (all_categories, "category"),
-        ]:
+        _DIM_MAP = {
+            "region":   all_regions,
+            "segment":  all_segments,
+            "category": all_categories,
+        }
+
+        for key, all_vals in _DIM_MAP.items():
             mentioned = [v for v in all_vals if v.lower() in ql]
-            # Only narrow when user explicitly named a STRICT SUBSET (not all available values)
+            # Narrow filter when user explicitly named a STRICT SUBSET
             if mentioned and len(mentioned) < len(all_vals):
                 filters[key] = mentioned
+                # ✅ FIX2: If user names specific values from a dimension but Gemini
+                # didn't set breakdown_by, infer it — "sales of west, east, south"
+                # should show a per-region breakdown, not a single aggregate.
+                if plan.get("breakdown_by") is None and plan.get("intent") in (
+                    "kpi_value", "kpi_trend", None
+                ):
+                    plan["breakdown_by"] = key
 
         plan["filters"] = filters
         return plan
