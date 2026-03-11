@@ -83,7 +83,7 @@ class NLParser:
         self.model_name   = model_name or ""
 
     # ── Tier 1: fast KPI ─────────────────────────────────────
-    # THÊM helper này vào class NLParser (trước fast_kpi_answer)
+
     def _build_context_line(self) -> str:
         f = self.filters or {}
         parts = []
@@ -96,7 +96,6 @@ class NLParser:
         segments   = list(f.get("segment")   or [])
         categories = list(f.get("category")  or [])
 
-        # Chỉ mention nếu filter thực sự hạn chế (≤ 2 giá trị)
         if 0 < len(regions) <= 2:
             parts.append(f"in **{', '.join(regions)}**")
         if 0 < len(segments) <= 2:
@@ -105,7 +104,7 @@ class NLParser:
             parts.append(f"across **{', '.join(categories)}**")
 
         return " ".join(parts) if parts else ""
-    # CẬP NHẬT fast_kpi_answer — thay toàn bộ các return statement
+
     def fast_kpi_answer(self, q: str) -> Optional[str]:
         """Return a plain-text answer for simple KPI totals — no DB round-trip needed."""
         ql = (q or "").strip().lower()
@@ -120,7 +119,6 @@ class NLParser:
         def money(x: float) -> str: return f"${x:,.0f}"
 
         ctx = self._build_context_line()
-        ctx_suffix = ""
 
         if re.search(r"\b(kpi|summary|overview|dashboard)\b", ql):
             return (
@@ -136,7 +134,6 @@ class NLParser:
                 + (f", generated {ctx}" if ctx else "")
                 + f". That reflects **{to_:,} orders** at an average of "
                 + f"**{money(ts / to_ if to_ else 0)}** per order."
-                + ctx_suffix
             )
         if re.search(r"\b(total\s+profit|profit\s+total)\b", ql):
             health = "healthy" if pm >= 10 else "tight"
@@ -145,7 +142,6 @@ class NLParser:
                 + (f", recorded {ctx}" if ctx else "")
                 + f" — representing a **{pm:.2f}% margin** on **{money(ts)}** in revenue."
                 f" Profitability looks **{health}** for this period."
-                + ctx_suffix
             )
         if re.search(r"\b(total\s+orders|orders\s+total|number\s+of\s+orders)\b", ql):
             avg_val = ts / to_ if to_ else 0
@@ -154,7 +150,6 @@ class NLParser:
                 + (f" {ctx}" if ctx else "")
                 + f", with an average order value of **{money(avg_val)}**."
                 f" These orders generated **{money(ts)}** in revenue and **{money(tp)}** in profit."
-                + ctx_suffix
             )
         if re.search(r"\b(profit\s+margin|margin)\b", ql):
             benchmark = "above" if pm >= 12 else "below"
@@ -163,16 +158,15 @@ class NLParser:
                 + (f" {ctx}" if ctx else "")
                 + f", with **{money(tp)}** profit on **{money(ts)}** revenue."
                 f" This is **{benchmark} the typical 12% retail benchmark**."
-                + ctx_suffix
             )
         return None
-        # ── Tier 2: rule-based plan ───────────────────────────────
+
+    # ── Tier 2: rule-based plan ───────────────────────────────
 
     def rule_based_plan(self, q: str) -> Optional[Dict[str, Any]]:
         """Parse simple NL into a plan dict — no LLM required."""
         ql = (q or "").lower().strip()
         s0, e0 = self._date_range()
-        regions, segments, categories = self._filter_lists()
 
         plan: Dict[str, Any] = {
             "intent": "kpi_value", "metrics": ["sales"], "time_grain": "none",
@@ -238,7 +232,8 @@ class NLParser:
         else:
             return None  # nothing recognisable — let Gemini handle it
 
-        return plan
+        # ✅ FIX 1: rule_based_plan must also inject explicit user filters
+        return self._inject_mentioned_filters(plan, q)
 
     # ── Tier 3: Gemini plan ───────────────────────────────────
 
@@ -252,6 +247,7 @@ class NLParser:
             config=genai_types.GenerateContentConfig(temperature=0.0, max_output_tokens=400),
         )
         plan = self._extract_json((getattr(resp, "text", None) or "").strip())
+        # ✅ FIX 2: _inject_mentioned_filters now always overrides (see method below)
         return self._inject_mentioned_filters(plan, q)
 
     # ── Helpers ───────────────────────────────────────────────
@@ -312,7 +308,7 @@ class NLParser:
         breakdown_by: null | region | segment | category | sub_category
         compare_period: null | prev_period | mom | yoy
 
-        === CURRENT DASHBOARD FILTERS ===
+        === CURRENT DASHBOARD FILTERS (available values only) ===
         regions={json.dumps(regions)}
         segments={json.dumps(segments)}
         categories={json.dumps(categories)}
@@ -324,6 +320,8 @@ class NLParser:
         - kpi_compare: metrics must have exactly 1 item
         - kpi_rank: requires breakdown_by AND top_k; time_grain must be "none"
         - If intent="clarify": add "clarifying_question": "<one question>"
+        - IMPORTANT: If the user explicitly names specific dimension values (e.g. "central, east, south"),
+          set filters.region to ONLY those named values — do NOT include unlisted values like "West".
 
         === JSON SCHEMA ===
         {{"intent":"kpi_value","metrics":["sales"],"time_grain":"none","breakdown_by":null,"start_date":"{s0}","end_date":"{e0}","compare_period":null,"top_k":null,"order_by":"sales","filters":{{"region":[],"segment":[],"category":[]}}}}
@@ -331,11 +329,22 @@ class NLParser:
         USER QUESTION: {q}
 
         Return ONLY the JSON object:""".strip()
-    
+
     def _inject_mentioned_filters(self, plan: Dict[str, Any], q: str) -> Dict[str, Any]:
         """
-        If user explicitly mentions specific region/segment/category values in the question,
-        inject them into plan filters so SQL WHERE clause narrows correctly.
+        Detects explicit dimension values named in the user's question and injects
+        them as filters, narrowing the query to only what the user asked for.
+
+        ✅ FIX: Previously this method was guarded by `if not filters.get("region")`
+        which meant it was skipped whenever Gemini already returned values (even wrong ones).
+        Now it ALWAYS overrides when the user explicitly mentions a proper subset.
+
+        Example:
+          Dashboard has 4 regions: [Central, East, South, West]
+          User asks "...central, east, south"
+          → mentioned = ["Central", "East", "South"]  (3 < 4, so inject)
+          → filters["region"] = ["Central", "East", "South"]  ✅
+          → West is excluded from the SQL WHERE clause
         """
         ql = q.lower()
         f  = self.filters or {}
@@ -346,22 +355,15 @@ class NLParser:
 
         filters = plan.get("filters") or {"region": [], "segment": [], "category": []}
 
-        # Only override if Gemini left the filter empty
-        if not filters.get("region"):
-            mentioned = [r for r in all_regions if r.lower() in ql]
-            # Only inject if user mentioned a SUBSET (not all)
-            if mentioned and len(mentioned) < len(all_regions):
-                filters["region"] = mentioned
-
-        if not filters.get("segment"):
-            mentioned = [s for s in all_segments if s.lower() in ql]
-            if mentioned and len(mentioned) < len(all_segments):
-                filters["segment"] = mentioned
-
-        if not filters.get("category"):
-            mentioned = [c for c in all_categories if c.lower() in ql]
-            if mentioned and len(mentioned) < len(all_categories):
-                filters["category"] = mentioned
+        for all_vals, key in [
+            (all_regions,    "region"),
+            (all_segments,   "segment"),
+            (all_categories, "category"),
+        ]:
+            mentioned = [v for v in all_vals if v.lower() in ql]
+            # Only narrow when user explicitly named a STRICT SUBSET (not all available values)
+            if mentioned and len(mentioned) < len(all_vals):
+                filters[key] = mentioned
 
         plan["filters"] = filters
         return plan
@@ -377,5 +379,3 @@ class NLParser:
         if m:
             return json.loads(m.group(0))
         raise ValueError("Gemini did not return valid JSON.")
-    
-
