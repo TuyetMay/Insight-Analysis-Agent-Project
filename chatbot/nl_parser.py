@@ -9,10 +9,11 @@ Three tiers (fastest to slowest):
 
 from __future__ import annotations
 
+import calendar
 import json
 import re
 from datetime import date, datetime
-from typing import Any, Dict, List, Optional, TYPE_CHECKING
+from typing import Any, Dict, List, Optional, Tuple, TYPE_CHECKING
 
 import pandas as pd
 from google.genai import types as genai_types
@@ -55,6 +56,22 @@ _COMPARE_KEYWORDS: Dict[str, str] = {
     "last period": "prev_period", "vs previous": "prev_period",
 }
 
+# Month name → number (both full and abbreviated)
+_MONTH_MAP: Dict[str, int] = {
+    "january": 1, "jan": 1,
+    "february": 2, "feb": 2,
+    "march": 3, "mar": 3,
+    "april": 4, "apr": 4,
+    "may": 5,
+    "june": 6, "jun": 6,
+    "july": 7, "jul": 7,
+    "august": 8, "aug": 8,
+    "september": 9, "sep": 9, "sept": 9,
+    "october": 10, "oct": 10,
+    "november": 11, "nov": 11,
+    "december": 12, "dec": 12,
+}
+
 _BREAKDOWN_RE = re.compile(
     r"\b(by|per|across|for each|breakdown|group by|split by)\s+"
     r"(region|segment|category|sub.?category|product|state|city|ship\s*mode)\b",
@@ -68,6 +85,20 @@ _TIME_GRAIN_RE = re.compile(
     r"\b(q[1-4]|quarter|month|year|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\b"
 )
 _TIME_REL    = re.compile(r"\b(in|during|between|from|since|until|last|previous|this)\b")
+
+# Pattern: "june 2016", "jun 2016", "2016 june" etc.
+_MONTH_YEAR_RE = re.compile(
+    r"\b(?:("
+    + "|".join(_MONTH_MAP.keys())
+    + r")\s+(20\d{2})|(20\d{2})\s+("
+    + "|".join(_MONTH_MAP.keys())
+    + r"))\b",
+    re.IGNORECASE,
+)
+# Pattern: "Q3 2016", "q3 2016"
+_QUARTER_YEAR_RE = re.compile(r"\bq([1-4])\s*(20\d{2})\b", re.IGNORECASE)
+# Pattern: just a year "in 2016"
+_YEAR_ONLY_RE = re.compile(r"\bin\s+(20\d{2})\b|\bfor\s+(20\d{2})\b|\b(20\d{2})\b")
 
 
 class NLParser:
@@ -168,6 +199,11 @@ class NLParser:
         ql = (q or "").lower().strip()
         s0, e0 = self._date_range()
 
+        # ── Detect explicit date range from question ──────────
+        explicit_dates = self._extract_date_range(ql)
+        if explicit_dates:
+            s0, e0 = explicit_dates
+
         plan: Dict[str, Any] = {
             "intent": "kpi_value", "metrics": ["sales"], "time_grain": "none",
             "breakdown_by": None, "start_date": s0, "end_date": e0,
@@ -175,14 +211,18 @@ class NLParser:
             "filters": {"region": [], "segment": [], "category": [], "sub_category": []},
         }
 
-        # Metric
-        detected_metric = "sales"
+        # ── Detect ALL mentioned metrics (e.g. "sales and profit") ──
+        detected_metrics: List[str] = []
         for kw, metric in sorted(_METRIC_KEYWORDS.items(), key=lambda x: -len(x[0])):
-            if kw in ql:
-                detected_metric = metric
-                break
-        plan["metrics"]  = [detected_metric]
-        plan["order_by"] = detected_metric
+            if kw in ql and metric not in detected_metrics:
+                detected_metrics.append(metric)
+        if not detected_metrics:
+            detected_metrics = ["sales"]
+        # Limit to 2 metrics max (schema constraint)
+        detected_metrics = detected_metrics[:2]
+
+        plan["metrics"]  = detected_metrics
+        plan["order_by"] = detected_metrics[0]
 
         # Breakdown
         detected_breakdown: Optional[str] = None
@@ -220,10 +260,7 @@ class NLParser:
             if detected_compare is None:
                 detected_compare = "prev_period"
 
-        # ── Sub-category value detection (no keyword needed) ─────
-        # User can name sub_category values directly without saying "by sub_category"
-        # e.g. "profit of envelopes and paper and copiers"
-        # Detect this BEFORE the intent-building so it can set detected_breakdown.
+        # ── Sub-category value detection ──────────────────────
         if detected_breakdown is None and not self.df.empty and "sub_category" in self.df.columns:
             all_sub_cats = [
                 str(v) for v in self.df["sub_category"].dropna().unique().tolist()
@@ -232,7 +269,7 @@ class NLParser:
             if mentioned_sub and len(mentioned_sub) < len(all_sub_cats):
                 detected_breakdown = "sub_category"
 
-        # ── Same logic for region/segment/category without keyword ─
+        # ── Same logic for region/segment/category ────────────
         if detected_breakdown is None:
             f = self.filters or {}
             for dim, all_vals in [
@@ -245,19 +282,23 @@ class NLParser:
                     detected_breakdown = dim
                     break
 
-        # Build intent
+        # ── Build intent ──────────────────────────────────────
         if detected_compare:
-            plan.update(intent="kpi_compare", compare_period=detected_compare)
+            plan.update(intent="kpi_compare", compare_period=detected_compare,
+                        metrics=[detected_metrics[0]])  # compare supports only 1 metric
         elif top_k and detected_breakdown:
             plan.update(intent="kpi_rank", breakdown_by=detected_breakdown, top_k=top_k)
         elif detected_grain != "none":
-            plan.update(intent="kpi_trend", time_grain=detected_grain, breakdown_by=detected_breakdown)
+            plan.update(intent="kpi_trend", time_grain=detected_grain,
+                        breakdown_by=detected_breakdown)
         elif detected_breakdown:
             plan.update(intent="kpi_value", breakdown_by=detected_breakdown)
+        elif explicit_dates or len(detected_metrics) > 1:
+            # Has a specific date range OR multiple metrics → valid kpi_value query
+            plan.update(intent="kpi_value")
         else:
             return None  # nothing recognisable — let Gemini handle it
 
-        # ✅ FIX: also inject filters on the rule-based path
         return self._inject_mentioned_filters(plan, q)
 
     # ── Tier 3: Gemini plan ───────────────────────────────────
@@ -272,8 +313,48 @@ class NLParser:
             config=genai_types.GenerateContentConfig(temperature=0.0, max_output_tokens=400),
         )
         plan = self._extract_json((getattr(resp, "text", None) or "").strip())
-        # ✅ FIX 2: _inject_mentioned_filters now always overrides (see method below)
         return self._inject_mentioned_filters(plan, q)
+
+    # ── Date extraction ───────────────────────────────────────
+
+    def _extract_date_range(self, ql: str) -> Optional[Tuple[str, str]]:
+        """
+        Try to extract an explicit date range from the lowercased question.
+        Handles: "june 2016", "jun 2016", "q3 2016", "in 2016"
+        Returns (start_date, end_date) as 'YYYY-MM-DD' strings, or None.
+        """
+        # Pattern: "june 2016" or "2016 june"
+        m = _MONTH_YEAR_RE.search(ql)
+        if m:
+            if m.group(1) and m.group(2):
+                month_name, year = m.group(1).lower(), int(m.group(2))
+            else:
+                month_name, year = m.group(4).lower(), int(m.group(3))
+            month_num = _MONTH_MAP.get(month_name)
+            if month_num:
+                last_day = calendar.monthrange(year, month_num)[1]
+                start = f"{year}-{month_num:02d}-01"
+                end   = f"{year}-{month_num:02d}-{last_day:02d}"
+                return start, end
+
+        # Pattern: "q3 2016"
+        m = _QUARTER_YEAR_RE.search(ql)
+        if m:
+            q_num, year = int(m.group(1)), int(m.group(2))
+            quarter_starts = {1: (1, 1), 2: (4, 1), 3: (7, 1), 4: (10, 1)}
+            quarter_ends   = {1: (3, 31), 2: (6, 30), 3: (9, 30), 4: (12, 31)}
+            sm, sd = quarter_starts[q_num]
+            em, ed = quarter_ends[q_num]
+            return f"{year}-{sm:02d}-{sd:02d}", f"{year}-{em:02d}-{ed:02d}"
+
+        # Pattern: "in 2016" or bare year (only if it's the dominant time signal)
+        # Avoid matching if there's a month name (already handled above)
+        year_matches = _TIME_YEAR.findall(ql)
+        if len(year_matches) == 1:
+            year = int(year_matches[0])
+            return f"{year}-01-01", f"{year}-12-31"
+
+        return None
 
     # ── Helpers ───────────────────────────────────────────────
 
@@ -359,14 +440,6 @@ class NLParser:
         Return ONLY the JSON object:""".strip()
 
     def _inject_mentioned_filters(self, plan: Dict[str, Any], q: str) -> Dict[str, Any]:
-        """
-        Detects explicit dimension values named in the user's question and:
-          1. Injects them as SQL filters (narrows the WHERE clause)
-          2. Sets breakdown_by to that dimension if Gemini left it null
-
-        Handles: region, segment, category (from dashboard sidebar filters)
-                 sub_category (extracted live from self.df)
-        """
         ql = q.lower()
         f  = self.filters or {}
 
@@ -374,7 +447,6 @@ class NLParser:
         all_segments   = list(f.get("segment")   or [])
         all_categories = list(f.get("category")  or [])
 
-        # sub_category values come from the loaded DataFrame, not sidebar filters
         all_sub_categories: List[str] = []
         if not self.df.empty and "sub_category" in self.df.columns:
             all_sub_categories = [
@@ -398,10 +470,8 @@ class NLParser:
             if not all_vals:
                 continue
             mentioned = [v for v in all_vals if v.lower() in ql]
-            # Narrow filter when user explicitly named a STRICT SUBSET
             if mentioned and len(mentioned) < len(all_vals):
                 filters[key] = mentioned
-                # Infer breakdown_by when Gemini left it null
                 if plan.get("breakdown_by") is None and plan.get("intent") in (
                     "kpi_value", "kpi_trend", None
                 ):
@@ -412,12 +482,33 @@ class NLParser:
 
     @staticmethod
     def _extract_json(text: str) -> Dict[str, Any]:
-        for attempt in (text, re.sub(r"```(?:json)?", "", text).strip()):
+        # Try 1: direct parse
+        try:
+            return json.loads(text)
+        except Exception:
+            pass
+
+        # Try 2: strip markdown fences
+        cleaned = re.sub(r"```(?:json)?", "", text).strip().rstrip("`").strip()
+        try:
+            return json.loads(cleaned)
+        except Exception:
+            pass
+
+        # Try 3: extract first {...} block (handles extra text before/after)
+        m = re.search(r"\{.*?\}", text, flags=re.DOTALL)
+        if m:
             try:
-                return json.loads(attempt)
+                return json.loads(m.group(0))
             except Exception:
                 pass
-        m = re.search(r"\{.*\}", text, flags=re.DOTALL)
-        if m:
-            return json.loads(m.group(0))
+
+        # Try 4: extract last {...} block (sometimes model puts JSON at end)
+        matches = list(re.finditer(r"\{.*?\}", text, flags=re.DOTALL))
+        if matches:
+            try:
+                return json.loads(matches[-1].group(0))
+            except Exception:
+                pass
+
         raise ValueError("Gemini did not return valid JSON.")

@@ -77,8 +77,6 @@ class AnswerFormatter:
         date_part = f"{fmt_date(sd)} – {fmt_date(ed)}" if (sd and ed) else ""
         parts = [date_part] if date_part else []
 
-        # Only show filter context that differs from "all selected"
-        # (we don't track dashboard-wide selections here, so show non-empty filters)
         f = plan.get("filters") or {}
         for key in ("region", "segment", "category"):
             vals = f.get(key) or []
@@ -119,11 +117,11 @@ class AnswerFormatter:
         if breakdown:
             m0   = plan.get("order_by") or metrics[0]
             dim_label = breakdown.replace("_", " ").title()
-            lines = [f"Here's how **{_METRIC_LABELS[metrics[0]]}** breaks down by **{dim_label}**:{ctx_line}", ""]
+            lines = [f"Here's how **{_METRIC_LABELS.get(metrics[0], metrics[0])}** breaks down by **{dim_label}**:{ctx_line}", ""]
             for rank, (_, r) in enumerate(df.sort_values(by=m0, ascending=False).head(20).iterrows(), 1):
                 b    = r.get("breakdown", "—")
                 vals = " | ".join(
-                    f"{_METRIC_LABELS[m]}: {self._fv(float(r[m]), m)}"
+                    f"{_METRIC_LABELS.get(m, m)}: {self._fv(float(r[m]), m)}"
                     for m in metrics if m in r
                 )
                 lines.append(f"{rank}. **{b}** — {vals}")
@@ -134,7 +132,7 @@ class AnswerFormatter:
         if len(metrics) == 1:
             m  = metrics[0]
             vs = self._fv(float(r0[m]), m)
-            opener = _METRIC_OPENERS.get(m, f"{_METRIC_LABELS[m]} is")
+            opener = _METRIC_OPENERS.get(m, f"{_METRIC_LABELS.get(m, m)} is")
 
             # Add supporting context metrics naturally
             extras = []
@@ -151,16 +149,29 @@ class AnswerFormatter:
                 avg      = sales_v / orders_v if orders_v else 0
                 extras.append(f"averaging **{self._fv(avg, 'sales')}** per order")
 
-
             extra_str = f", with {extras[0]}" if extras else ""
             return f"{opener} **{vs}**{extra_str}.{ctx_line}"
-        lines = [...] 
-        return "\n".join(lines)  
+
+        # ── Multiple metrics (e.g. sales + profit) ────────────
+        lines = [f"Here's a summary of the requested metrics:{ctx_line}", ""]
+        for m in metrics:
+            if m in r0:
+                label = _METRIC_LABELS.get(m, m.replace("_", " ").title())
+                lines.append(f"- **{label}:** {self._fv(float(r0[m]), m)}")
+
+        # Add profit margin as bonus context when both sales + profit are present
+        if "sales" in r0 and "profit" in r0 and "profit_margin" not in metrics:
+            sales_v = float(r0["sales"])
+            prof_v  = float(r0["profit"])
+            margin  = (prof_v / sales_v * 100) if sales_v else 0
+            lines.append(f"- **Profit Margin:** {margin:.2f}%")
+
+        return "\n".join(lines)
 
     def _format_trend(self, plan: Dict[str, Any], df: pd.DataFrame,
                       metrics: List[str], grain: str, breakdown: Any, ctx_line: str) -> str:
         grain_label = {"week": "week", "month": "month", "quarter": "quarter", "year": "year"}.get(grain, grain)
-        metric_str  = " & ".join(_METRIC_LABELS[m] for m in metrics)
+        metric_str  = " & ".join(_METRIC_LABELS.get(m, m) for m in metrics)
         lines = [f"Here's the **{metric_str}** trend by {grain_label}:{ctx_line}", ""]
 
         show = df.copy()
@@ -187,7 +198,7 @@ class AnswerFormatter:
         breakdown = plan.get("breakdown_by") or "item"
         dim_label = breakdown.replace("_", " ").title()
         lines = [
-            f"Here are the **top {plan['top_k']} {dim_label}s** ranked by {_METRIC_LABELS[m0]}:{ctx_line}",
+            f"Here are the **top {plan['top_k']} {dim_label}s** ranked by {_METRIC_LABELS.get(m0, m0)}:{ctx_line}",
             "",
         ]
         for i, (_, r) in enumerate(df.head(plan["top_k"]).iterrows(), 1):
@@ -199,7 +210,7 @@ class AnswerFormatter:
                 secondary = f" *(margin: {pm:.1f}%)*"
             elif m0 == "profit" and "sales" in r:
                 secondary = f" *(on {self._fv(float(r['sales']), 'sales')} revenue)*"
-            
+
             lines.append(f"{i}. **{b}** — {vs}{secondary}")
         return "\n".join(lines)
 
