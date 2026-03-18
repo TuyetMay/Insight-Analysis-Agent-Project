@@ -13,7 +13,8 @@ _METRICS    = {"sales", "profit", "orders", "profit_margin"}
 _GRAINS     = {"none", "week", "month", "quarter", "year"}
 _BREAKDOWNS = {"region", "segment", "category", "sub_category"}
 _COMPARES   = {"prev_period", "mom", "yoy"}
-_INTENTS    = {"kpi_value", "kpi_trend", "kpi_rank", "kpi_compare", "clarify"}
+_INTENTS    = {"kpi_value", "kpi_trend", "kpi_rank", "kpi_compare", "kpi_detail", "clarify"}
+_CONDITIONS = {"profit_negative", "profit_positive", "high_discount", "loss_orders"}
 
 
 class PlanValidator:
@@ -31,8 +32,6 @@ class PlanValidator:
             "region":       set(allowed_regions),
             "segment":      set(allowed_segments),
             "category":     set(allowed_categories),
-            # sub_category is open — validated as non-empty strings only
-            # (values come from df at runtime, not a fixed enum)
             "sub_category": set(allowed_sub_categories or []),
         }
 
@@ -62,10 +61,30 @@ class PlanValidator:
                 "filters": {"region": [], "segment": [], "category": [], "sub_category": []},
             }
 
+        # ── kpi_detail: drill-down / negative profit / row-level ──────────
+        if intent == "kpi_detail":
+            sd, ed = self._validated_dates(plan.get("start_date"), plan.get("end_date"))
+            filters = self._validated_filters(plan.get("filters") or {})
+            condition = str(plan.get("condition") or "profit_negative")
+            if condition not in _CONDITIONS:
+                condition = "profit_negative"
+            top_k = self._validated_top_k(plan.get("top_k") or 15)
+            return {
+                "intent": "kpi_detail",
+                "condition": condition,
+                "metrics": ["sales", "profit"],
+                "time_grain": "none",
+                "breakdown_by": plan.get("breakdown_by") or "sub_category",
+                "start_date": sd, "end_date": ed,
+                "compare_period": None,
+                "top_k": top_k,
+                "order_by": "profit",
+                "filters": filters,
+            }
+
         metrics = self._validated_metrics(plan.get("metrics"))
         time_grain = self._validated_grain(plan.get("time_grain", "none"))
 
-        # kpi_value with a grain is really a trend
         if intent == "kpi_value" and time_grain != "none":
             intent = "kpi_trend"
 
@@ -79,7 +98,6 @@ class PlanValidator:
         sd, ed = self._validated_dates(plan.get("start_date"), plan.get("end_date"))
         filters = self._validated_filters(plan.get("filters"))
 
-        # Intent-specific constraints
         if intent == "kpi_rank":
             if not breakdown_by:
                 raise ValueError("breakdown_by is required for intent='kpi_rank'.")
@@ -99,6 +117,7 @@ class PlanValidator:
             "start_date": sd, "end_date": ed,
             "compare_period": compare_period, "top_k": top_k,
             "order_by": order_by, "filters": filters,
+            "show_extremes": bool(plan.get("show_extremes", False)),
         }
 
     # ── Field validators ─────────────────────────────────────
@@ -170,15 +189,12 @@ class PlanValidator:
             raise ValueError("filters must be an object.")
         result: Dict[str, List[str]] = {}
 
-        # ✅ FIX: added sub_category to filter dimensions
         for dim in ("region", "segment", "category", "sub_category"):
             vals = raw.get(dim) or []
             if not isinstance(vals, list):
                 raise ValueError(f"filters.{dim} must be an array.")
             vals = [str(v) for v in vals]
 
-            # region/segment/category: validate against known allowed set
-            # sub_category: allow any non-empty string (values are dynamic from df)
             if dim != "sub_category":
                 bad = sorted(set(vals) - self._allowed[dim])
                 if bad:

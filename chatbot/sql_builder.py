@@ -26,6 +26,14 @@ _GRAIN_MAP: Dict[str, str] = {
     "week": "week", "month": "month", "quarter": "quarter", "year": "year",
 }
 
+# Condition → extra WHERE clause fragment
+_CONDITION_WHERE: Dict[str, str] = {
+    "profit_negative": "profit < 0",
+    "loss_orders":     "profit < 0",
+    "profit_positive": "profit > 0",
+    "high_discount":   "discount > 0.2",
+}
+
 
 class SQLBuilder:
     """Build and run SQL for validated query plans."""
@@ -39,6 +47,8 @@ class SQLBuilder:
         """Execute plan and return a DataFrame."""
         if plan["intent"] == "kpi_compare":
             return self._run_compare(plan)
+        if plan["intent"] == "kpi_detail":
+            return self._run_detail(plan)
         sql, params = self.build_sql(plan)
         return execute_query(sql, params)
 
@@ -54,7 +64,6 @@ class SQLBuilder:
         where_parts = ["order_date >= %(start)s", "order_date <= %(end)s"]
         params: Dict[str, Any] = {"start": plan["start_date"], "end": plan["end_date"]}
 
-        # ✅ FIX: added sub_category to WHERE clause builders
         for col in ("region", "segment", "category", "sub_category"):
             vals = f.get(col)
             if vals:
@@ -103,6 +112,99 @@ class SQLBuilder:
             lines.append(f"ORDER BY {order}")
 
         return "\n".join(lines), params
+
+    # ── Detail query (negative profit / drill-down) ───────────
+
+    def _run_detail(self, plan: Dict[str, Any]) -> pd.DataFrame:
+        """
+        For kpi_detail intent: returns grouped summary of sub-categories
+        where net profit is negative (HAVING SUM(profit) < 0),
+        plus a row-level sample of the worst individual order rows.
+        """
+        condition  = plan.get("condition", "profit_negative")
+        breakdown  = plan.get("breakdown_by") or "sub_category"
+        f          = plan["filters"]
+        top_k      = plan.get("top_k") or 15
+
+        # Base WHERE — date range + dimension filters only (no profit filter here)
+        base_parts: List[str] = [
+            "order_date >= %(start)s",
+            "order_date <= %(end)s",
+        ]
+        params: Dict[str, Any] = {"start": plan["start_date"], "end": plan["end_date"]}
+
+        for col in ("region", "segment", "category", "sub_category"):
+            vals = f.get(col)
+            if vals:
+                placeholders = ", ".join(f"%({col}_{i})s" for i in range(len(vals)))
+                base_parts.append(f"{col} IN ({placeholders})")
+                for i, v in enumerate(vals):
+                    params[f"{col}_{i}"] = v
+
+        base_where = " AND ".join(base_parts)
+
+        # ── 1. Grouped summary — filter by HAVING SUM(profit)<0 ──
+        # Using standard SQL casts instead of ::numeric for portability
+        params_g = {**params, "top_k": top_k}
+        group_sql = (
+            "SELECT "
+            + breakdown + " AS breakdown, "
+            + "category, "
+            + "COUNT(DISTINCT order_id) AS orders, "
+            + "ROUND(CAST(SUM(sales) AS DECIMAL), 2) AS sales, "
+            + "ROUND(CAST(SUM(profit) AS DECIMAL), 2) AS profit, "
+            + "ROUND(CAST(AVG(discount) * 100 AS DECIMAL), 1) AS avg_discount_pct, "
+            + "CASE WHEN SUM(sales)=0 THEN 0 "
+            + "     ELSE ROUND(CAST(SUM(profit)/SUM(sales)*100 AS DECIMAL), 2) "
+            + "END AS profit_margin "
+            + "FROM " + self.table + " "
+            + "WHERE " + base_where + " "
+            + "GROUP BY " + breakdown + ", category "
+            + "HAVING SUM(profit) < 0 "
+            + "ORDER BY SUM(profit) ASC "
+            + "LIMIT %(top_k)s"
+        )
+        grouped_df = execute_query(group_sql, params_g)
+
+        # ── 2. Worst individual rows sample ───────────────────
+        # row-level filter: individual profit < 0
+        row_where = base_where + " AND profit < 0"
+        params_s  = {**params, "sample_k": 10}
+
+        # First try with product_name column
+        sample_df = pd.DataFrame()
+        try:
+            s1 = (
+                "SELECT order_id, order_date, "
+                + breakdown + " AS breakdown, category, product_name, "
+                + "sales, profit, discount "
+                + "FROM " + self.table + " "
+                + "WHERE " + row_where + " "
+                + "ORDER BY profit ASC LIMIT %(sample_k)s"
+            )
+            sample_df = execute_query(s1, params_s)
+        except Exception:
+            pass
+
+        # Fallback: without product_name
+        if sample_df.empty:
+            s2 = (
+                "SELECT order_id, order_date, "
+                + breakdown + " AS breakdown, category, "
+                + "sales, profit, discount "
+                + "FROM " + self.table + " "
+                + "WHERE " + row_where + " "
+                + "ORDER BY profit ASC LIMIT %(sample_k)s"
+            )
+            sample_df = execute_query(s2, params_s)
+
+        # ── Attach metadata for the formatter ─────────────────
+        if not grouped_df.empty:
+            grouped_df.attrs["detail_type"]   = "grouped_summary"
+            grouped_df.attrs["condition"]     = condition
+            grouped_df.attrs["sample_orders"] = sample_df
+
+        return grouped_df
 
     # ── Period comparison ─────────────────────────────────────
 

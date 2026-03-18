@@ -40,17 +40,28 @@ class AnswerFormatter:
                insight: str = "") -> str:
         if plan["intent"] == "clarify":
             return plan.get("clarifying_question", "Could you clarify your question?")
-        if df is None or df.empty:
-            ctx = self.natural_context(plan)
-            return f"No data found for the selected filters." + (f"\n*{ctx}*" if ctx else "")
 
         intent    = plan["intent"]
+
+        # kpi_detail has its own empty-check inside _format_detail
+        if intent != "kpi_detail" and (df is None or df.empty):
+            ctx = self.natural_context(plan)
+            return f"No data found for the selected filters." + (f"\n*{ctx}*" if ctx else "")
         metrics   = plan["metrics"]
         grain     = plan["time_grain"]
         breakdown = plan.get("breakdown_by")
         ctx_line  = f"\n*{self.natural_context(plan)}*" if self.natural_context(plan) else ""
 
-        if intent == "kpi_compare":
+        if intent == "kpi_detail":
+            if df is None or df.empty:
+                ctx = self.natural_context(plan)
+                return (
+                    "No loss-making sub-categories found for the selected filters."
+                    + (f"\n*{ctx}*" if ctx else "")
+                    + "\n\nAll sub-categories are profitable in this period. 🎉"
+                )
+            body = self._format_detail(plan, df, ctx_line)
+        elif intent == "kpi_compare":
             body = self._format_compare(plan, df)
         elif intent == "kpi_value" and grain == "none":
             body = self._format_value(plan, df, breakdown, metrics, ctx_line)
@@ -64,7 +75,6 @@ class AnswerFormatter:
         return body + insight
 
     def natural_context(self, plan: Dict[str, Any]) -> str:
-        """e.g. 'Jan 2014 – Dec 2017  ·  West, East'"""
         sd = plan.get("start_date", "")
         ed = plan.get("end_date", "")
 
@@ -84,6 +94,79 @@ class AnswerFormatter:
                 parts.append(", ".join(vals))
 
         return "  ·  ".join(parts)
+
+    # ── kpi_detail: negative profit drill-down ────────────────
+
+    def _format_detail(self, plan: Dict[str, Any], df: pd.DataFrame,
+                       ctx_line: str) -> str:
+        condition  = plan.get("condition", "profit_negative")
+        breakdown  = plan.get("breakdown_by") or "sub_category"
+        dim_label  = breakdown.replace("_", " ").title()
+        sample_df  = df.attrs.get("sample_orders", pd.DataFrame())
+
+        cond_label = {
+            "profit_negative": "negative profit (loss-making)",
+            "loss_orders":     "negative profit (loss-making)",
+            "high_discount":   "high discount (>20%)",
+            "profit_positive": "positive profit",
+        }.get(condition, condition.replace("_", " "))
+
+        total_orders  = int(df["orders"].sum()) if "orders" in df.columns else 0
+        total_loss    = float(df["profit"].sum()) if "profit" in df.columns else 0
+        total_sales   = float(df["sales"].sum()) if "sales" in df.columns else 0
+
+        lines = [
+            f"Found **{total_orders:,} orders** with {cond_label} across **{len(df)} {dim_label}s**,{ctx_line}",
+            f"generating a total loss of **\\${abs(total_loss):,.0f}** on **\\${total_sales:,.0f}** in revenue.",
+            "",
+            f"**Breakdown by {dim_label} — worst performers:**",
+            "",
+        ]
+
+        for rank, (_, r) in enumerate(df.iterrows(), 1):
+            name     = r.get("breakdown", "—")
+            cat      = r.get("category", "")
+            profit   = float(r.get("profit", 0))
+            sales    = float(r.get("sales", 0))
+            orders   = int(r.get("orders", 0))
+            disc     = float(r.get("avg_discount_pct", 0))
+            margin   = float(r.get("profit_margin", 0))
+            cat_str  = f" *(in {cat})*" if cat and cat.lower() != name.lower() else ""
+
+            # Reason indicator
+            reason = ""
+            if disc >= 30:
+                reason = f"  ⚠️ *avg discount {disc:.0f}% — heavy discounting eroding margin*"
+            elif disc >= 15:
+                reason = f"  ⚠️ *avg discount {disc:.0f}% — discounting likely driving losses*"
+            elif margin < -20:
+                reason = f"  ⚠️ *margin {margin:.1f}% — structural cost or pricing issue*"
+
+            lines.append(
+                f"{rank}. **{name}**{cat_str} — Loss: **\\${abs(profit):,.0f}** "
+                f"| Sales: \\${sales:,.0f} | Orders: {orders:,} | "
+                f"Avg Discount: {disc:.0f}%{reason}"
+            )
+
+        # ── Sample of worst individual orders ─────────────────
+        if not sample_df.empty:
+            lines += [
+                "",
+                "**Sample of worst individual orders:**",
+                "",
+            ]
+            for _, r in sample_df.head(8).iterrows():
+                oid     = r.get("order_id", "—")
+                odate   = str(r.get("order_date", ""))[:10]
+                prod    = str(r.get("product_name", "—"))[:45]
+                profit  = float(r.get("profit", 0))
+                disc    = float(r.get("discount", 0)) * 100
+                lines.append(
+                    f"- `{oid}` ({odate}) — *{prod}* — "
+                    f"Loss: **\\${abs(profit):,.0f}** | Discount: {disc:.0f}%"
+                )
+
+        return "\n".join(lines)
 
     # ── Intent-specific formatters ────────────────────────────
 
@@ -115,10 +198,67 @@ class AnswerFormatter:
     def _format_value(self, plan: Dict[str, Any], df: pd.DataFrame,
                       breakdown: Any, metrics: List[str], ctx_line: str) -> str:
         if breakdown:
-            m0   = plan.get("order_by") or metrics[0]
+            m0        = plan.get("order_by") or metrics[0]
             dim_label = breakdown.replace("_", " ").title()
+            show_extremes = plan.get("show_extremes", False)
+
+            sorted_df = df.sort_values(by=m0, ascending=False)
+
+            if show_extremes and len(sorted_df) >= 2:
+                # Show highest + lowest clearly
+                metric_label = _METRIC_LABELS.get(metrics[0], metrics[0])
+                lines = [
+                    f"Here's the **highest and lowest {metric_label}** by **{dim_label}**:{ctx_line}",
+                    "",
+                    f"🏆 **Highest {dim_label}:**",
+                ]
+                # Top entries (up to 3 if many regions, else just 1)
+                n_top = min(3, max(1, len(sorted_df) // 3))
+                for rank, (_, r) in enumerate(sorted_df.head(n_top).iterrows(), 1):
+                    b    = r.get("breakdown", "—")
+                    vals = " | ".join(
+                        f"{_METRIC_LABELS.get(m, m)}: {self._fv(float(r[m]), m)}"
+                        for m in metrics if m in r
+                    )
+                    lines.append(f"  {rank}. **{b}** — {vals}")
+
+                lines += ["", f"📉 **Lowest {dim_label}:**"]
+                # Bottom entries
+                for rank, (_, r) in enumerate(sorted_df.tail(n_top).iloc[::-1].iterrows(), 1):
+                    b    = r.get("breakdown", "—")
+                    vals = " | ".join(
+                        f"{_METRIC_LABELS.get(m, m)}: {self._fv(float(r[m]), m)}"
+                        for m in metrics if m in r
+                    )
+                    lines.append(f"  {rank}. **{b}** — {vals}")
+
+                # Add gap context if exactly 2+ entries
+                if len(sorted_df) >= 2:
+                    top_val = float(sorted_df.iloc[0][m0])
+                    bot_val = float(sorted_df.iloc[-1][m0])
+                    gap_pct = ((top_val - bot_val) / abs(top_val) * 100) if top_val else 0
+                    lines += [
+                        "",
+                        f"**Gap:** {self._fv(top_val - bot_val, m0)} ({gap_pct:.0f}% difference "
+                        f"between highest and lowest)",
+                    ]
+
+                # Also show full ranking if more than 2 entries
+                if len(sorted_df) > 2:
+                    lines += ["", f"**Full {dim_label} ranking:**"]
+                    for rank, (_, r) in enumerate(sorted_df.iterrows(), 1):
+                        b    = r.get("breakdown", "—")
+                        vals = " | ".join(
+                            f"{_METRIC_LABELS.get(m, m)}: {self._fv(float(r[m]), m)}"
+                            for m in metrics if m in r
+                        )
+                        lines.append(f"  {rank}. **{b}** — {vals}")
+
+                return "\n".join(lines)
+
+            # Normal breakdown display
             lines = [f"Here's how **{_METRIC_LABELS.get(metrics[0], metrics[0])}** breaks down by **{dim_label}**:{ctx_line}", ""]
-            for rank, (_, r) in enumerate(df.sort_values(by=m0, ascending=False).head(20).iterrows(), 1):
+            for rank, (_, r) in enumerate(sorted_df.head(20).iterrows(), 1):
                 b    = r.get("breakdown", "—")
                 vals = " | ".join(
                     f"{_METRIC_LABELS.get(m, m)}: {self._fv(float(r[m]), m)}"
@@ -127,14 +267,12 @@ class AnswerFormatter:
                 lines.append(f"{rank}. **{b}** — {vals}")
             return "\n".join(lines)
 
-        # Single aggregate
         r0 = df.iloc[0]
         if len(metrics) == 1:
             m  = metrics[0]
             vs = self._fv(float(r0[m]), m)
             opener = _METRIC_OPENERS.get(m, f"{_METRIC_LABELS.get(m, m)} is")
 
-            # Add supporting context metrics naturally
             extras = []
             if m == "sales" and "profit" in r0:
                 extras.append(f"profit of {self._fv(float(r0['profit']), 'profit')}")
@@ -152,14 +290,12 @@ class AnswerFormatter:
             extra_str = f", with {extras[0]}" if extras else ""
             return f"{opener} **{vs}**{extra_str}.{ctx_line}"
 
-        # ── Multiple metrics (e.g. sales + profit) ────────────
         lines = [f"Here's a summary of the requested metrics:{ctx_line}", ""]
         for m in metrics:
             if m in r0:
                 label = _METRIC_LABELS.get(m, m.replace("_", " ").title())
                 lines.append(f"- **{label}:** {self._fv(float(r0[m]), m)}")
 
-        # Add profit margin as bonus context when both sales + profit are present
         if "sales" in r0 and "profit" in r0 and "profit_margin" not in metrics:
             sales_v = float(r0["sales"])
             prof_v  = float(r0["profit"])
@@ -218,6 +354,6 @@ class AnswerFormatter:
 
     @staticmethod
     def _fv(v: float, metric: str) -> str:
-        if metric in {"sales", "profit"}:  return f"\\${v:,.0f}"   # escape $
+        if metric in {"sales", "profit"}:  return f"\\${v:,.0f}"
         if metric == "profit_margin":      return f"{v:.2f}%"
         return f"{int(v):,}"

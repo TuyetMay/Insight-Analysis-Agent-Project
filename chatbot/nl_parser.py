@@ -56,7 +56,29 @@ _COMPARE_KEYWORDS: Dict[str, str] = {
     "last period": "prev_period", "vs previous": "prev_period",
 }
 
-# Month name → number (both full and abbreviated)
+# ── NEW: Negative-profit / drill-down detection ───────────────
+# Matches queries like: "which orders have negative profit",
+# "show loss-making products", "what is generating losses", etc.
+_DETAIL_NEGATIVE_RE = re.compile(
+    r"\b("
+    r"negative\s+profit|loss[\s-]?making|at\s+a\s+loss|generating\s+loss"
+    r"|which\s+orders|which\s+products|which\s+items"
+    r"|losing\s+money|unprofitable|loss\s+orders"
+    r"|negative\s+margin|profit\s+<\s*0|profit\s+is\s+negative"
+    r"|what.*generating.*loss|what.*causing.*loss"
+    r")\b",
+    re.IGNORECASE,
+)
+
+# Detects "highest and lowest", "best and worst", "top and bottom" etc.
+_EXTREMES_RE = re.compile(
+    r"\b(highest.*lowest|lowest.*highest|best.*worst|worst.*best"
+    r"|top.*bottom|bottom.*top|maximum.*minimum|min.*max"
+    r"|most.*least|least.*most)\b",
+    re.IGNORECASE,
+)
+
+# Month name → number
 _MONTH_MAP: Dict[str, int] = {
     "january": 1, "jan": 1,
     "february": 2, "feb": 2,
@@ -86,7 +108,6 @@ _TIME_GRAIN_RE = re.compile(
 )
 _TIME_REL    = re.compile(r"\b(in|during|between|from|since|until|last|previous|this)\b")
 
-# Pattern: "june 2016", "jun 2016", "2016 june" etc.
 _MONTH_YEAR_RE = re.compile(
     r"\b(?:("
     + "|".join(_MONTH_MAP.keys())
@@ -95,23 +116,53 @@ _MONTH_YEAR_RE = re.compile(
     + r"))\b",
     re.IGNORECASE,
 )
-# Pattern: "Q3 2016", "q3 2016"
 _QUARTER_YEAR_RE = re.compile(r"\bq([1-4])\s*(20\d{2})\b", re.IGNORECASE)
-# Pattern: just a year "in 2016"
-_YEAR_ONLY_RE = re.compile(r"\bin\s+(20\d{2})\b|\bfor\s+(20\d{2})\b|\b(20\d{2})\b")
+_YEAR_ONLY_RE    = re.compile(r"\bin\s+(20\d{2})\b|\bfor\s+(20\d{2})\b|\b(20\d{2})\b")
+
+# Numeric date patterns
+_NUMERIC_DATE_RE = re.compile(r"\b(\d{1,4})[/\-.](\d{1,2})[/\-.](\d{2,4})\b")
+_DATE_RANGE_SEP_RE = re.compile(
+    r"\b(\d{1,4}[/\-.]\d{1,2}[/\-.]\d{2,4})\s*(?:to|until|–|—|-{1,2})\s*(\d{1,4}[/\-.]\d{1,2}[/\-.]\d{2,4})\b",
+    re.IGNORECASE,
+)
+
+
+def _parse_numeric_date(raw: str) -> Optional[date]:
+    raw = raw.strip()
+    normalised = re.sub(r"[/.]", "-", raw)
+    parts = normalised.split("-")
+    if len(parts) != 3:
+        return None
+    a, b, c = parts
+    if len(a) == 4:
+        try:
+            return datetime.strptime(f"{a}-{b.zfill(2)}-{c.zfill(2)}", "%Y-%m-%d").date()
+        except ValueError:
+            return None
+    if len(c) == 4:
+        ai, bi, ci = int(a), int(b), int(c)
+        if 1 <= ai <= 31 and 1 <= bi <= 12:
+            try:
+                return date(ci, bi, ai)
+            except ValueError:
+                pass
+        if 1 <= ai <= 12 and 1 <= bi <= 31:
+            try:
+                return date(ci, ai, bi)
+            except ValueError:
+                pass
+    return None
 
 
 class NLParser:
-    """
-    Three-tier NL → plan parser. Callers provide shared state (df, filters, gemini).
-    """
+    """Three-tier NL → plan parser."""
 
     def __init__(self, df: pd.DataFrame, filters: Dict[str, Any],
                  gemini_client: Any = None, model_name: str = "") -> None:
-        self.df           = df
-        self.filters      = filters
+        self.df            = df
+        self.filters       = filters
         self.gemini_client = gemini_client
-        self.model_name   = model_name or ""
+        self.model_name    = model_name or ""
 
     # ── Tier 1: fast KPI ─────────────────────────────────────
 
@@ -122,23 +173,23 @@ class NLParser:
         if dr and isinstance(dr, (tuple, list)) and len(dr) == 2:
             fmt = lambda d: d.strftime("%b %d, %Y") if hasattr(d, "strftime") else str(d)
             parts.append(f"from **{fmt(dr[0])}** to **{fmt(dr[1])}**")
-
         regions    = list(f.get("region")    or [])
         segments   = list(f.get("segment")   or [])
         categories = list(f.get("category")  or [])
-
         if 0 < len(regions) <= 2:
             parts.append(f"in **{', '.join(regions)}**")
         if 0 < len(segments) <= 2:
             parts.append(f"for **{', '.join(segments)}** segment")
         if 0 < len(categories) <= 2:
             parts.append(f"across **{', '.join(categories)}**")
-
         return " ".join(parts) if parts else ""
 
     def fast_kpi_answer(self, q: str) -> Optional[str]:
-        """Return a plain-text answer for simple KPI totals — no DB round-trip needed."""
+        """Return instant KPI answer — skip if it's a detail/drill-down query."""
         ql = (q or "").strip().lower()
+        # Never short-circuit detail queries
+        if _DETAIL_NEGATIVE_RE.search(q):
+            return None
         if not ql or self._has_breakdown_hint(q) or self._has_time_hint(q):
             return None
 
@@ -148,7 +199,6 @@ class NLParser:
         pm     = float(kpis["profit_margin"])
 
         def money(x: float) -> str: return f"${x:,.0f}"
-
         ctx = self._build_context_line()
 
         if re.search(r"\b(kpi|summary|overview|dashboard)\b", ql):
@@ -195,36 +245,60 @@ class NLParser:
     # ── Tier 2: rule-based plan ───────────────────────────────
 
     def rule_based_plan(self, q: str) -> Optional[Dict[str, Any]]:
-        """Parse simple NL into a plan dict — no LLM required."""
         ql = (q or "").lower().strip()
         s0, e0 = self._date_range()
 
-        # ── Detect explicit date range from question ──────────
+        # ── NEW: Detect negative-profit drill-down ────────────
+        if _DETAIL_NEGATIVE_RE.search(q):
+            explicit_dates = self._extract_date_range(ql)
+            if explicit_dates:
+                s0, e0 = explicit_dates
+            # Detect breakdown preference
+            breakdown = "sub_category"
+            for kw, dim in sorted(_BREAKDOWN_KEYWORDS.items(), key=lambda x: -len(x[0])):
+                if kw in ql:
+                    breakdown = dim
+                    break
+            plan = {
+                "intent":         "kpi_detail",
+                "condition":      "profit_negative",
+                "metrics":        ["sales", "profit"],
+                "time_grain":     "none",
+                "breakdown_by":   breakdown,
+                "start_date":     s0,
+                "end_date":       e0,
+                "compare_period": None,
+                "top_k":          15,
+                "order_by":       "profit",
+                "filters":        {"region": [], "segment": [], "category": [], "sub_category": []},
+            }
+            return self._inject_mentioned_filters(plan, q)
+
         explicit_dates = self._extract_date_range(ql)
         if explicit_dates:
             s0, e0 = explicit_dates
+
+        show_extremes = bool(_EXTREMES_RE.search(q))
 
         plan: Dict[str, Any] = {
             "intent": "kpi_value", "metrics": ["sales"], "time_grain": "none",
             "breakdown_by": None, "start_date": s0, "end_date": e0,
             "compare_period": None, "top_k": None, "order_by": "sales",
+            "show_extremes": show_extremes,
             "filters": {"region": [], "segment": [], "category": [], "sub_category": []},
         }
 
-        # ── Detect ALL mentioned metrics (e.g. "sales and profit") ──
         detected_metrics: List[str] = []
         for kw, metric in sorted(_METRIC_KEYWORDS.items(), key=lambda x: -len(x[0])):
             if kw in ql and metric not in detected_metrics:
                 detected_metrics.append(metric)
         if not detected_metrics:
             detected_metrics = ["sales"]
-        # Limit to 2 metrics max (schema constraint)
         detected_metrics = detected_metrics[:2]
 
         plan["metrics"]  = detected_metrics
         plan["order_by"] = detected_metrics[0]
 
-        # Breakdown
         detected_breakdown: Optional[str] = None
         for kw, dim in sorted(_BREAKDOWN_KEYWORDS.items(), key=lambda x: -len(x[0])):
             if kw in ql:
@@ -239,18 +313,15 @@ class NLParser:
                 if raw in _BREAKDOWNS:
                     detected_breakdown = raw
 
-        # Top-k
         top_match = _TOP_RE.search(ql)
         top_k: Optional[int] = int(top_match.group(1)) if top_match else None
 
-        # Time grain
         detected_grain = "none"
         for kw, grain in sorted(_GRAIN_KEYWORDS.items(), key=lambda x: -len(x[0])):
             if kw in ql:
                 detected_grain = grain
                 break
 
-        # Compare period
         detected_compare: Optional[str] = None
         if _COMPARE_RE.search(ql):
             for kw, cp in sorted(_COMPARE_KEYWORDS.items(), key=lambda x: -len(x[0])):
@@ -260,16 +331,12 @@ class NLParser:
             if detected_compare is None:
                 detected_compare = "prev_period"
 
-        # ── Sub-category value detection ──────────────────────
         if detected_breakdown is None and not self.df.empty and "sub_category" in self.df.columns:
-            all_sub_cats = [
-                str(v) for v in self.df["sub_category"].dropna().unique().tolist()
-            ]
+            all_sub_cats = [str(v) for v in self.df["sub_category"].dropna().unique().tolist()]
             mentioned_sub = [v for v in all_sub_cats if v.lower() in ql]
             if mentioned_sub and len(mentioned_sub) < len(all_sub_cats):
                 detected_breakdown = "sub_category"
 
-        # ── Same logic for region/segment/category ────────────
         if detected_breakdown is None:
             f = self.filters or {}
             for dim, all_vals in [
@@ -282,10 +349,9 @@ class NLParser:
                     detected_breakdown = dim
                     break
 
-        # ── Build intent ──────────────────────────────────────
         if detected_compare:
             plan.update(intent="kpi_compare", compare_period=detected_compare,
-                        metrics=[detected_metrics[0]])  # compare supports only 1 metric
+                        metrics=[detected_metrics[0]])
         elif top_k and detected_breakdown:
             plan.update(intent="kpi_rank", breakdown_by=detected_breakdown, top_k=top_k)
         elif detected_grain != "none":
@@ -294,10 +360,9 @@ class NLParser:
         elif detected_breakdown:
             plan.update(intent="kpi_value", breakdown_by=detected_breakdown)
         elif explicit_dates or len(detected_metrics) > 1:
-            # Has a specific date range OR multiple metrics → valid kpi_value query
             plan.update(intent="kpi_value")
         else:
-            return None  # nothing recognisable — let Gemini handle it
+            return None
 
         return self._inject_mentioned_filters(plan, q)
 
@@ -318,12 +383,30 @@ class NLParser:
     # ── Date extraction ───────────────────────────────────────
 
     def _extract_date_range(self, ql: str) -> Optional[Tuple[str, str]]:
-        """
-        Try to extract an explicit date range from the lowercased question.
-        Handles: "june 2016", "jun 2016", "q3 2016", "in 2016"
-        Returns (start_date, end_date) as 'YYYY-MM-DD' strings, or None.
-        """
-        # Pattern: "june 2016" or "2016 june"
+        range_match = _DATE_RANGE_SEP_RE.search(ql)
+        if range_match:
+            d1 = _parse_numeric_date(range_match.group(1))
+            d2 = _parse_numeric_date(range_match.group(2))
+            if d1 and d2:
+                start, end = (d1, d2) if d1 <= d2 else (d2, d1)
+                return start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d")
+
+        all_numeric = _NUMERIC_DATE_RE.finditer(ql)
+        parsed_dates = []
+        for m in all_numeric:
+            d = _parse_numeric_date(m.group(0))
+            if d:
+                parsed_dates.append(d)
+
+        if len(parsed_dates) == 2:
+            start, end = (parsed_dates[0], parsed_dates[1]) \
+                if parsed_dates[0] <= parsed_dates[1] \
+                else (parsed_dates[1], parsed_dates[0])
+            return start.strftime("%Y-%m-%d"), end.strftime("%Y-%m-%d")
+        if len(parsed_dates) == 1:
+            d = parsed_dates[0]
+            return d.strftime("%Y-%m-%d"), d.strftime("%Y-%m-%d")
+
         m = _MONTH_YEAR_RE.search(ql)
         if m:
             if m.group(1) and m.group(2):
@@ -333,22 +416,16 @@ class NLParser:
             month_num = _MONTH_MAP.get(month_name)
             if month_num:
                 last_day = calendar.monthrange(year, month_num)[1]
-                start = f"{year}-{month_num:02d}-01"
-                end   = f"{year}-{month_num:02d}-{last_day:02d}"
-                return start, end
+                return f"{year}-{month_num:02d}-01", f"{year}-{month_num:02d}-{last_day:02d}"
 
-        # Pattern: "q3 2016"
         m = _QUARTER_YEAR_RE.search(ql)
         if m:
             q_num, year = int(m.group(1)), int(m.group(2))
-            quarter_starts = {1: (1, 1), 2: (4, 1), 3: (7, 1), 4: (10, 1)}
-            quarter_ends   = {1: (3, 31), 2: (6, 30), 3: (9, 30), 4: (12, 31)}
-            sm, sd = quarter_starts[q_num]
-            em, ed = quarter_ends[q_num]
+            qs = {1: (1, 1), 2: (4, 1), 3: (7, 1), 4: (10, 1)}
+            qe = {1: (3, 31), 2: (6, 30), 3: (9, 30), 4: (12, 31)}
+            sm, sd = qs[q_num]; em, ed = qe[q_num]
             return f"{year}-{sm:02d}-{sd:02d}", f"{year}-{em:02d}-{ed:02d}"
 
-        # Pattern: "in 2016" or bare year (only if it's the dominant time signal)
-        # Avoid matching if there's a month name (already handled above)
         year_matches = _TIME_YEAR.findall(ql)
         if len(year_matches) == 1:
             year = int(year_matches[0])
@@ -366,15 +443,16 @@ class NLParser:
         return bool(
             _TIME_YEAR.search(ql) or _TIME_YM.search(ql)
             or _TIME_GRAIN_RE.search(ql) or _TIME_REL.search(ql)
+            or _NUMERIC_DATE_RE.search(ql)
         )
 
     def _compute_kpis(self) -> Dict[str, Any]:
         if self.df.empty:
             return {"total_sales": 0, "total_profit": 0, "total_orders": 0, "profit_margin": 0}
-        ts = float(self.df["sales"].sum())
-        tp = float(self.df["profit"].sum())
+        ts  = float(self.df["sales"].sum())
+        tp  = float(self.df["profit"].sum())
         to_ = int(self.df["order_id"].nunique())
-        pm = (tp / ts * 100) if ts else 0
+        pm  = (tp / ts * 100) if ts else 0
         return {"total_sales": ts, "total_profit": tp, "total_orders": to_, "profit_margin": pm}
 
     def _filter_lists(self):
@@ -382,7 +460,7 @@ class NLParser:
         return list(f.get("region") or []), list(f.get("segment") or []), list(f.get("category") or [])
 
     def _date_range(self):
-        f = self.filters or {}
+        f  = self.filters or {}
         dr = f.get("date_range")
         if dr and isinstance(dr, (tuple, list)) and len(dr) == 2:
             s, e = dr
@@ -406,13 +484,14 @@ class NLParser:
         {rag_section}
 
         === SUPPORTED INTENTS ===
-        kpi_value | kpi_trend | kpi_rank | kpi_compare | clarify
+        kpi_value | kpi_trend | kpi_rank | kpi_compare | kpi_detail | clarify
 
         === SUPPORTED VALUES ===
         metrics: sales | profit | orders | profit_margin
         time_grain: none | week | month | quarter | year
         breakdown_by: null | region | segment | category | sub_category
         compare_period: null | prev_period | mom | yoy
+        condition (only for kpi_detail): profit_negative | high_discount | loss_orders
 
         === CURRENT DASHBOARD FILTERS (available values only) ===
         regions={json.dumps(regions)}
@@ -425,12 +504,11 @@ class NLParser:
         - intent="clarify" when question cannot be answered or is ambiguous
         - kpi_compare: metrics must have exactly 1 item
         - kpi_rank: requires breakdown_by AND top_k; time_grain must be "none"
+        - kpi_detail: use when user asks "which orders/products have negative profit",
+          "what is losing money", "show loss-making items" etc.
+          Set condition="profit_negative", breakdown_by="sub_category"
         - If intent="clarify": add "clarifying_question": "<one question>"
-        - IMPORTANT: If the user explicitly names specific dimension values (e.g. "west, east and south"):
-          (a) set filters to ONLY those named values — do NOT include unlisted ones.
-          (b) ALSO set breakdown_by to that dimension so each value gets its own row.
-          Example: "total sales of west, east and south" →
-            breakdown_by="region", filters.region=["West","East","South"]
+        - If dates given in any format (DD/MM/YYYY etc.), parse to YYYY-MM-DD
 
         === JSON SCHEMA ===
         {{"intent":"kpi_value","metrics":["sales"],"time_grain":"none","breakdown_by":null,"start_date":"{s0}","end_date":"{e0}","compare_period":null,"top_k":null,"order_by":"sales","filters":{{"region":[],"segment":[],"category":[]}}}}
@@ -443,15 +521,12 @@ class NLParser:
         ql = q.lower()
         f  = self.filters or {}
 
-        all_regions    = list(f.get("region")    or [])
-        all_segments   = list(f.get("segment")   or [])
-        all_categories = list(f.get("category")  or [])
-
+        all_regions        = list(f.get("region")    or [])
+        all_segments       = list(f.get("segment")   or [])
+        all_categories     = list(f.get("category")  or [])
         all_sub_categories: List[str] = []
         if not self.df.empty and "sub_category" in self.df.columns:
-            all_sub_categories = [
-                str(v) for v in self.df["sub_category"].dropna().unique().tolist()
-            ]
+            all_sub_categories = [str(v) for v in self.df["sub_category"].dropna().unique().tolist()]
 
         filters = plan.get("filters") or {
             "region": [], "segment": [], "category": [], "sub_category": []
@@ -482,33 +557,25 @@ class NLParser:
 
     @staticmethod
     def _extract_json(text: str) -> Dict[str, Any]:
-        # Try 1: direct parse
         try:
             return json.loads(text)
         except Exception:
             pass
-
-        # Try 2: strip markdown fences
         cleaned = re.sub(r"```(?:json)?", "", text).strip().rstrip("`").strip()
         try:
             return json.loads(cleaned)
         except Exception:
             pass
-
-        # Try 3: extract first {...} block (handles extra text before/after)
         m = re.search(r"\{.*?\}", text, flags=re.DOTALL)
         if m:
             try:
                 return json.loads(m.group(0))
             except Exception:
                 pass
-
-        # Try 4: extract last {...} block (sometimes model puts JSON at end)
         matches = list(re.finditer(r"\{.*?\}", text, flags=re.DOTALL))
         if matches:
             try:
                 return json.loads(matches[-1].group(0))
             except Exception:
                 pass
-
         raise ValueError("Gemini did not return valid JSON.")

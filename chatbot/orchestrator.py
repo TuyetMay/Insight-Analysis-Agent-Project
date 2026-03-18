@@ -89,19 +89,28 @@ class DashboardChatbot:
         if not q:
             return "Ask me about Sales, Profit, Orders, or Profit Margin."
 
-        # Tier 1 — instant KPI answer (no DB hit)
+        # ── Tier 1: instant KPI answer (no DB hit) ────────────
         fast = self._parser.fast_kpi_answer(q)
         if fast:
             self._record(q, fast)
             return fast
 
-        # Tier 2 — rule-based plan
+        # ── Tier 2: rule-based plan ───────────────────────────
         rule_plan = self._parser.rule_based_plan(q)
 
+        # If Gemini is not configured, use rule-based only
         if not self._gemini_ready:
             return self._execute_plan(rule_plan, q) or "⚠️ Gemini API Key not configured in .env"
 
-        # Tier 3 — Gemini plan (with RAG context)
+        # ── Key fix: if rule-based plan succeeded, use it directly.
+        # Only call Gemini when the rule-based parser couldn't understand the query.
+        # This prevents Gemini from mishandling date formats like DD/MM/YYYY.
+        if rule_plan is not None:
+            result = self._execute_plan(rule_plan, q)
+            if result:
+                return result
+
+        # ── Tier 3: Gemini plan (only when rule-based returned nothing) ──
         rag_ctx = self._rag.retrieve(q, k=7)
         try:
             raw_plan  = self._parser.gemini_plan(q, rag_ctx)
@@ -113,10 +122,6 @@ class DashboardChatbot:
             self._record(q, answer)
             return answer
         except Exception as gemini_err:
-            # Tier 4 — fallback to rule-based
-            fallback = self._execute_plan(rule_plan, q)
-            if fallback:
-                return fallback
             answer = f"❌ Sorry, I couldn't answer that. ({gemini_err})"
             self._record(q, answer)
             return answer
