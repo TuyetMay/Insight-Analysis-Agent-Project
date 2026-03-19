@@ -80,6 +80,10 @@ _EXTREMES_RE = re.compile(
     r"|most.*least|least.*most)\b",
     re.IGNORECASE,
 )
+_SUPERLATIVE_RE = re.compile(
+    r'\b(best|highest|most|top|leading|greatest|biggest|largest|number\s*one)\b',
+    re.IGNORECASE,
+)
 
 # Month name → number
 _MONTH_MAP: Dict[str, int] = {
@@ -335,11 +339,19 @@ class NLParser:
         top_match = _TOP_RE.search(ql)
         top_k: Optional[int] = int(top_match.group(1)) if top_match else None
 
+        if top_k is None and _SUPERLATIVE_RE.search(q) and detected_breakdown:
+            top_k = 1
+
         detected_grain = "none"
         for kw, grain in sorted(_GRAIN_KEYWORDS.items(), key=lambda x: -len(x[0])):
             if kw in ql:
                 detected_grain = grain
                 break
+        _THIS_PERIOD_RE = re.compile(
+            r'\b(this|current)\s+(week|month|quarter|year)\b', re.IGNORECASE
+        )
+        if explicit_dates and _THIS_PERIOD_RE.search(q):
+            detected_grain = "none"
 
         detected_compare: Optional[str] = None
         if _COMPARE_RE.search(ql):

@@ -166,17 +166,20 @@ class RuleBasedSuggestionEngine:
 
     def _compare(self, base: Dict[str, Any]) -> List[Suggestion]:
         m = base["metrics"][0]
+        # Lấy context từ base để suggestion có tháng cụ thể
+        bd = base.get("breakdown_by")
+        label_ctx = f"{self._lm(m)} (Oct 2017)" if base.get("start_date", "").startswith("2017-10") else self._lm(m)
         return [
             Suggestion(
                 f"{self._lm(m)} — {self._lc(c)}",
                 self._clone(base, intent="kpi_compare", compare_period=c,
                             top_k=None, metrics=[m]),
+                # start_date/end_date đã được clone từ base nên tự động giữ Oct 2017
             )
             for c in ["yoy", "mom", "prev_period"]
             if c in self.allowed_compare_periods
             and base.get("compare_period") != c
         ]
-
     def _rank_from_breakdown(self, base: Dict[str, Any]) -> List[Suggestion]:
         m, b = base["metrics"][0], base.get("breakdown_by")
         if not b or b not in self.allowed_breakdowns:

@@ -379,15 +379,36 @@ class AnswerFormatter:
         return "\n".join(lines)
 
     def _format_rank(self, plan: Dict[str, Any], df: pd.DataFrame,
-                     metrics: List[str], ctx_line: str) -> str:
+                 metrics: List[str], ctx_line: str) -> str:
         m0        = metrics[0]
         breakdown = plan.get("breakdown_by") or "item"
         dim_label = breakdown.replace("_", " ").title()
+        top_k     = plan.get("top_k", 10)
+
+        # ── Direct answer for top-1 queries ──────────────────────
+        if top_k == 1 and not df.empty:
+            r   = df.iloc[0]
+            b   = r.get("breakdown", "—")
+            val = self._fv(float(r[m0]), m0)
+            secondary = ""
+            if m0 == "sales" and "profit" in r:
+                pm = (float(r["profit"]) / float(r[m0]) * 100) if float(r[m0]) else 0
+                secondary = f", with a **{pm:.1f}% profit margin**"
+            elif m0 == "profit" and "sales" in r:
+                secondary = f" on {self._fv(float(r['sales']), 'sales')} in revenue"
+            return (
+                f"**{b}** is the best-performing {dim_label} by "
+                f"{_METRIC_LABELS.get(m0, m0)}{ctx_line}, "
+                f"with **{val}**{secondary}."
+            )
+
+        # ── Original multi-rank display ───────────────────────────
         lines = [
-            f"Here are the **top {plan['top_k']} {dim_label}s** ranked by {_METRIC_LABELS.get(m0, m0)}:{ctx_line}",
+            f"Here are the **top {top_k} {dim_label}s** ranked by "
+            f"{_METRIC_LABELS.get(m0, m0)}:{ctx_line}",
             "",
         ]
-        for i, (_, r) in enumerate(df.head(plan["top_k"]).iterrows(), 1):
+        for i, (_, r) in enumerate(df.head(top_k).iterrows(), 1):
             b  = r.get("breakdown", "—")
             vs = self._fv(float(r[m0]), m0)
             secondary = ""
@@ -396,7 +417,6 @@ class AnswerFormatter:
                 secondary = f" *(margin: {pm:.1f}%)*"
             elif m0 == "profit" and "sales" in r:
                 secondary = f" *(on {self._fv(float(r['sales']), 'sales')} revenue)*"
-
             lines.append(f"{i}. **{b}** — {vs}{secondary}")
         return "\n".join(lines)
 
