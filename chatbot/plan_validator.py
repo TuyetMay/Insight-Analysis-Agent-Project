@@ -11,7 +11,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 _METRICS    = {"sales", "profit", "orders", "profit_margin"}
 _GRAINS     = {"none", "week", "month", "quarter", "year"}
-_BREAKDOWNS = {"region", "segment", "category", "sub_category"}
+_BREAKDOWNS = {"region", "segment", "category", "sub_category", "state"}
 _COMPARES   = {"prev_period", "mom", "yoy"}
 _INTENTS    = {"kpi_value", "kpi_trend", "kpi_rank", "kpi_compare", "kpi_detail", "clarify"}
 _CONDITIONS = {"profit_negative", "profit_positive", "high_discount", "loss_orders"}

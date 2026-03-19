@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 # ── Constants ─────────────────────────────────────────────────
 
 _METRICS    = {"sales", "profit", "orders", "profit_margin"}
-_BREAKDOWNS = {"region", "segment", "category", "sub_category"}
+_BREAKDOWNS = {"region", "segment", "category", "sub_category", "state"}
 _GRAINS     = {"none", "week", "month", "quarter", "year"}
 
 _METRIC_KEYWORDS: Dict[str, str] = {
@@ -42,6 +42,7 @@ _BREAKDOWN_KEYWORDS: Dict[str, str] = {
     "sub_category": "sub_category", "sub category": "sub_category",
     "subcategories": "sub_category", "sub-categories": "sub_category",
     "product": "sub_category",
+    "state": "state", "states": "state", "province": "state",
 }
 _GRAIN_KEYWORDS: Dict[str, str] = {
     "daily": "week", "weekly": "week", "week": "week",
@@ -51,6 +52,8 @@ _GRAIN_KEYWORDS: Dict[str, str] = {
 }
 _COMPARE_KEYWORDS: Dict[str, str] = {
     "yoy": "yoy", "year over year": "yoy", "year-over-year": "yoy",
+    "same period last year": "yoy", "same period": "yoy",   # ← add these
+    "same time last year": "yoy", "prior year": "yoy", "last year": "yoy",
     "mom": "mom", "month over month": "mom", "month-over-month": "mom",
     "previous period": "prev_period", "prior period": "prev_period",
     "last period": "prev_period", "vs previous": "prev_period",
@@ -118,6 +121,21 @@ _MONTH_YEAR_RE = re.compile(
 )
 _QUARTER_YEAR_RE = re.compile(r"\bq([1-4])\s*(20\d{2})\b", re.IGNORECASE)
 _YEAR_ONLY_RE    = re.compile(r"\bin\s+(20\d{2})\b|\bfor\s+(20\d{2})\b|\b(20\d{2})\b")
+
+# Relative date patterns: "past 30 days", "last 2 weeks", "this month"
+_RELATIVE_DATE_RE = re.compile(
+    r"\b(?:past|last|previous|over\s+(?:the\s+)?past)\s+(\d+)\s*(day|week|month|year)s?\b"
+    r"|\b(this|current)\s+(week|month|quarter|year)\b",
+    re.IGNORECASE,
+)
+
+# Growth/rank keywords for "which X has strongest growth"
+_GROWTH_RANK_RE = re.compile(
+    r"\b(strongest|highest|most|best|biggest|largest|fastest)\s+"
+    r"(growth|increase|improvement|gain|rise|growing)\b"
+    r"|\b(growth|increase|improvement)\s+(?:by|per|across|for each)\b",
+    re.IGNORECASE,
+)
 
 # Numeric date patterns
 _NUMERIC_DATE_RE = re.compile(r"\b(\d{1,4})[/\-.](\d{1,2})[/\-.](\d{2,4})\b")
@@ -274,11 +292,12 @@ class NLParser:
             }
             return self._inject_mentioned_filters(plan, q)
 
-        explicit_dates = self._extract_date_range(ql)
+        explicit_dates = self._extract_date_range(ql) or self._extract_relative_date(ql)
         if explicit_dates:
             s0, e0 = explicit_dates
 
         show_extremes = bool(_EXTREMES_RE.search(q))
+        is_growth_rank = bool(_GROWTH_RANK_RE.search(q))
 
         plan: Dict[str, Any] = {
             "intent": "kpi_value", "metrics": ["sales"], "time_grain": "none",
@@ -349,9 +368,51 @@ class NLParser:
                     detected_breakdown = dim
                     break
 
+        # ── Growth rank: "which state/region has strongest growth" ──
+        # Build a kpi_compare plan but ranked by breakdown — simulate by
+        # returning a kpi_trend so the user sees period change per dimension.
+        # Best approximation: kpi_rank over current period vs previous, broken by dimension.
+        if is_growth_rank and detected_breakdown:
+            # Use top-10 by default for growth ranking
+            plan.update(
+                intent="kpi_rank",
+                breakdown_by=detected_breakdown,
+                top_k=top_k or 10,
+                metrics=["sales"],
+                order_by="sales",
+            )
+            # If no explicit date range, use last 30 days relative to data
+            if not explicit_dates:
+                rel = self._extract_relative_date("past 30 days")
+                if rel:
+                    plan["start_date"], plan["end_date"] = rel
+            result = self._inject_mentioned_filters(plan, q)
+            # Clear the breakdown dimension filter
+            if detected_breakdown in ("region", "segment", "category", "state"):
+                ql_check = q.lower()
+                f_check = self.filters or {}
+                all_vals = list(f_check.get(detected_breakdown, []) or [])
+                import re as _re
+                mentioned = [v for v in all_vals if _re.search(r"\b" + _re.escape(v.lower()) + r"\b", ql_check)]
+                if not mentioned:
+                    result["filters"][detected_breakdown] = []
+            return result
+
         if detected_compare:
-            plan.update(intent="kpi_compare", compare_period=detected_compare,
-                        metrics=[detected_metrics[0]])
+            if detected_breakdown:
+                # "Which REGION is underperforming vs same period?" → compare per region
+                plan.update(
+                    intent="kpi_compare",
+                    compare_period=detected_compare,
+                    breakdown_by=detected_breakdown,
+                    metrics=[detected_metrics[0]],
+                )
+            else:
+                plan.update(
+                    intent="kpi_compare",
+                    compare_period=detected_compare,
+                    metrics=[detected_metrics[0]],
+                )
         elif top_k and detected_breakdown:
             plan.update(intent="kpi_rank", breakdown_by=detected_breakdown, top_k=top_k)
         elif detected_grain != "none":
@@ -364,7 +425,32 @@ class NLParser:
         else:
             return None
 
-        return self._inject_mentioned_filters(plan, q)
+        # ── When comparing across a dimension (show_extremes or breakdown query),
+        # clear that dimension's filter so ALL values are returned, not just
+        # the ones currently selected in the sidebar.
+        plan = self._inject_mentioned_filters(plan, q)
+
+        if plan.get("breakdown_by") and plan.get("intent") == "kpi_value":
+            dim = plan["breakdown_by"]
+            # Only clear if filter was set to a subset (i.e. restricting results)
+            # This ensures "sales by region" returns ALL regions even if sidebar filters
+            f_copy = self.filters or {}
+            all_vals = list(f_copy.get(dim, []) or [])
+            current_filter = plan.get("filters", {}).get(dim, [])
+            # If current filter equals all available values or is a subset,
+            # clear it so the breakdown shows everything
+            if dim in ("region", "segment", "category") and len(all_vals) > 0:
+                # If no explicit mention of specific values (i.e. not "show me West and East"),
+                # clear the dimension filter to get all values
+                ql_check = q.lower()
+                mentioned_specific = [
+                        v for v in all_vals
+                        if re.search(r"\b" + re.escape(v.lower()) + r"\b", ql_check)
+                    ]
+                if not mentioned_specific:
+                    plan["filters"][dim] = []
+
+        return plan
 
     # ── Tier 3: Gemini plan ───────────────────────────────────
 
@@ -432,6 +518,62 @@ class NLParser:
             return f"{year}-01-01", f"{year}-12-31"
 
         return None
+
+    def _extract_relative_date(self, ql: str):
+        """
+        Parse relative expressions like 'past 30 days', 'last 2 weeks', 'last month',
+        'this month' into (start, end) using the DataFrame's max date as 'today'.
+        """
+        from datetime import timedelta
+
+        if "order_date" in self.df.columns and not self.df.empty:
+            today = pd.to_datetime(self.df["order_date"]).max().date()
+        else:
+            from datetime import date as _d
+            today = _d.today()
+
+        m = _RELATIVE_DATE_RE.search(ql)
+        if not m:
+            return None
+
+        # Group layout (3 alternatives in the regex):
+        # Alt 1 "past 30 days"  → groups 1,2 = n, unit
+        # Alt 2 "last month"    → group 3 = unit (n=1 implied)
+        # Alt 3 "this month"    → groups 4,5 = keyword, grain
+        if m.group(1) and m.group(2):
+            n, unit = int(m.group(1)), m.group(2).lower()
+        elif m.group(3):
+            n, unit = 1, m.group(3).lower()
+        elif m.group(4) and m.group(5):
+            grain = m.group(5).lower()
+            ts = pd.Timestamp(today)
+            if grain == "week":
+                start = (ts - pd.tseries.offsets.Week(weekday=0)).date()
+            elif grain == "month":
+                start = today.replace(day=1)
+            elif grain == "quarter":
+                q_month = ((today.month - 1) // 3) * 3 + 1
+                start = today.replace(month=q_month, day=1)
+            elif grain == "year":
+                start = today.replace(month=1, day=1)
+            else:
+                return None
+            return start.strftime("%Y-%m-%d"), today.strftime("%Y-%m-%d")
+        else:
+            return None
+
+        if unit == "day":
+            start = today - timedelta(days=n)
+        elif unit == "week":
+            start = today - timedelta(weeks=n)
+        elif unit == "month":
+            start = (pd.Timestamp(today) - pd.DateOffset(months=n)).date()
+        elif unit == "year":
+            start = (pd.Timestamp(today) - pd.DateOffset(years=n)).date()
+        else:
+            return None
+        return start.strftime("%Y-%m-%d"), today.strftime("%Y-%m-%d")
+
 
     # ── Helpers ───────────────────────────────────────────────
 
@@ -544,7 +686,12 @@ class NLParser:
         for key, all_vals in _DIM_MAP.items():
             if not all_vals:
                 continue
-            mentioned = [v for v in all_vals if v.lower() in ql]
+            # Use word-boundary matching to avoid false positives like
+            # "west" matching inside "lowest" or "east" inside "northeast"
+            mentioned = [
+                v for v in all_vals
+                if re.search(r"\b" + re.escape(v.lower()) + r"\b", ql)
+            ]
             if mentioned and len(mentioned) < len(all_vals):
                 filters[key] = mentioned
                 if plan.get("breakdown_by") is None and plan.get("intent") in (

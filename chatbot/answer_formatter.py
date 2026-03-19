@@ -171,6 +171,40 @@ class AnswerFormatter:
     # ── Intent-specific formatters ────────────────────────────
 
     def _format_compare(self, plan: Dict[str, Any], df: pd.DataFrame) -> str:
+        metric    = plan["metrics"][0]
+        cp_label  = _CP_LABELS.get(plan.get("compare_period", ""), "vs previous")
+        ctx_line  = f"\n*{self.natural_context(plan)}*" if self.natural_context(plan) else ""
+
+        # ── Per-dimension comparison (e.g. by region) ──────────
+        if "breakdown" in df.columns:
+            dim_label = (plan.get("breakdown_by") or "dimension").replace("_", " ").title()
+            first = df.iloc[0]
+            header = (
+                f"Here's **{_METRIC_LABELS.get(metric, metric)}** by **{dim_label}** "
+                f"— {cp_label}:{ctx_line}\n"
+                f"*(Current: {first['current_start']} – {first['current_end']} | "
+                f"Previous: {first['prev_start']} – {first['prev_end']})*\n"
+            )
+            lines = [header]
+            for _, r in df.iterrows():
+                cur  = float(r["current"])
+                prev = float(r["previous"])
+                chg  = r.get("change_pct")
+                if chg is not None:
+                    arrow = "📉" if chg < 0 else ("📈" if chg > 5 else "➡️")
+                    delta = f"{chg:+.1f}%"
+                else:
+                    arrow, delta = "➡️", "n/a"
+                flag = " ⚠️ **UNDERPERFORMING**" if (chg is not None and chg < 0) else ""
+                lines.append(
+                    f"- **{r['breakdown']}** — "
+                    f"Current: {self._fv(cur, metric)} | "
+                    f"Previous: {self._fv(prev, metric)} | "
+                    f"{arrow} {delta}{flag}"
+                )
+            return "\n".join(lines)
+
+        # ── Original single-aggregate comparison ───────────────
         row  = df.iloc[0]
         m    = row["metric"]
         cur  = float(row["current"])
@@ -178,17 +212,15 @@ class AnswerFormatter:
         chg  = ((cur - prev) / abs(prev) * 100.0) if prev else None
 
         def fv(v: float) -> str:
-            if m in {"sales", "profit"}:   return f"${v:,.0f}"
-            if m == "profit_margin":        return f"{v:.2f}%"
+            if m in {"sales", "profit"}:  return f"${v:,.0f}"
+            if m == "profit_margin":       return f"{v:.2f}%"
             return f"{int(v):,}"
 
-        cp_label  = _CP_LABELS.get(plan.get("compare_period", ""), "vs previous")
         delta_s   = f"{chg:+.1f}%" if chg is not None else "n/a"
         direction = "up" if (chg or 0) >= 0 else "down"
-        ctx_line  = f"\n*{self.natural_context(plan)}*" if self.natural_context(plan) else ""
 
         return "\n".join([
-            f"Here's the **{_METRIC_LABELS[m]}** comparison ({cp_label}):{ctx_line}",
+            f"Here's the **{_METRIC_LABELS.get(m, m)}** comparison ({cp_label}):{ctx_line}",
             "",
             f"- **Current** ({row['current_start']} – {row['current_end']}): {fv(cur)}",
             f"- **Previous** ({row['prev_start']} – {row['prev_end']}): {fv(prev)}",
@@ -203,6 +235,17 @@ class AnswerFormatter:
             show_extremes = plan.get("show_extremes", False)
 
             sorted_df = df.sort_values(by=m0, ascending=False)
+
+            if show_extremes and len(sorted_df) == 1:
+                # Only one entry — sidebar filter is restricting results
+                only_name = sorted_df.iloc[0].get("breakdown", "—")
+                only_val  = self._fv(float(sorted_df.iloc[0][m0]), m0)
+                return (
+                    f"Only **{only_name}** is shown ({only_val}) because the sidebar "
+                    f"**{dim_label} filter** is set to a single value.\n\n"
+                    f"To compare all {dim_label}s, please select all options in the "
+                    f"**🔍 Filters → {dim_label}** multiselect in the sidebar, then ask again."
+                )
 
             if show_extremes and len(sorted_df) >= 2:
                 # Show highest + lowest clearly
@@ -258,6 +301,13 @@ class AnswerFormatter:
 
             # Normal breakdown display
             lines = [f"Here's how **{_METRIC_LABELS.get(metrics[0], metrics[0])}** breaks down by **{dim_label}**:{ctx_line}", ""]
+            if len(sorted_df) == 1:
+                only_name = sorted_df.iloc[0].get("breakdown", "—")
+                lines.append(
+                    f"⚠️ Only **{only_name}** is shown because the sidebar "
+                    f"**{dim_label} filter** is set to a single value. "
+                    f"Select all {dim_label}s in the sidebar to see the full breakdown."
+                )
             for rank, (_, r) in enumerate(sorted_df.head(20).iterrows(), 1):
                 b    = r.get("breakdown", "—")
                 vals = " | ".join(

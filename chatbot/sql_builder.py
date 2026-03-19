@@ -64,7 +64,7 @@ class SQLBuilder:
         where_parts = ["order_date >= %(start)s", "order_date <= %(end)s"]
         params: Dict[str, Any] = {"start": plan["start_date"], "end": plan["end_date"]}
 
-        for col in ("region", "segment", "category", "sub_category"):
+        for col in ("region", "segment", "category", "sub_category", "state"):
             vals = f.get(col)
             if vals:
                 placeholders = ", ".join(f"%({col}_{i})s" for i in range(len(vals)))
@@ -133,7 +133,7 @@ class SQLBuilder:
         ]
         params: Dict[str, Any] = {"start": plan["start_date"], "end": plan["end_date"]}
 
-        for col in ("region", "segment", "category", "sub_category"):
+        for col in ("region", "segment", "category", "sub_category", "state"):
             vals = f.get(col)
             if vals:
                 placeholders = ", ".join(f"%({col}_{i})s" for i in range(len(vals)))
@@ -209,26 +209,57 @@ class SQLBuilder:
     # ── Period comparison ─────────────────────────────────────
 
     def _run_compare(self, plan: Dict[str, Any]) -> pd.DataFrame:
+        breakdown = plan.get("breakdown_by")
+
+        if breakdown:
+            # Per-dimension comparison: run both periods grouped by dimension
+            cur_sql, cur_params = self.build_sql(plan)
+            prev_plan = {**plan, **self._prev_dates(plan)}
+            prv_sql, prv_params = self.build_sql(prev_plan)
+
+            cur_df = execute_query(cur_sql, cur_params)
+            prv_df = execute_query(prv_sql, prv_params)
+
+            metric = plan["metrics"][0]
+            if cur_df.empty:
+                return pd.DataFrame()
+
+            merged = cur_df[["breakdown", metric]].rename(columns={metric: "current"})
+            if not prv_df.empty:
+                merged = merged.merge(
+                    prv_df[["breakdown", metric]].rename(columns={metric: "previous"}),
+                    on="breakdown", how="left"
+                )
+            else:
+                merged["previous"] = 0.0
+
+            merged["previous"] = merged["previous"].fillna(0.0)
+            merged["change_pct"] = merged.apply(
+                lambda r: ((r["current"] - r["previous"]) / abs(r["previous"]) * 100)
+                if r["previous"] != 0 else None,
+                axis=1,
+            )
+            merged["metric"] = metric
+            merged["current_start"] = plan["start_date"]
+            merged["current_end"]   = plan["end_date"]
+            merged["prev_start"]    = prev_plan["start_date"]
+            merged["prev_end"]      = prev_plan["end_date"]
+            return merged.sort_values("change_pct", ascending=True)  # worst first
+
+        # Original single-aggregate path
         sql, params = self.build_sql(plan)
         cur_df = execute_query(sql, params)
-
         prev_plan = {**plan, **self._prev_dates(plan)}
         sql2, params2 = self.build_sql(prev_plan)
         prev_df = execute_query(sql2, params2)
 
         metric = plan["metrics"][0]
 
-        def safe_float(df: pd.DataFrame) -> float:
-            if df is None or df.empty:
-                return 0.0
+        def safe_float(df):
+            if df is None or df.empty: return 0.0
             val = df.iloc[0].get(metric)
-            try:
-                return float(val) if val is not None else 0.0
-            except (TypeError, ValueError):
-                return 0.0
-
-        cur_val  = safe_float(cur_df)
-        prev_val = safe_float(prev_df)
+            try: return float(val) if val is not None else 0.0
+            except: return 0.0
 
         return pd.DataFrame([{
             "metric":        metric,
@@ -236,8 +267,8 @@ class SQLBuilder:
             "current_end":   plan["end_date"],
             "prev_start":    prev_plan["start_date"],
             "prev_end":      prev_plan["end_date"],
-            "current":       cur_val,
-            "previous":      prev_val,
+            "current":       safe_float(cur_df),
+            "previous":      safe_float(prev_df),
         }])
 
     @staticmethod
