@@ -52,7 +52,7 @@ _GRAIN_KEYWORDS: Dict[str, str] = {
 }
 _COMPARE_KEYWORDS: Dict[str, str] = {
     "yoy": "yoy", "year over year": "yoy", "year-over-year": "yoy",
-    "same period last year": "yoy", "same period": "yoy",   # ← add these
+    "same period last year": "yoy", "same period": "yoy",
     "same time last year": "yoy", "prior year": "yoy", "last year": "yoy",
     "mom": "mom", "month over month": "mom", "month-over-month": "mom",
     "previous period": "prev_period", "prior period": "prev_period",
@@ -60,8 +60,6 @@ _COMPARE_KEYWORDS: Dict[str, str] = {
 }
 
 # ── NEW: Negative-profit / drill-down detection ───────────────
-# Matches queries like: "which orders have negative profit",
-# "show loss-making products", "what is generating losses", etc.
 _DETAIL_NEGATIVE_RE = re.compile(
     r"\b("
     r"negative\s+profit|loss[\s-]?making|at\s+a\s+loss|generating\s+loss"
@@ -82,6 +80,13 @@ _EXTREMES_RE = re.compile(
 )
 _SUPERLATIVE_RE = re.compile(
     r'\b(best|highest|most|top|leading|greatest|biggest|largest|number\s*one)\b',
+    re.IGNORECASE,
+)
+
+# ── NEW: Detect general YoY trend queries (no specific period) ──
+# "how did X change year over year", "show yoy trend", "sales by year", etc.
+_GENERAL_YOY_RE = re.compile(
+    r"\b(how\s+did|show|display|what\s+is|trend|change|growth|evolve|progress)\b",
     re.IGNORECASE,
 )
 
@@ -107,12 +112,13 @@ _BREAKDOWN_RE = re.compile(
     re.IGNORECASE,
 )
 _TOP_RE      = re.compile(r"\btop[\s-]?(\d+)\b", re.IGNORECASE)
-_COMPARE_RE  = re.compile(r"\b(compare|vs|versus|compared|growth|change|difference)\b")
+_COMPARE_RE  = re.compile(r"\b(compare|vs|versus|compared)\b")
 _TIME_YEAR   = re.compile(r"\b(20\d{2})\b")
 _TIME_YM     = re.compile(r"\b(\d{4}[-/](0?[1-9]|1[0-2]))\b")
 _TIME_GRAIN_RE = re.compile(
     r"\b(q[1-4]|quarter|month|year|jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\b"
 )
+_GROWTH_WORDS = re.compile(r"\b(growth|change|trend|increase|decrease)\b")
 _TIME_REL    = re.compile(r"\b(in|during|between|from|since|until|last|previous|this)\b")
 
 _MONTH_YEAR_RE = re.compile(
@@ -263,6 +269,8 @@ class NLParser:
                 f" This is **{benchmark} the typical 12% retail benchmark**."
             )
         return None
+    
+    
 
     # ── Tier 2: rule-based plan ───────────────────────────────
 
@@ -270,12 +278,11 @@ class NLParser:
         ql = (q or "").lower().strip()
         s0, e0 = self._date_range()
 
-        # ── NEW: Detect negative-profit drill-down ────────────
+        # ── Detect negative-profit drill-down ────────────
         if _DETAIL_NEGATIVE_RE.search(q):
             explicit_dates = self._extract_date_range(ql)
             if explicit_dates:
                 s0, e0 = explicit_dates
-            # Detect breakdown preference
             breakdown = "sub_category"
             for kw, dim in sorted(_BREAKDOWN_KEYWORDS.items(), key=lambda x: -len(x[0])):
                 if kw in ql:
@@ -300,7 +307,7 @@ class NLParser:
         if explicit_dates:
             s0, e0 = explicit_dates
 
-        show_extremes = bool(_EXTREMES_RE.search(q))
+        show_extremes  = bool(_EXTREMES_RE.search(q))
         is_growth_rank = bool(_GROWTH_RANK_RE.search(q))
 
         plan: Dict[str, Any] = {
@@ -362,6 +369,13 @@ class NLParser:
             if detected_compare is None:
                 detected_compare = "prev_period"
 
+        # Also detect compare keywords directly (even without _COMPARE_RE match)
+        if detected_compare is None:
+            for kw, cp in sorted(_COMPARE_KEYWORDS.items(), key=lambda x: -len(x[0])):
+                if kw in ql:
+                    detected_compare = cp
+                    break
+
         if detected_breakdown is None and not self.df.empty and "sub_category" in self.df.columns:
             all_sub_cats = [str(v) for v in self.df["sub_category"].dropna().unique().tolist()]
             mentioned_sub = [v for v in all_sub_cats if v.lower() in ql]
@@ -381,11 +395,7 @@ class NLParser:
                     break
 
         # ── Growth rank: "which state/region has strongest growth" ──
-        # Build a kpi_compare plan but ranked by breakdown — simulate by
-        # returning a kpi_trend so the user sees period change per dimension.
-        # Best approximation: kpi_rank over current period vs previous, broken by dimension.
         if is_growth_rank and detected_breakdown:
-            # Use top-10 by default for growth ranking
             plan.update(
                 intent="kpi_rank",
                 breakdown_by=detected_breakdown,
@@ -393,13 +403,11 @@ class NLParser:
                 metrics=["sales"],
                 order_by="sales",
             )
-            # If no explicit date range, use last 30 days relative to data
             if not explicit_dates:
                 rel = self._extract_relative_date("past 30 days")
                 if rel:
                     plan["start_date"], plan["end_date"] = rel
             result = self._inject_mentioned_filters(plan, q)
-            # Clear the breakdown dimension filter
             if detected_breakdown in ("region", "segment", "category", "state"):
                 ql_check = q.lower()
                 f_check = self.filters or {}
@@ -409,6 +417,47 @@ class NLParser:
                 if not mentioned:
                     result["filters"][detected_breakdown] = []
             return result
+        # ── PRIORITY FIX: General YoY trend question ─────────────
+        if detected_compare == "yoy" and _GENERAL_YOY_RE.search(q):
+            if not explicit_dates:
+                plan.update(
+                    intent="kpi_trend",
+                    time_grain="year",
+                    compare_period=None,
+                    metrics=[detected_metrics[0]],
+                )
+                return self._inject_mentioned_filters(plan, q)
+
+        # ── KEY FIX: YoY/MoM without explicit date → use kpi_trend ──────────
+        # When user asks "how did sales change year-over-year" without specifying
+        # a particular period, show per-year breakdown (kpi_trend) rather than
+        # comparing the full date range vs itself shifted by 1 year (kpi_compare).
+        if detected_compare == "yoy" and not explicit_dates:
+            plan.update(
+                intent="kpi_trend",
+                time_grain="year",
+                compare_period=None,
+                metrics=[detected_metrics[0]],
+                breakdown_by=detected_breakdown  # vẫn giữ breakdown nếu có
+            )
+            return self._inject_mentioned_filters(plan, q)
+        if detected_compare == "yoy":
+                if not explicit_dates:
+                    plan.update(
+                        intent="kpi_trend",
+                        time_grain="year",
+                        compare_period=None,
+                        metrics=[detected_metrics[0]],
+                    )
+                    return self._inject_mentioned_filters(plan, q)
+        elif detected_compare == "mom":
+                plan.update(
+                    intent="kpi_trend",
+                    time_grain="month",
+                    compare_period=None,
+                    metrics=[detected_metrics[0]],
+                )
+                return self._inject_mentioned_filters(plan, q)
 
         if detected_compare:
             if detected_breakdown:
@@ -437,23 +486,13 @@ class NLParser:
         else:
             return None
 
-        # ── When comparing across a dimension (show_extremes or breakdown query),
-        # clear that dimension's filter so ALL values are returned, not just
-        # the ones currently selected in the sidebar.
         plan = self._inject_mentioned_filters(plan, q)
 
         if plan.get("breakdown_by") and plan.get("intent") == "kpi_value":
             dim = plan["breakdown_by"]
-            # Only clear if filter was set to a subset (i.e. restricting results)
-            # This ensures "sales by region" returns ALL regions even if sidebar filters
             f_copy = self.filters or {}
             all_vals = list(f_copy.get(dim, []) or [])
-            current_filter = plan.get("filters", {}).get(dim, [])
-            # If current filter equals all available values or is a subset,
-            # clear it so the breakdown shows everything
             if dim in ("region", "segment", "category") and len(all_vals) > 0:
-                # If no explicit mention of specific values (i.e. not "show me West and East"),
-                # clear the dimension filter to get all values
                 ql_check = q.lower()
                 mentioned_specific = [
                         v for v in all_vals
@@ -548,10 +587,6 @@ class NLParser:
         if not m:
             return None
 
-        # Group layout (3 alternatives in the regex):
-        # Alt 1 "past 30 days"  → groups 1,2 = n, unit
-        # Alt 2 "last month"    → group 3 = unit (n=1 implied)
-        # Alt 3 "this month"    → groups 4,5 = keyword, grain
         if m.group(1) and m.group(2):
             n, unit = int(m.group(1)), m.group(2).lower()
         elif m.group(3):
@@ -663,6 +698,9 @@ class NLParser:
           Set condition="profit_negative", breakdown_by="sub_category"
         - If intent="clarify": add "clarifying_question": "<one question>"
         - If dates given in any format (DD/MM/YYYY etc.), parse to YYYY-MM-DD
+        - For "year-over-year" or "yoy" WITHOUT a specific date: use kpi_trend + time_grain="year"
+        - For "month-over-month" or "mom" WITHOUT a specific date: use kpi_trend + time_grain="month"
+        - kpi_compare is ONLY for "compare [specific period] vs [other period]"
 
         === JSON SCHEMA ===
         {{"intent":"kpi_value","metrics":["sales"],"time_grain":"none","breakdown_by":null,"start_date":"{s0}","end_date":"{e0}","compare_period":null,"top_k":null,"order_by":"sales","filters":{{"region":[],"segment":[],"category":[]}}}}
@@ -698,8 +736,6 @@ class NLParser:
         for key, all_vals in _DIM_MAP.items():
             if not all_vals:
                 continue
-            # Use word-boundary matching to avoid false positives like
-            # "west" matching inside "lowest" or "east" inside "northeast"
             mentioned = [
                 v for v in all_vals
                 if re.search(r"\b" + re.escape(v.lower()) + r"\b", ql)

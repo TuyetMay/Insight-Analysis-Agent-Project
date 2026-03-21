@@ -6,7 +6,7 @@ Pure presentation logic — no LLM, no DB calls.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Dict, List
 
 import pandas as pd
@@ -43,7 +43,6 @@ class AnswerFormatter:
 
         intent    = plan["intent"]
 
-        # kpi_detail has its own empty-check inside _format_detail
         if intent != "kpi_detail" and (df is None or df.empty):
             ctx = self.natural_context(plan)
             return f"No data found for the selected filters." + (f"\n*{ctx}*" if ctx else "")
@@ -133,7 +132,6 @@ class AnswerFormatter:
             margin   = float(r.get("profit_margin", 0))
             cat_str  = f" *(in {cat})*" if cat and cat.lower() != name.lower() else ""
 
-            # Reason indicator
             reason = ""
             if disc >= 30:
                 reason = f"  ⚠️ *avg discount {disc:.0f}% — heavy discounting eroding margin*"
@@ -148,7 +146,6 @@ class AnswerFormatter:
                 f"Avg Discount: {disc:.0f}%{reason}"
             )
 
-        # ── Sample of worst individual orders ─────────────────
         if not sample_df.empty:
             lines += [
                 "",
@@ -175,7 +172,6 @@ class AnswerFormatter:
         cp_label  = _CP_LABELS.get(plan.get("compare_period", ""), "vs previous")
         ctx_line  = f"\n*{self.natural_context(plan)}*" if self.natural_context(plan) else ""
 
-        # ── Per-dimension comparison (e.g. by region) ──────────
         if "breakdown" in df.columns:
             dim_label = (plan.get("breakdown_by") or "dimension").replace("_", " ").title()
             first = df.iloc[0]
@@ -204,7 +200,6 @@ class AnswerFormatter:
                 )
             return "\n".join(lines)
 
-        # ── Original single-aggregate comparison ───────────────
         row  = df.iloc[0]
         m    = row["metric"]
         cur  = float(row["current"])
@@ -237,7 +232,6 @@ class AnswerFormatter:
             sorted_df = df.sort_values(by=m0, ascending=False)
 
             if show_extremes and len(sorted_df) == 1:
-                # Only one entry — sidebar filter is restricting results
                 only_name = sorted_df.iloc[0].get("breakdown", "—")
                 only_val  = self._fv(float(sorted_df.iloc[0][m0]), m0)
                 return (
@@ -248,14 +242,12 @@ class AnswerFormatter:
                 )
 
             if show_extremes and len(sorted_df) >= 2:
-                # Show highest + lowest clearly
                 metric_label = _METRIC_LABELS.get(metrics[0], metrics[0])
                 lines = [
                     f"Here's the **highest and lowest {metric_label}** by **{dim_label}**:{ctx_line}",
                     "",
                     f"🏆 **Highest {dim_label}:**",
                 ]
-                # Top entries (up to 3 if many regions, else just 1)
                 n_top = min(3, max(1, len(sorted_df) // 3))
                 for rank, (_, r) in enumerate(sorted_df.head(n_top).iterrows(), 1):
                     b    = r.get("breakdown", "—")
@@ -266,7 +258,6 @@ class AnswerFormatter:
                     lines.append(f"  {rank}. **{b}** — {vals}")
 
                 lines += ["", f"📉 **Lowest {dim_label}:**"]
-                # Bottom entries
                 for rank, (_, r) in enumerate(sorted_df.tail(n_top).iloc[::-1].iterrows(), 1):
                     b    = r.get("breakdown", "—")
                     vals = " | ".join(
@@ -275,7 +266,6 @@ class AnswerFormatter:
                     )
                     lines.append(f"  {rank}. **{b}** — {vals}")
 
-                # Add gap context if exactly 2+ entries
                 if len(sorted_df) >= 2:
                     top_val = float(sorted_df.iloc[0][m0])
                     bot_val = float(sorted_df.iloc[-1][m0])
@@ -286,7 +276,6 @@ class AnswerFormatter:
                         f"between highest and lowest)",
                     ]
 
-                # Also show full ranking if more than 2 entries
                 if len(sorted_df) > 2:
                     lines += ["", f"**Full {dim_label} ranking:**"]
                     for rank, (_, r) in enumerate(sorted_df.iterrows(), 1):
@@ -299,7 +288,6 @@ class AnswerFormatter:
 
                 return "\n".join(lines)
 
-            # Normal breakdown display
             lines = [f"Here's how **{_METRIC_LABELS.get(metrics[0], metrics[0])}** breaks down by **{dim_label}**:{ctx_line}", ""]
             if len(sorted_df) == 1:
                 only_name = sorted_df.iloc[0].get("breakdown", "—")
@@ -356,9 +344,35 @@ class AnswerFormatter:
 
     def _format_trend(self, plan: Dict[str, Any], df: pd.DataFrame,
                       metrics: List[str], grain: str, breakdown: Any, ctx_line: str) -> str:
-        grain_label = {"week": "week", "month": "month", "quarter": "quarter", "year": "year"}.get(grain, grain)
+        grain_label = {
+            "week": "week", "month": "month",
+            "quarter": "quarter", "year": "year"
+        }.get(grain, grain)
         metric_str  = " & ".join(_METRIC_LABELS.get(m, m) for m in metrics)
         lines = [f"Here's the **{metric_str}** trend by {grain_label}:{ctx_line}", ""]
+
+        # ── FIX: grain-aware period label ──────────────────────────────
+        # DATE_TRUNC returns timestamps like "2014-01-01 00:00:00"
+        # Slicing to [:7] gives "2014-01" for ALL grains — wrong for year/quarter.
+        def fmt_period(raw_period: Any, grain: str) -> str:
+            s = str(raw_period)
+            if grain == "year":
+                # "2014-01-01" → "2014"
+                return s[:4]
+            elif grain == "quarter":
+                # "2014-01-01" → "2014 Q1", "2014-04-01" → "2014 Q2"
+                try:
+                    dt = datetime.strptime(s[:10], "%Y-%m-%d")
+                    q  = (dt.month - 1) // 3 + 1
+                    return f"{dt.year} Q{q}"
+                except Exception:
+                    return s[:7]
+            elif grain == "month":
+                # "2014-01-01" → "2014-01"
+                return s[:7]
+            else:
+                # week → full date "2014-01-06"
+                return s[:10]
 
         show = df.copy()
         if "period" in show.columns:
@@ -368,11 +382,27 @@ class AnswerFormatter:
             top5 = show.groupby("breakdown")[m0].sum().sort_values(ascending=False).head(5).index.tolist()
             show = show[show["breakdown"].isin(top5)]
 
-        for _, r in show.iterrows():
-            p    = str(r.get("period", ""))[:7]
+        # Also add YoY % change annotation for year grain
+        rows_list = list(show.iterrows())
+        prev_val: Dict[str, float] = {}
+
+        for i, (_, r) in enumerate(rows_list):
+            p    = fmt_period(r.get("period", ""), grain)
             vals = " / ".join(self._fv(float(r[m]), m) for m in metrics if m in r)
+
+            # For year grain with single metric, show % change vs previous year
+            yoy_note = ""
+            if grain == "year" and len(metrics) == 1 and i > 0:
+                m0 = metrics[0]
+                curr_v = float(r.get(m0, 0))
+                prev_v = float(rows_list[i - 1][1].get(m0, 0))
+                if prev_v:
+                    chg = (curr_v - prev_v) / abs(prev_v) * 100
+                    arrow = "📈" if chg >= 0 else "📉"
+                    yoy_note = f"  {arrow} {chg:+.1f}% vs {fmt_period(rows_list[i-1][1].get('period',''), grain)}"
+
             prefix = f"{p} | {r.get('breakdown')}" if breakdown else p
-            lines.append(f"- **{prefix}:** {vals}")
+            lines.append(f"- **{prefix}:** {vals}{yoy_note}")
 
         if len(lines) > 32:
             lines = lines[:32] + ["- *(truncated — showing most recent 30 periods)*"]
@@ -385,7 +415,6 @@ class AnswerFormatter:
         dim_label = breakdown.replace("_", " ").title()
         top_k     = plan.get("top_k", 10)
 
-        # ── Direct answer for top-1 queries ──────────────────────
         if top_k == 1 and not df.empty:
             r   = df.iloc[0]
             b   = r.get("breakdown", "—")
@@ -402,7 +431,6 @@ class AnswerFormatter:
                 f"with **{val}**{secondary}."
             )
 
-        # ── Original multi-rank display ───────────────────────────
         lines = [
             f"Here are the **top {top_k} {dim_label}s** ranked by "
             f"{_METRIC_LABELS.get(m0, m0)}:{ctx_line}",
