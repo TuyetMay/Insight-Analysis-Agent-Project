@@ -43,6 +43,24 @@ with st.spinner("⏳ Connecting to database…"):
 
 if not filter_options:
     st.error("❌ Cannot connect to the database. Check your .env configuration.")
+
+    col_a, col_b = st.columns([1, 3])
+    with col_a:
+        if st.button("🔄 Retry Connection", type="primary", use_container_width=True):
+            st.cache_data.clear()
+            st.cache_resource.clear()
+            st.session_state.pop("db_pool", None)  # clear cached pool
+            st.rerun()
+    with col_b:
+        with st.expander("🔍 Debug info"):
+            st.code(f"""DB_HOST     = {Config.DB_HOST}
+DB_PORT     = {Config.DB_PORT}
+DB_NAME     = {Config.DB_NAME}
+DB_USER     = {Config.DB_USER}
+DB_TABLE    = {Config.DB_TABLE}
+DB_PASSWORD = {"(set)" if Config.DB_PASSWORD else "(EMPTY — check .env)"}
+GOOGLE_KEY  = {"(set)" if Config.GOOGLE_API_KEY else "(EMPTY)"}
+""")
     st.stop()
 
 # ─────────────────────────────────────────────────────────────
@@ -73,28 +91,26 @@ _QUICK_TOKEN_LABELS = {
 }
 
 if st.session_state.get("pending_question"):
-    q = st.session_state.pop("pending_question")
-    history = st.session_state.setdefault("chat_history", [])
-    display_q = _QUICK_TOKEN_LABELS.get(q, q)
-    history.append({"role": "user", "content": q})
-    response = chatbot.get_response(q)
-    suggs = chatbot.get_suggestions()
-    if suggs:
-        response += "\n\n**Suggested follow-ups:**\n" + "\n".join(f"- {s['text']}" for s in suggs)
-    history.append({"role": "assistant", "content": response})
+    _q = st.session_state.pop("pending_question")
+    _history = st.session_state.setdefault("chat_history", [])
     
-if "pending_question" in st.session_state and st.session_state["pending_question"]:
-    q = st.session_state.pop("pending_question")
-    history = st.session_state.setdefault("chat_history", [])
-    history.append({"role": "user", "content": q})
-    response = chatbot.get_response(q)
-    suggs = chatbot.get_suggestions()
-    if suggs:
-        response += "\n\n**Suggested follow-ups:**\n" + "\n".join(
-            f"- {s['text']}" for s in suggs
-        )
-    history.append({"role": "assistant", "content": response})
-    st.session_state.chat_history = history
+    # Dùng label readable, không phải raw token
+    _label = _QUICK_TOKEN_LABELS.get(_q, _q)
+    _history.append({"role": "user", "content": _label})
+    
+    try:
+        _response = chatbot.get_response(_q)
+        _suggs    = chatbot.get_suggestions()
+        if _suggs:
+            _response += "\n\n**Suggested follow-ups:**\n" + "\n".join(
+                f"- {s['text']}" for s in _suggs
+            )
+    except Exception as _e:
+        _response = f"❌ Could not load insight. ({_e})"
+    
+    _history.append({"role": "assistant", "content": _response})
+    st.session_state.chat_history = _history
+    st.rerun() 
 # ─────────────────────────────────────────────────────────────
 # Main dashboard
 # ─────────────────────────────────────────────────────────────
@@ -115,8 +131,11 @@ for i, (label, value, question) in _KPI_QUESTIONS.items():
     with kpi_cols[i]:
         st.metric(label, value)
         if st.button("🔍 Ask AI", key=f"ask_kpi_{i}", use_container_width=True):
-            st.session_state["pending_question"] = question
-            st.rerun()
+            if not df.empty:
+                st.session_state["pending_question"] = question
+                st.rerun()
+            else:
+                st.warning("No data to analyze.")
 
 # Time-series section
 st.markdown("## 📈 Sales & Profit Over Time")

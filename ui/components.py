@@ -57,10 +57,16 @@ def render_filters(filter_options: Dict[str, Any]) -> Dict[str, Any]:
         "Category", options=filter_options["category"], default=filter_options["category"]
     )
 
-    safe_range = (
-        date_range if isinstance(date_range, tuple) and len(date_range) == 2
-        else (min_date, max_date)
-    )
+    # Streamlit date_input can return: (date, date), (date,), date, or ()
+    # depending on version and interaction state — handle all cases.
+    if isinstance(date_range, (tuple, list)) and len(date_range) == 2:
+        safe_range = (date_range[0], date_range[1])
+    elif isinstance(date_range, (tuple, list)) and len(date_range) == 1:
+        safe_range = (date_range[0], max_date)
+    elif hasattr(date_range, "strftime"):   # single datetime.date object
+        safe_range = (date_range, max_date)
+    else:
+        safe_range = (min_date, max_date)
     return {
         "date_range": safe_range,
         "region":     selected_regions,
@@ -245,7 +251,6 @@ def _process_question(chatbot: Any, question: str, thinking_placeholder: Any,
                       display_text: str = None) -> None:
     history = st.session_state.setdefault("chat_history", [])
 
-    # ✅ FIX 1: Dùng label readable thay vì raw token trong history và bubble
     label = display_text or _QUICK_TOKEN_LABELS.get(question, question)
 
     history.append({"role": "user", "content": label})          # label, không phải token
