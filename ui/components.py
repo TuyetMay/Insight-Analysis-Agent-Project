@@ -208,13 +208,19 @@ def render_chat_sidebar(chatbot: Any) -> None:
 # ─────────────────────────────────────────────────────────────
 # Internal helpers
 # ─────────────────────────────────────────────────────────────
+_KPI_QUICK_QUESTIONS = {
+    "total_sales":    "How have sales trended year-over-year?",
+    "total_profit":   "Which region is most profitable?",
+    "total_orders":   "What is the monthly order trend?",
+    "profit_margin":  "How does profit margin compare across categories?",
+}
 
 def _quick_buttons(chatbot: Any, thinking_placeholder: Any) -> None:
     quick_qs = [
-        ("💰 Total Sales",   "What is the total sales?"),
-        ("📦 Total Orders",  "What is the total orders?"),
-        ("💹 Total Profit",  "What is the total profit?"),
-        ("📊 Profit Margin", "What is the profit margin?"),
+        ("💰 Total Sales",   _KPI_QUICK_QUESTIONS["total_sales"]),
+        ("📦 Total Orders",  _KPI_QUICK_QUESTIONS["total_orders"]),
+        ("💹 Total Profit",  _KPI_QUICK_QUESTIONS["total_profit"]),
+        ("📊 Profit Margin", _KPI_QUICK_QUESTIONS["profit_margin"]),
     ]
     cols = st.sidebar.columns(2)
     for i, (label, question) in enumerate(quick_qs):

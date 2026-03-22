@@ -13,6 +13,7 @@ from config import Config
 from core.data_loader import load_filtered_data, get_filter_options, calculate_kpis, load_filtered_data_safe
 from chatbot import DashboardChatbot
 from ui import inject_styles, render_filters, render_chat_sidebar
+from ui.components import _KPI_QUICK_QUESTIONS
 
 # ─────────────────────────────────────────────────────────────
 # Page config & styles
@@ -64,7 +65,18 @@ if df.empty:
 
 kpis    = calculate_kpis(df)
 chatbot = DashboardChatbot(df, kpis, filters)
-
+if "pending_question" in st.session_state and st.session_state["pending_question"]:
+    q = st.session_state.pop("pending_question")
+    history = st.session_state.setdefault("chat_history", [])
+    history.append({"role": "user", "content": q})
+    response = chatbot.get_response(q)
+    suggs = chatbot.get_suggestions()
+    if suggs:
+        response += "\n\n**Suggested follow-ups:**\n" + "\n".join(
+            f"- {s['text']}" for s in suggs
+        )
+    history.append({"role": "assistant", "content": response})
+    st.session_state.chat_history = history
 # ─────────────────────────────────────────────────────────────
 # Main dashboard
 # ─────────────────────────────────────────────────────────────
@@ -75,10 +87,11 @@ st.markdown(f"<div class='main-header'>{Config.APP_ICON} {Config.APP_TITLE}</div
 # KPIs
 st.markdown("## 📌 Key Performance Indicators")
 kpi_cols = st.columns(4)
-kpi_cols[0].metric("Total Sales",    f"${kpis['total_sales']:,.0f}")
-kpi_cols[1].metric("Total Profit",   f"${kpis['total_profit']:,.0f}")
-kpi_cols[2].metric("Total Orders",   f"{kpis['total_orders']:,}")
-kpi_cols[3].metric("Profit Margin",  f"{kpis['profit_margin']:.2f}%")
+with kpi_cols[0]:
+    st.metric("Total Sales", f"${kpis['total_sales']:,.0f}")
+    if st.button("🔍 Ask AI", key="ask_sales", use_container_width=True):
+        st.session_state["pending_question"] = _KPI_QUICK_QUESTIONS["total_sales"]
+        st.rerun()
 
 # Time-series section
 st.markdown("## 📈 Sales & Profit Over Time")
