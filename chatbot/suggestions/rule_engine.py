@@ -57,6 +57,8 @@ class RuleBasedSuggestionEngine:
             return self._fallback(dashboard_defaults)
 
         base = self._normalize(plan, dashboard_defaults or {})
+        if base.get("breakdown_by") and base.get("secondary_breakdown"):
+         return self._dedup(self._cross_breakdown_suggestions(base))
         b    = base.get("breakdown_by")
 
         candidates: List[Suggestion] = []
@@ -213,4 +215,32 @@ class RuleBasedSuggestionEngine:
             )
             for m in ["sales", "profit", "orders", "profit_margin"]
             if m in self.allowed_metrics and m != current
+        ]
+    
+    def _cross_breakdown_suggestions(self, base: Dict[str, Any]) -> List[Suggestion]:
+        """Suggestions specific to cross-breakdown (region × category) queries."""
+        m  = base["metrics"][0]
+        b1 = base.get("breakdown_by") or "region"
+        b2 = base.get("secondary_breakdown") or "category"
+        return [
+            Suggestion(
+                f"Top 5 {self._ld(b1)} by {self._lm(m)}",
+                self._clone(base, intent="kpi_rank", breakdown_by=b1,
+                            top_k=5, secondary_breakdown=None),
+            ),
+            Suggestion(
+                f"{self._lm(m)} by {self._ld(b1)}",
+                self._clone(base, intent="kpi_value", breakdown_by=b1,
+                            secondary_breakdown=None),
+            ),
+            Suggestion(
+                f"{self._lm(m)} by {self._ld(b2)}",
+                self._clone(base, intent="kpi_value", breakdown_by=b2,
+                            secondary_breakdown=None),
+            ),
+            Suggestion(
+                f"{self._lm(m)} — YoY (vs last year)",
+                self._clone(base, intent="kpi_compare", compare_period="yoy",
+                            breakdown_by=b1, secondary_breakdown=None, metrics=[m]),
+            ),
         ]

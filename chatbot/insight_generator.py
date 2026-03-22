@@ -65,12 +65,28 @@ class InsightGenerator:
                 "- What strategic action does this ranking suggest?"
             ),
            "kpi_value": (
-                f"Analyse the breakdown across {breakdown or 'all data'}. "
-                "Cover exactly these 3 points in 4–5 bullet points total:\n"
-                "- **Leader**: who leads, their exact value, and their % share of total.\n"
-                "- **Spread**: gap between top and bottom ($ and %), is it concentrated or balanced?\n"
-                "- **Action**: one concrete business recommendation based on this distribution.\n"
-                "Max 5 bullet points. Each bullet must end with a period. No open-ended sentences."
+                (
+                    # Cross-breakdown case: 2 dimensions
+                    f"Analyse this {breakdown} × {plan.get('secondary_breakdown')} cross-breakdown deeply. "
+                    "Cover ALL of these points:\n"
+                    "- **Overall leader**: which primary dimension leads and by how much ($ and %).\n"
+                    "- **Category dominance per dimension**: for each primary value, which secondary "
+                    "dimension leads and what % share does it hold.\n"
+                    "- **Pattern**: is the category mix consistent across all primary values, or does "
+                    "any primary value have a notably different distribution?\n"
+                    "- **Outlier**: identify any primary+secondary combination that is unusually high "
+                    "or low compared to peers.\n"
+                    "- **Action**: 1 concrete recommendation per major finding.\n"
+                    "Write 6–9 bullet points. Every bullet must contain at least one number. "
+                    "Each bullet must end with a period."
+                ) if plan.get("secondary_breakdown") else (
+                    f"Analyse the breakdown across {breakdown or 'all data'}. "
+                    "Cover exactly these 3 points in 4–5 bullet points total:\n"
+                    "- **Leader**: who leads, their exact value, and their % share of total.\n"
+                    "- **Spread**: gap between top and bottom ($ and %), is it concentrated or balanced?\n"
+                    "- **Action**: one concrete business recommendation based on this distribution.\n"
+                    "Max 5 bullet points. Each bullet must end with a period. No open-ended sentences."
+                )
             ),
             "kpi_trend": (
                 f"Analyse this {grain}-level YoY trend concisely. Cover exactly 3 things:\n"
@@ -153,7 +169,89 @@ class InsightGenerator:
         metrics   = plan.get("metrics", ["sales"])
         m0        = plan.get("order_by") or metrics[0]
         breakdown = plan.get("breakdown_by")
+        secondary = plan.get("secondary_breakdown") 
         insights: List[str] = []
+
+        if (intent in {"kpi_rank", "kpi_value"}
+                and breakdown and secondary
+                and "breakdown" in df.columns
+                and "breakdown2" in df.columns
+                and m0 in df.columns):
+
+            grand_total = float(df[m0].sum())
+
+            # ── 1. Region tổng cao nhất ───────────────────────────────
+            region_totals = df.groupby("breakdown2")[m0].sum().sort_values(ascending=False)
+            top_region    = region_totals.index[0]
+            top_region_v  = float(region_totals.iloc[0])
+            bot_region    = region_totals.index[-1]
+            bot_region_v  = float(region_totals.iloc[-1])
+            gap_pct       = (top_region_v - bot_region_v) / top_region_v * 100 if top_region_v else 0
+            insights.append(
+                f"**{top_region}** is the strongest region at {self._fv(top_region_v, m0)} "
+                f"({top_region_v/grand_total*100:.0f}% of total), "
+                f"**{gap_pct:.0f}%** ahead of the weakest region "
+                f"**{bot_region}** ({self._fv(bot_region_v, m0)})."
+            )
+
+            # ── 2. Category tổng cao nhất + regional spread ───────────
+            cat_totals = df.groupby("breakdown")[m0].sum().sort_values(ascending=False)
+            top_cat    = cat_totals.index[0]
+            top_cat_v  = float(cat_totals.iloc[0])
+            # Tìm region dẫn đầu cho top category
+            top_cat_df  = df[df["breakdown"] == top_cat].sort_values(m0, ascending=False)
+            top_cat_reg = top_cat_df.iloc[0].get("breakdown2", "—")
+            top_cat_reg_v = float(top_cat_df.iloc[0][m0])
+            insights.append(
+                f"**{top_cat}** leads all categories at {self._fv(top_cat_v, m0)} "
+                f"({top_cat_v/grand_total*100:.0f}% of total), "
+                f"with **{top_cat_reg}** as its strongest market "
+                f"({self._fv(top_cat_reg_v, m0)})."
+            )
+
+            # ── 3. Region phụ thuộc 1 category (concentration risk) ───
+            concentration_lines = []
+            for region_val in region_totals.index:
+                rdf      = df[df["breakdown2"] == region_val]
+                r_total  = float(rdf[m0].sum())
+                top_row  = rdf.sort_values(m0, ascending=False).iloc[0]
+                top_share = float(top_row[m0]) / r_total * 100 if r_total else 0
+                if top_share >= 40:
+                    concentration_lines.append(
+                        f"**{region_val}** relies heavily on "
+                        f"**{top_row.get('breakdown','—')}** "
+                        f"({top_share:.0f}% of region sales)"
+                    )
+            if concentration_lines:
+                insights.append(
+                    "⚠️ **Concentration risk:** " + "; ".join(concentration_lines) +
+                    " — a decline in this category would disproportionately impact the region."
+                )
+
+            # ── 4. Category phân bổ đều nhất giữa các region ─────────
+            cat_std = {}
+            for cat_val in cat_totals.index:
+                cdf    = df[df["breakdown"] == cat_val]
+                shares = []
+                for region_val in region_totals.index:
+                    r_total = float(region_totals[region_val])
+                    cell    = cdf[cdf["breakdown2"] == region_val][m0].sum()
+                    shares.append(float(cell) / r_total * 100 if r_total else 0)
+                import statistics
+                cat_std[cat_val] = statistics.stdev(shares) if len(shares) > 1 else 0
+
+            most_even = min(cat_std, key=cat_std.get)
+            most_conc = max(cat_std, key=cat_std.get)
+            insights.append(
+                f"**{most_even}** has the most balanced regional distribution "
+                f"(std dev {cat_std[most_even]:.1f}pp across regions), "
+                f"while **{most_conc}** is most unevenly spread "
+                f"(std dev {cat_std[most_conc]:.1f}pp) — "
+                f"suggesting {most_conc} growth is concentrated in specific markets."
+            )
+
+            return insights
+
 
         if intent in {"kpi_rank", "kpi_value"} and breakdown and "breakdown" in df.columns and m0 in df.columns:
             sdf   = df.sort_values(by=m0, ascending=False).reset_index(drop=True)

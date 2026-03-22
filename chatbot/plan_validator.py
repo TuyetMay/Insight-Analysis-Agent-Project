@@ -114,6 +114,7 @@ class PlanValidator:
         return {
             "intent": intent, "metrics": metrics,
             "time_grain": time_grain, "breakdown_by": breakdown_by,
+            "secondary_breakdown": plan.get("secondary_breakdown"),
             "start_date": sd, "end_date": ed,
             "compare_period": compare_period, "top_k": top_k,
             "order_by": order_by, "filters": filters,

@@ -229,6 +229,38 @@ class AnswerFormatter:
             dim_label = breakdown.replace("_", " ").title()
             show_extremes = plan.get("show_extremes", False)
 
+            # ── Cross-breakdown: region × category tree layout ──
+            # Must be checked FIRST, before show_extremes logic
+            if "breakdown2" in df.columns:
+                dim1_label   = breakdown.replace("_", " ").title()
+                dim2_label   = (plan.get("secondary_breakdown") or "").replace("_", " ").title()
+                metric_label = _METRIC_LABELS.get(metrics[0], metrics[0])
+
+                lines = [
+                    f"Here's **{metric_label}** by **{dim1_label}** × **{dim2_label}**:{ctx_line}",
+                    "",
+                ]
+                grand_total = float(df[m0].sum()) if m0 in df.columns else 0
+
+                region_totals = df.groupby("breakdown2")[m0].sum().sort_values(ascending=False)
+
+                for region_val in region_totals.index:
+                    region_df    = df[df["breakdown2"] == region_val].sort_values(m0, ascending=False)
+                    region_total = float(region_totals[region_val])
+                    region_share = (region_total / grand_total * 100) if grand_total else 0
+                    lines.append(
+                        f"**{region_val}** — {self._fv(region_total, m0)} "
+                        f"({region_share:.0f}% of total)"
+                    )
+                    for _, r in region_df.iterrows():
+                        cat_val   = r.get("breakdown", "—")
+                        val       = self._fv(float(r[m0]), m0)
+                        cat_share = (float(r[m0]) / region_total * 100) if region_total else 0
+                        lines.append(f"  - {cat_val}: {val} ({cat_share:.0f}%)")
+                    lines.append("")
+
+                    return "\n".join(lines)
+
             sorted_df = df.sort_values(by=m0, ascending=False)
 
             if show_extremes and len(sorted_df) == 1:

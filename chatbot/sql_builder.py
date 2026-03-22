@@ -26,7 +26,6 @@ _GRAIN_MAP: Dict[str, str] = {
     "week": "week", "month": "month", "quarter": "quarter", "year": "year",
 }
 
-# Condition → extra WHERE clause fragment
 _CONDITION_WHERE: Dict[str, str] = {
     "profit_negative": "profit < 0",
     "loss_orders":     "profit < 0",
@@ -49,18 +48,23 @@ class SQLBuilder:
             return self._run_compare(plan)
         if plan["intent"] == "kpi_detail":
             return self._run_detail(plan)
+        # Cross-breakdown: GROUP BY primary × secondary
+        if plan.get("secondary_breakdown"):
+            return self._run_cross(plan)
         sql, params = self.build_sql(plan)
         return execute_query(sql, params)
 
     def build_sql(self, plan: Dict[str, Any]) -> Tuple[str, Dict[str, Any]]:
         """Translate a validated plan into (sql_string, params_dict)."""
-        metrics       = plan["metrics"]
-        time_grain    = plan["time_grain"]
-        breakdown_by  = plan.get("breakdown_by")
-        f             = plan["filters"]
-        top_k         = plan.get("top_k")
-        order_by      = plan.get("order_by") or metrics[0]
+        metrics             = plan["metrics"]
+        time_grain          = plan["time_grain"]
+        breakdown_by        = plan.get("breakdown_by")
+        secondary_breakdown = plan.get("secondary_breakdown")  # may be None
+        f                   = plan["filters"]
+        top_k               = plan.get("top_k")
+        order_by            = plan.get("order_by") or metrics[0]
 
+        # ── WHERE ─────────────────────────────────────────────
         where_parts = ["order_date >= %(start)s", "order_date <= %(end)s"]
         params: Dict[str, Any] = {"start": plan["start_date"], "end": plan["end_date"]}
 
@@ -74,37 +78,53 @@ class SQLBuilder:
 
         where_sql = " AND ".join(where_parts)
 
+        # ── SELECT / GROUP BY ─────────────────────────────────
         bucket_sql = (
             f"DATE_TRUNC('{_GRAIN_MAP[time_grain]}', order_date)"
             if time_grain != "none" else None
         )
 
         select_parts: List[str] = []
-        group_parts: List[str] = []
+        group_parts:  List[str] = []
 
         if bucket_sql:
             select_parts.append(f"{bucket_sql} AS period")
             group_parts.append("period")
+
         if breakdown_by:
             select_parts.append(f"{breakdown_by} AS breakdown")
             group_parts.append("breakdown")
+
+        # secondary_breakdown adds a second grouping column
+        if secondary_breakdown:
+            select_parts.append(f"{secondary_breakdown} AS breakdown2")
+            group_parts.append("breakdown2")
+
         for m in metrics:
             select_parts.append(f"{_METRIC_EXPR[m]} AS {m}")
 
+        # ── Supporting metrics for bare kpi_value ─────────────
+        if plan["intent"] == "kpi_value" and not bucket_sql and not breakdown_by and not secondary_breakdown:
+            for m in ["sales", "profit"]:
+                if m not in metrics:
+                    select_parts.append(f"{_METRIC_EXPR[m]} AS {m}")
+
+        # ── Assemble SQL ──────────────────────────────────────
         lines = [
             "SELECT " + ", ".join(select_parts),
             f"FROM {self.table}",
             f"WHERE {where_sql}",
         ]
+
         if group_parts:
             lines.append("GROUP BY " + ", ".join(group_parts))
-        if plan["intent"] == "kpi_value" and not bucket_sql and not breakdown_by:
-            supporting = [m for m in ["sales", "profit"] if m not in metrics]
-            for m in supporting:
-                select_parts.append(f"{_METRIC_EXPR[m]} AS {m}")
-        elif plan["intent"] == "kpi_rank":
+
+        if plan["intent"] == "kpi_rank":
             lines += [f"ORDER BY {order_by} DESC NULLS LAST", "LIMIT %(top_k)s"]
             params["top_k"] = top_k
+        elif secondary_breakdown:
+            # cross-breakdown: sort by primary then metric desc
+            lines.append(f"ORDER BY breakdown ASC, {order_by} DESC NULLS LAST")
         elif breakdown_by and not bucket_sql:
             lines.append(f"ORDER BY {order_by} DESC NULLS LAST")
         elif bucket_sql:
@@ -113,20 +133,31 @@ class SQLBuilder:
 
         return "\n".join(lines), params
 
+    # ── Cross-breakdown query (e.g. region × category) ────────
+
+    def _run_cross(self, plan: Dict[str, Any]) -> pd.DataFrame:
+        """
+        Run a GROUP BY primary × secondary query and return a tidy DataFrame
+        with columns: breakdown, breakdown2, <metric(s)>.
+        Called by run() when plan["secondary_breakdown"] is set.
+        """
+        sql, params = self.build_sql(plan)
+        df = execute_query(sql, params)
+        # Tag so formatter knows this is a cross result
+        if not df.empty:
+            df.attrs["cross_breakdown"] = True
+            df.attrs["primary_dim"]     = plan.get("breakdown_by", "")
+            df.attrs["secondary_dim"]   = plan.get("secondary_breakdown", "")
+        return df
+
     # ── Detail query (negative profit / drill-down) ───────────
 
     def _run_detail(self, plan: Dict[str, Any]) -> pd.DataFrame:
-        """
-        For kpi_detail intent: returns grouped summary of sub-categories
-        where net profit is negative (HAVING SUM(profit) < 0),
-        plus a row-level sample of the worst individual order rows.
-        """
-        condition  = plan.get("condition", "profit_negative")
-        breakdown  = plan.get("breakdown_by") or "sub_category"
-        f          = plan["filters"]
-        top_k      = plan.get("top_k") or 15
+        condition = plan.get("condition", "profit_negative")
+        breakdown = plan.get("breakdown_by") or "sub_category"
+        f         = plan["filters"]
+        top_k     = plan.get("top_k") or 15
 
-        # Base WHERE — date range + dimension filters only (no profit filter here)
         base_parts: List[str] = [
             "order_date >= %(start)s",
             "order_date <= %(end)s",
@@ -143,8 +174,6 @@ class SQLBuilder:
 
         base_where = " AND ".join(base_parts)
 
-        # ── 1. Grouped summary — filter by HAVING SUM(profit)<0 ──
-        # Using standard SQL casts instead of ::numeric for portability
         params_g = {**params, "top_k": top_k}
         group_sql = (
             "SELECT "
@@ -166,12 +195,9 @@ class SQLBuilder:
         )
         grouped_df = execute_query(group_sql, params_g)
 
-        # ── 2. Worst individual rows sample ───────────────────
-        # row-level filter: individual profit < 0
         row_where = base_where + " AND profit < 0"
         params_s  = {**params, "sample_k": 10}
 
-        # First try with product_name column
         sample_df = pd.DataFrame()
         try:
             s1 = (
@@ -186,7 +212,6 @@ class SQLBuilder:
         except Exception:
             pass
 
-        # Fallback: without product_name
         if sample_df.empty:
             s2 = (
                 "SELECT order_id, order_date, "
@@ -198,7 +223,6 @@ class SQLBuilder:
             )
             sample_df = execute_query(s2, params_s)
 
-        # ── Attach metadata for the formatter ─────────────────
         if not grouped_df.empty:
             grouped_df.attrs["detail_type"]   = "grouped_summary"
             grouped_df.attrs["condition"]     = condition
@@ -212,7 +236,6 @@ class SQLBuilder:
         breakdown = plan.get("breakdown_by")
 
         if breakdown:
-            # Per-dimension comparison: run both periods grouped by dimension
             cur_sql, cur_params = self.build_sql(plan)
             prev_plan = {**plan, **self._prev_dates(plan)}
             prv_sql, prv_params = self.build_sql(prev_plan)
@@ -233,20 +256,19 @@ class SQLBuilder:
             else:
                 merged["previous"] = 0.0
 
-            merged["previous"] = merged["previous"].fillna(0.0)
+            merged["previous"]   = merged["previous"].fillna(0.0)
             merged["change_pct"] = merged.apply(
                 lambda r: ((r["current"] - r["previous"]) / abs(r["previous"]) * 100)
                 if r["previous"] != 0 else None,
                 axis=1,
             )
-            merged["metric"] = metric
+            merged["metric"]        = metric
             merged["current_start"] = plan["start_date"]
             merged["current_end"]   = plan["end_date"]
             merged["prev_start"]    = prev_plan["start_date"]
             merged["prev_end"]      = prev_plan["end_date"]
-            return merged.sort_values("change_pct", ascending=True)  # worst first
+            return merged.sort_values("change_pct", ascending=True)
 
-        # Original single-aggregate path
         sql, params = self.build_sql(plan)
         cur_df = execute_query(sql, params)
         prev_plan = {**plan, **self._prev_dates(plan)}
@@ -258,7 +280,7 @@ class SQLBuilder:
         def safe_float(df):
             if df is None or df.empty: return 0.0
             val = df.iloc[0].get(metric)
-            try: return float(val) if val is not None else 0.0
+            try:   return float(val) if val is not None else 0.0
             except: return 0.0
 
         return pd.DataFrame([{
@@ -278,7 +300,7 @@ class SQLBuilder:
         cp = plan["compare_period"]
 
         if cp == "prev_period":
-            delta = (ed - sd).days + 1
+            delta      = (ed - sd).days + 1
             prev_end   = date.fromordinal(sd.toordinal() - 1)
             prev_start = date.fromordinal(prev_end.toordinal() - (delta - 1))
         elif cp == "mom":
