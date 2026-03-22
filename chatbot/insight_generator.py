@@ -6,6 +6,7 @@ Tries Gemini first; falls back to deterministic rule-based insight on failure.
 
 from __future__ import annotations
 
+import statistics
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
@@ -196,18 +197,28 @@ class InsightGenerator:
 
             # ── 2. Category tổng cao nhất + regional spread ───────────
             cat_totals = df.groupby("breakdown")[m0].sum().sort_values(ascending=False)
-            top_cat    = cat_totals.index[0]
-            top_cat_v  = float(cat_totals.iloc[0])
-            # Tìm region dẫn đầu cho top category
-            top_cat_df  = df[df["breakdown"] == top_cat].sort_values(m0, ascending=False)
-            top_cat_reg = top_cat_df.iloc[0].get("breakdown2", "—")
-            top_cat_reg_v = float(top_cat_df.iloc[0][m0])
-            insights.append(
-                f"**{top_cat}** leads all categories at {self._fv(top_cat_v, m0)} "
-                f"({top_cat_v/grand_total*100:.0f}% of total), "
-                f"with **{top_cat_reg}** as its strongest market "
-                f"({self._fv(top_cat_reg_v, m0)})."
-            )
+            top_cat_global = cat_totals.index[0]
+
+            outlier_regions = []
+            for region_val in region_totals.index:
+                rdf     = df[df["breakdown2"] == region_val]
+                top_row = rdf.sort_values(m0, ascending=False).iloc[0]
+                if top_row.get("breakdown") != top_cat_global:
+                    outlier_regions.append(
+                        f"**{region_val}** (led by {top_row.get('breakdown','—')})"
+                    )
+
+            if outlier_regions:
+                insights.append(
+                    f"While **{top_cat_global}** dominates globally, "
+                    + ", ".join(outlier_regions) +
+                    f" show a different top category — suggesting distinct local demand patterns."
+                )
+            else:
+                insights.append(
+                    f"**{top_cat_global}** is the top category across all regions — "
+                    f"a highly consistent pattern suggesting uniform demand nationally."
+                )
 
             # ── 3. Region phụ thuộc 1 category (concentration risk) ───
             concentration_lines = []
@@ -237,7 +248,6 @@ class InsightGenerator:
                     r_total = float(region_totals[region_val])
                     cell    = cdf[cdf["breakdown2"] == region_val][m0].sum()
                     shares.append(float(cell) / r_total * 100 if r_total else 0)
-                import statistics
                 cat_std[cat_val] = statistics.stdev(shares) if len(shares) > 1 else 0
 
             most_even = min(cat_std, key=cat_std.get)

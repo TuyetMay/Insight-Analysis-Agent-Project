@@ -259,7 +259,7 @@ class AnswerFormatter:
                         lines.append(f"  - {cat_val}: {val} ({cat_share:.0f}%)")
                     lines.append("")
 
-                    return "\n".join(lines)
+                return "\n".join(lines)
 
             sorted_df = df.sort_values(by=m0, ascending=False)
 
