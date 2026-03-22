@@ -351,16 +351,11 @@ class AnswerFormatter:
         metric_str  = " & ".join(_METRIC_LABELS.get(m, m) for m in metrics)
         lines = [f"Here's the **{metric_str}** trend by {grain_label}:{ctx_line}", ""]
 
-        # ── FIX: grain-aware period label ──────────────────────────────
-        # DATE_TRUNC returns timestamps like "2014-01-01 00:00:00"
-        # Slicing to [:7] gives "2014-01" for ALL grains — wrong for year/quarter.
         def fmt_period(raw_period: Any, grain: str) -> str:
             s = str(raw_period)
             if grain == "year":
-                # "2014-01-01" → "2014"
                 return s[:4]
             elif grain == "quarter":
-                # "2014-01-01" → "2014 Q1", "2014-04-01" → "2014 Q2"
                 try:
                     dt = datetime.strptime(s[:10], "%Y-%m-%d")
                     q  = (dt.month - 1) // 3 + 1
@@ -368,10 +363,8 @@ class AnswerFormatter:
                 except Exception:
                     return s[:7]
             elif grain == "month":
-                # "2014-01-01" → "2014-01"
                 return s[:7]
             else:
-                # week → full date "2014-01-06"
                 return s[:10]
 
         show = df.copy()
@@ -382,15 +375,11 @@ class AnswerFormatter:
             top5 = show.groupby("breakdown")[m0].sum().sort_values(ascending=False).head(5).index.tolist()
             show = show[show["breakdown"].isin(top5)]
 
-        # Also add YoY % change annotation for year grain
         rows_list = list(show.iterrows())
-        prev_val: Dict[str, float] = {}
-
         for i, (_, r) in enumerate(rows_list):
             p    = fmt_period(r.get("period", ""), grain)
             vals = " / ".join(self._fv(float(r[m]), m) for m in metrics if m in r)
 
-            # For year grain with single metric, show % change vs previous year
             yoy_note = ""
             if grain == "year" and len(metrics) == 1 and i > 0:
                 m0 = metrics[0]
@@ -404,8 +393,10 @@ class AnswerFormatter:
             prefix = f"{p} | {r.get('breakdown')}" if breakdown else p
             lines.append(f"- **{prefix}:** {vals}{yoy_note}")
 
-        if len(lines) > 32:
-            lines = lines[:32] + ["- *(truncated — showing most recent 30 periods)*"]
+        # ── REMOVED: hard 32-line truncation limit ──
+        # The old limit was cutting off the insight section that follows.
+        # All periods are now shown (capped at 24 by .tail(24) above).
+
         return "\n".join(lines)
 
     def _format_rank(self, plan: Dict[str, Any], df: pd.DataFrame,

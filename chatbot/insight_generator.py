@@ -64,28 +64,24 @@ class InsightGenerator:
                 "- Which entries are underperforming or at a loss?\n"
                 "- What strategic action does this ranking suggest?"
             ),
-            "kpi_value": (
-                f"Analyse the breakdown across {breakdown or 'all data'} deeply:\n"
-                "- Identify the dominant player and its share of total.\n"
-                "- Point out any underperformer or outlier (loss-making, far below average).\n"
-                "- Compare the spread: is there a large gap between top and bottom?\n"
-                "- What business implication does this distribution carry?"
+           "kpi_value": (
+                f"Analyse the breakdown across {breakdown or 'all data'}. "
+                "Cover exactly these 3 points in 4–5 bullet points total:\n"
+                "- **Leader**: who leads, their exact value, and their % share of total.\n"
+                "- **Spread**: gap between top and bottom ($ and %), is it concentrated or balanced?\n"
+                "- **Action**: one concrete business recommendation based on this distribution.\n"
+                "Max 5 bullet points. Each bullet must end with a period. No open-ended sentences."
             ),
             "kpi_trend": (
-                f"Analyse this {grain}-level trend DEEPLY and SPECIFICALLY using the numbers provided:\n"
-                "1. **Overall trajectory**: Is the trend growing, declining, or volatile across the full period? "
-                "State the total cumulative growth from first to last period with exact numbers.\n"
-                "2. **Best and worst periods**: Name the specific peak period and trough period with their exact values. "
-                "Calculate the gap between them.\n"
-                "3. **Year-by-year breakdown** (if year grain): For EACH period transition, state the exact % change "
-                "and classify it (strong growth / moderate growth / decline / recovery). "
-                "Example: '2014→2015: -2.8% (slight dip), 2015→2016: +29.5% (breakout year)'.\n"
-                "4. **CAGR** (if multiple years): Calculate the Compound Annual Growth Rate from first to last year.\n"
-                "5. **Momentum and forecast**: Based on the most recent 2–3 periods, is momentum accelerating or slowing? "
-                "What does this imply for the next period?\n"
-                "6. **Root cause hypothesis**: What business factors typically explain this pattern "
-                "(seasonality, market expansion, operational changes)?\n"
-                "Be specific with numbers. Do NOT use vague phrases like 'strong performance' without a number."
+                f"Analyse this {grain}-level YoY trend concisely. Cover exactly 3 things:\n"
+                "1. **Overall change**: Total % and absolute $ from first to last period.\n"
+                "2. **Period-by-period**: For each transition, state % change, classify it "
+                "(🚀 ≥20% / 📈 5-19% / ➡️ flat / 📉 decline), and one short phrase explaining it.\n"
+                "3. **Key pattern**: One sentence on the dominant trend (e.g. dip then recovery, "
+                "sustained growth, etc.) and what it implies for the business.\n\n"
+                "Do NOT include: CAGR, forecasts, peak/trough detail, growth concentration %, "
+                "or root cause hypotheses unless the data strongly demands it.\n"
+                "Max 6–8 sentences total. Every sentence must have a number."
             ),
             "kpi_compare": (
                 f"Analyse this {cp} period comparison deeply:\n"
@@ -96,28 +92,43 @@ class InsightGenerator:
             ),
         }.get(intent, "Provide a thorough analytical observation using the data.")
 
+        # ── Token budget scales with intent ───────────────────
+        max_tokens = {
+            "kpi_trend":   2800,   
+            "kpi_compare": 3000,
+            "kpi_rank":    1500,
+            "kpi_detail":  1800,
+            "kpi_value":   1500,
+        }.get(intent, 1500)
+
+        num_sentences = {
+            "kpi_trend":  "12–20 sentences OR 10–15 detailed bullet points",
+            "kpi_detail": "8–12 sentences",
+        }.get(intent, "6–10 sentences OR 5–7 bullet points")
+
         prompt = f"""You are a senior business analyst writing a performance commentary for an executive audience.
-Using ONLY the numbers in the DATA section below, write a **deep analytical insight**.
+            Using ONLY the numbers in the DATA section below, write a **deep, comprehensive analytical insight**.
 
-=== DATA ===
-{summary}
+            === DATA ===
+            {summary}
 
-=== ANALYSIS TASK ===
-{intent_guidance}
+            === ANALYSIS TASK ===
+            {intent_guidance}
 
-=== WRITING RULES ===
-- Write 6–10 sentences OR 5–7 bullet points. Be SUBSTANTIVE — go deep, not wide.
-- Lead with the single most important finding with a specific number.
-- Use **bold** for ALL critical numbers, percentages, and period names.
-- Every sentence must contain at least one number from the DATA section.
-- Include CAGR if multiple years of data are present.
-- Include a forward-looking or actionable observation in the final 1–2 sentences.
-- Do NOT invent figures that are not in the DATA section.
-- Do NOT use filler openers like "The data shows", "Overall", "In conclusion", "Notably".
-- Use clear, direct business language. No jargon.
-- Format: flowing prose OR a short bulleted list — pick whichever fits better for trend data use bullets.
+            === WRITING RULES ===
+            - Write {num_sentences}. Be SUBSTANTIVE and EXHAUSTIVE — cover every angle described above.
+            - Lead with the single most important finding with a specific number.
+            - Use **bold** for ALL critical numbers, percentages, and period names.
+            - Every sentence must contain at least one number from the DATA section.
+            - For trend analysis: address EACH period transition individually — do NOT summarise multiple transitions into one sentence.
+            - Include CAGR if multiple years of data are present.
+            - Include a 2-period forward projection in the final section.
+            - Do NOT invent figures that are not in the DATA section.
+            - Do NOT use filler openers like "The data shows", "Overall", "In conclusion", "Notably".
+            - Use clear, direct business language. No jargon.
+            - Format: use numbered sections with headers for kpi_trend, bullet points for others.
 
-Write the insight now:"""
+            Write the complete, full-length insight now (do not truncate):"""
 
         try:
             resp = self.client.models.generate_content(
@@ -125,12 +136,12 @@ Write the insight now:"""
                 contents=prompt,
                 config=genai_types.GenerateContentConfig(
                     temperature=0.55,
-                    max_output_tokens=900,   # ← increased from 450 to allow full analysis
+                    max_output_tokens=max_tokens,
                 ),
             )
             text = (getattr(resp, "text", "") or "").strip()
             if len(text) > 30:
-                return text
+                return self._trim_to_complete_sentence(text)
         except Exception:
             pass
         return ""
@@ -221,46 +232,59 @@ Write the insight now:"""
             chg     = (last_v - first_v) / abs(first_v) * 100 if first_v else 0
             word    = "grown" if chg > 0 else "declined"
 
-            # ── 1. Overall growth ─────────────────────────────
+            grain = plan.get("time_grain", "none")
+
+            # ── 1. Overall trajectory ─────────────────────────
+            abs_change = abs(last_v - first_v)
             insights.append(
-                f"Over the full period, **{_label(m0)}** has {word} by **{abs(chg):.1f}%** — "
-                f"from {self._fv(first_v, m0)} to {self._fv(last_v, m0)} "
-                f"(absolute change: {self._fv(abs(last_v - first_v), m0)})."
+                f"Over the full **{n}-period** span, **{_label(m0)}** has {word} by "
+                f"**{abs(chg):.1f}%** — from {self._fv(first_v, m0)} to {self._fv(last_v, m0)} "
+                f"(an absolute change of **{self._fv(abs_change, m0)}**)."
             )
 
-            # ── 2. CAGR (for year grain or multi-year span) ───
-            grain = plan.get("time_grain", "none")
-            if grain == "year" and n >= 2:
-                years = n - 1
-                cagr  = ((last_v / first_v) ** (1 / years) - 1) * 100 if first_v > 0 else 0
-                insights.append(
-                    f"The **Compound Annual Growth Rate (CAGR)** over {years} year{'s' if years > 1 else ''} "
-                    f"is **{cagr:.1f}%**, indicating "
-                    f"{'healthy' if cagr >= 10 else 'moderate' if cagr >= 5 else 'slow'} long-term expansion."
-                )
-
-            # ── 3. Year-by-year or period-by-period breakdown ─
-            if grain == "year" and n <= 10:
+            # ── 3. Period-by-period breakdown ─────────────────
+            if grain in ("year", "quarter", "month") and n <= 24:
                 period_lines = []
+                best_chg, best_idx = -999, 1
+                worst_chg, worst_idx = 999, 1
+
                 for i in range(1, n):
-                    prev_p = str(sdf.iloc[i - 1].get("period", ""))[:4]
-                    curr_p = str(sdf.iloc[i].get("period", ""))[:4]
+                    prev_p = _fmt_period(sdf.iloc[i - 1].get("period", ""), grain)
+                    curr_p = _fmt_period(sdf.iloc[i].get("period", ""), grain)
                     prev_v = float(sdf.iloc[i - 1][m0])
                     curr_v = float(sdf.iloc[i][m0])
                     pct    = (curr_v - prev_v) / abs(prev_v) * 100 if prev_v else 0
-                    tag    = (
-                        "🚀 strong growth" if pct >= 20
-                        else "📈 moderate growth" if pct >= 5
-                        else "📉 decline" if pct < 0
-                        else "➡️ flat"
+                    abs_d  = abs(curr_v - prev_v)
+
+                    if pct > best_chg:
+                        best_chg, best_idx = pct, i
+                    if pct < worst_chg:
+                        worst_chg, worst_idx = pct, i
+
+                    tag = (
+                        "🚀 Strong growth" if pct >= 20
+                        else "📈 Moderate growth" if pct >= 5
+                        else "📉 Decline" if pct < 0
+                        else "➡️ Flat"
                     )
                     period_lines.append(
-                        f"  - **{prev_p}→{curr_p}:** {pct:+.1f}% "
-                        f"({self._fv(prev_v, m0)} → {self._fv(curr_v, m0)}) — {tag}"
+                        f"  - **{prev_p} → {curr_p}:** {pct:+.1f}% "
+                        f"({self._fv(prev_v, m0)} → {self._fv(curr_v, m0)}, "
+                        f"Δ {self._fv(abs_d, m0)}) — {tag}"
                     )
-                if period_lines:
+
+                insights.append(
+                    "**Period-by-period breakdown:**\n" + "\n".join(period_lines)
+                )
+
+                # Highlight best and worst transitions
+                if n >= 3:
+                    bp = _fmt_period(sdf.iloc[best_idx].get("period", ""), grain)
+                    wp = _fmt_period(sdf.iloc[worst_idx].get("period", ""), grain)
                     insights.append(
-                        "**Period-by-period breakdown:**\n" + "\n".join(period_lines)
+                        f"The **strongest single-period jump** was into **{bp}** "
+                        f"({best_chg:+.1f}%), while the **weakest** was into **{wp}** "
+                        f"({worst_chg:+.1f}%)."
                     )
 
             # ── 4. Peak and trough ────────────────────────────
@@ -269,13 +293,16 @@ Write the insight now:"""
             peak_p   = _fmt_period(peak.get("period", ""), grain)
             trough_p = _fmt_period(trough.get("period", ""), grain)
             range_v  = abs(float(peak[m0]) - float(trough[m0]))
+            swing_pct = range_v / abs(float(peak[m0])) * 100 if float(peak[m0]) else 0
             insights.append(
-                f"**Peak:** {peak_p} at {self._fv(float(peak[m0]), m0)} | "
-                f"**Trough:** {trough_p} at {self._fv(float(trough[m0]), m0)} — "
-                f"range of **{self._fv(range_v, m0)}** ({range_v / abs(float(peak[m0])) * 100:.0f}% swing)."
+                f"🏆 **Peak:** {peak_p} at {self._fv(float(peak[m0]), m0)} | "
+                f"📉 **Trough:** {trough_p} at {self._fv(float(trough[m0]), m0)} — "
+                f"a range of **{self._fv(range_v, m0)}** ({swing_pct:.0f}% swing from peak to trough)."
             )
 
-            # ── 5. Recent momentum ────────────────────────────
+            
+
+            # ── 6. Recent momentum ────────────────────────────
             if n >= 4:
                 recent_avg = float(sdf.tail(2)[m0].mean())
                 prior_avg  = float(sdf.iloc[-4:-2][m0].mean())
@@ -286,17 +313,46 @@ Write the insight now:"""
                         else "**decelerating 📉**" if momentum < -10
                         else "**stable ➡️**"
                     )
+                    r1 = _fmt_period(sdf.iloc[-2].get("period", ""), grain)
+                    r2 = _fmt_period(sdf.iloc[-1].get("period", ""), grain)
+                    p1 = _fmt_period(sdf.iloc[-4].get("period", ""), grain)
+                    p2 = _fmt_period(sdf.iloc[-3].get("period", ""), grain)
                     insights.append(
-                        f"Recent momentum is {direction} — the last 2 periods averaged "
-                        f"{self._fv(recent_avg, m0)} vs {self._fv(prior_avg, m0)} in the prior 2 "
+                        f"**Recent momentum is {direction}** — the last 2 periods "
+                        f"(**{r1}** & **{r2}**) averaged {self._fv(recent_avg, m0)}, "
+                        f"vs {self._fv(prior_avg, m0)} in the prior 2 (**{p1}** & **{p2}**) "
                         f"({momentum:+.1f}%). "
-                        f"{'Expect continued growth if conditions hold.' if momentum > 5 else 'Watch for further slowdown.' if momentum < -5 else 'Growth is steady but not accelerating.'}"
+                        f"{'Sustained momentum suggests continued growth if market conditions hold.' if momentum > 5 else 'Slowing momentum warrants a closer look at pipeline and demand signals.' if momentum < -5 else 'Steady growth — no dramatic acceleration or deceleration detected.'}"
                     )
+
+            # ── 7. Forward projection ─────────────────────────
+            if grain == "year" and n >= 2 and first_v > 0:
+                years = n - 1
+                cagr  = ((last_v / first_v) ** (1 / years) - 1) if first_v > 0 else 0
+                proj_base = last_v * (1 + cagr)
+                proj_high = last_v * (1 + cagr * 1.3)
+                proj_low  = last_v * (1 + cagr * 0.7)
+                last_year = _fmt_period(sdf.iloc[-1].get("period", ""), grain)
+                try:
+                    next_year = str(int(last_year) + 1)
+                    yr_after  = str(int(last_year) + 2)
+                except Exception:
+                    next_year = "next period"
+                    yr_after  = "the period after"
+                insights.append(
+                    f"📊 **Forward projection:** Applying the **{cagr*100:.1f}% CAGR** to {last_year}'s "
+                    f"{self._fv(last_v, m0)}, the base-case forecast for **{next_year}** is "
+                    f"**{self._fv(proj_base, m0)}** "
+                    f"(range: {self._fv(proj_low, m0)} low → {self._fv(proj_high, m0)} high). "
+                    f"By **{yr_after}**, the base case reaches **{self._fv(proj_base * (1 + cagr), m0)}**."
+                )
 
         elif intent == "kpi_compare" and "current" in df.columns:
             row  = df.iloc[0]
             cur  = float(row["current"])
             prev = float(row["previous"])
+            if prev == 0:
+                return []
             m    = str(row.get("metric", m0))
             cp   = plan.get("compare_period", "prev_period")
 
@@ -408,7 +464,7 @@ Write the insight now:"""
             ]
 
         elif intent == "kpi_trend" and "period" in df.columns:
-            # ── Provide rich trend context for LLM ─────────────
+            # ── Rich trend context for LLM ──────────────────
             all_rows = df.sort_values("period").reset_index(drop=True)
             n = len(all_rows)
             lines.append(f"Time grain: {grain} | Metric: {m0} | Total periods: {n}")
@@ -417,11 +473,12 @@ Write the insight now:"""
                 first_v = float(all_rows.iloc[0][m0])
                 last_v  = float(all_rows.iloc[-1][m0])
                 total_chg = (last_v - first_v) / abs(first_v) * 100 if first_v else 0
-                lines.append(f"Total change first→last: {total_chg:+.1f}% ({self._fv(first_v, m0)} → {self._fv(last_v, m0)})")
+                abs_chg   = abs(last_v - first_v)
+                lines.append(f"Total change first→last: {total_chg:+.1f}% ({self._fv(first_v, m0)} → {self._fv(last_v, m0)}, absolute Δ={self._fv(abs_chg, m0)})")
                 if grain == "year" and n >= 2:
                     years = n - 1
                     cagr  = ((last_v / first_v) ** (1 / years) - 1) * 100 if first_v > 0 else 0
-                    lines.append(f"CAGR over {years} year(s): {cagr:.1f}%")
+                    lines.append(f"CAGR over {years} year(s): {cagr:.2f}%")
 
             lines.append("Period-by-period data:")
             for i, (_, r) in enumerate(all_rows.iterrows()):
@@ -431,7 +488,8 @@ Write the insight now:"""
                     prev_v = float(all_rows.iloc[i - 1][m0])
                     curr_v = float(r[m0])
                     pct    = (curr_v - prev_v) / abs(prev_v) * 100 if prev_v else 0
-                    lines.append(f"  {p}: {vals}  (change vs prior: {pct:+.1f}%)")
+                    abs_d  = abs(curr_v - prev_v)
+                    lines.append(f"  {p}: {vals}  (Δ vs prior: {pct:+.1f}%, abs Δ={self._fv(abs_d, m0)})")
                 else:
                     lines.append(f"  {p}: {vals}  (baseline)")
 
@@ -439,6 +497,14 @@ Write the insight now:"""
             trough  = all_rows.loc[all_rows[m0].idxmin()]
             lines.append(f"Peak period: {_fmt_period(peak.get('period',''), grain)} at {self._fv(float(peak[m0]), m0)}")
             lines.append(f"Trough period: {_fmt_period(trough.get('period',''), grain)} at {self._fv(float(trough[m0]), m0)}")
+            lines.append(f"Peak-to-trough range: {self._fv(abs(float(peak[m0]) - float(trough[m0])), m0)}")
+
+            # Recent momentum
+            if n >= 4:
+                recent_avg = float(all_rows.tail(2)[m0].mean())
+                prior_avg  = float(all_rows.iloc[-4:-2][m0].mean())
+                momentum   = (recent_avg - prior_avg) / abs(prior_avg) * 100 if prior_avg else 0
+                lines.append(f"Recent momentum (last 2 vs prior 2): {momentum:+.1f}% (recent avg={self._fv(recent_avg, m0)}, prior avg={self._fv(prior_avg, m0)})")
 
         elif "breakdown" in df.columns:
             sdf   = df.sort_values(by=m0, ascending=False).head(20).reset_index(drop=True)
@@ -462,6 +528,25 @@ Write the insight now:"""
         if metric in {"sales", "profit"}:  return f"\\${v:,.0f}"
         if metric == "profit_margin":      return f"{v:.2f}%"
         return f"{int(v):,}"
+    @staticmethod
+    def _trim_to_complete_sentence(text: str) -> str:
+        """
+        Nếu text kết thúc giữa câu (không có dấu . ! ? sau từ cuối),
+        cắt về dấu kết thúc câu cuối cùng tìm được.
+        """
+        import re
+        text = text.strip()
+        # Nếu đã kết thúc bằng dấu câu → OK
+        if text and text[-1] in ".!?":
+            return text
+        # Tìm vị trí kết thúc câu cuối cùng
+        # Xét cả . ! ? kể cả khi sau đó có ký tự như ** hoặc )
+        matches = list(re.finditer(r'[.!?](\*{0,2}[\)\s]|$)', text))
+        if matches:
+            last = matches[-1]
+            return text[:last.end()].strip()
+        # Không tìm được → trả về nguyên
+        return text
 
 
 # ── Module-level helpers ──────────────────────────────────────
@@ -489,3 +574,4 @@ def _fmt_period(raw: Any, grain: str) -> str:
     elif grain == "month":
         return s[:7]
     return s[:10]
+

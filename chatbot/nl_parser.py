@@ -361,7 +361,7 @@ class NLParser:
             detected_grain = "none"
 
         detected_compare: Optional[str] = None
-        if _COMPARE_RE.search(ql):
+        if _COMPARE_RE.search(ql) and not detected_breakdown:
             for kw, cp in sorted(_COMPARE_KEYWORDS.items(), key=lambda x: -len(x[0])):
                 if kw in ql:
                     detected_compare = cp
