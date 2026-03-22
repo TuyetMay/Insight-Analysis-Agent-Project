@@ -209,26 +209,26 @@ def render_chat_sidebar(chatbot: Any) -> None:
 # Internal helpers
 # ─────────────────────────────────────────────────────────────
 _KPI_QUICK_QUESTIONS = {
-    "total_sales":    "How have sales trended year-over-year?",
-    "total_profit":   "Which region is most profitable?",
-    "total_orders":   "What is the monthly order trend?",
-    "profit_margin":  "How does profit margin compare across categories?",
+    "sales":         "__quick_sales__",        # magic token
+    "profit":        "__quick_profit__",
+    "orders":        "__quick_orders__",
+    "profit_margin": "__quick_margin__",
 }
+
 
 def _quick_buttons(chatbot: Any, thinking_placeholder: Any) -> None:
     quick_qs = [
-        ("💰 Total Sales",   _KPI_QUICK_QUESTIONS["total_sales"]),
-        ("📦 Total Orders",  _KPI_QUICK_QUESTIONS["total_orders"]),
-        ("💹 Total Profit",  _KPI_QUICK_QUESTIONS["total_profit"]),
-        ("📊 Profit Margin", _KPI_QUICK_QUESTIONS["profit_margin"]),
+        ("💰 Total Sales",   "__quick_sales__"),
+        ("💹 Total Profit",  "__quick_profit__"),
+        ("📦 Total Orders",  "__quick_orders__"),
+        ("📊 Profit Margin", "__quick_margin__"),
     ]
     cols = st.sidebar.columns(2)
-    for i, (label, question) in enumerate(quick_qs):
+    for i, (label, token) in enumerate(quick_qs):
         with cols[i % 2]:
             if st.button(label, key=f"quick_{i}", use_container_width=True):
-                _process_question(chatbot, question, thinking_placeholder)
+                _process_question(chatbot, token, thinking_placeholder)
                 st.rerun()
-
 
 def _chat_form(chatbot: Any, thinking_placeholder: Any) -> None:
     with st.sidebar.form("chat_form", clear_on_submit=True):

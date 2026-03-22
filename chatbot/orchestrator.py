@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional
 import pandas as pd
 from google import genai
 
+from chatbot.quick_insight import QuickInsightHandler
 from config import Config
 from chatbot.nl_parser import NLParser
 from chatbot.plan_validator import PlanValidator
@@ -88,6 +89,24 @@ class DashboardChatbot:
 
         if not q:
             return "Ask me about Sales, Profit, Orders, or Profit Margin."
+        
+        _QUICK_TOKENS = {
+        "__quick_sales__":   "sales",
+        "__quick_profit__":  "profit",
+        "__quick_orders__":  "orders",
+        "__quick_margin__":  "profit_margin",
+            }
+        
+        if q in _QUICK_TOKENS:
+            kpi_name = _QUICK_TOKENS[q]
+            handler  = QuickInsightHandler(
+                self.df, self.kpis, self.filters,
+                self._gemini_client, self._model
+            )
+            answer = handler.generate(kpi_name)
+            self._record(q, answer)
+            return answer
+
 
         # ── Tier 1: instant KPI answer (no DB hit) ────────────
         fast = self._parser.fast_kpi_answer(q)

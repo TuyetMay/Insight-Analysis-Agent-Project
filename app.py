@@ -65,6 +65,16 @@ if df.empty:
 
 kpis    = calculate_kpis(df)
 chatbot = DashboardChatbot(df, kpis, filters)
+if st.session_state.get("pending_question"):
+    q = st.session_state.pop("pending_question")
+    history = st.session_state.setdefault("chat_history", [])
+    history.append({"role": "user", "content": q})
+    response = chatbot.get_response(q)
+    suggs = chatbot.get_suggestions()
+    if suggs:
+        response += "\n\n**Suggested follow-ups:**\n" + "\n".join(f"- {s['text']}" for s in suggs)
+    history.append({"role": "assistant", "content": response})
+    
 if "pending_question" in st.session_state and st.session_state["pending_question"]:
     q = st.session_state.pop("pending_question")
     history = st.session_state.setdefault("chat_history", [])
@@ -87,11 +97,18 @@ st.markdown(f"<div class='main-header'>{Config.APP_ICON} {Config.APP_TITLE}</div
 # KPIs
 st.markdown("## 📌 Key Performance Indicators")
 kpi_cols = st.columns(4)
-with kpi_cols[0]:
-    st.metric("Total Sales", f"${kpis['total_sales']:,.0f}")
-    if st.button("🔍 Ask AI", key="ask_sales", use_container_width=True):
-        st.session_state["pending_question"] = _KPI_QUICK_QUESTIONS["total_sales"]
-        st.rerun()
+_KPI_QUESTIONS = {
+    0: ("Total Sales",   f"${kpis['total_sales']:,.0f}",  "How have sales trended year-over-year?"),
+    1: ("Total Profit",  f"${kpis['total_profit']:,.0f}", "Which region is most profitable?"),
+    2: ("Total Orders",  f"{kpis['total_orders']:,}",     "What is the monthly order trend?"),
+    3: ("Profit Margin", f"{kpis['profit_margin']:.2f}%", "How does profit margin compare across categories?"),
+}
+for i, (label, value, question) in _KPI_QUESTIONS.items():
+    with kpi_cols[i]:
+        st.metric(label, value)
+        if st.button("🔍 Ask AI", key=f"ask_kpi_{i}", use_container_width=True):
+            st.session_state["pending_question"] = question
+            st.rerun()
 
 # Time-series section
 st.markdown("## 📈 Sales & Profit Over Time")
