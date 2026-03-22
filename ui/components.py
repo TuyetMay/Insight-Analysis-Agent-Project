@@ -1,7 +1,6 @@
 """
 ui/components.py
 Reusable Streamlit UI components: sidebar filters and AI chat sidebar.
-ChatGPT / Claude-style chat with thinking animation.
 """
 
 from __future__ import annotations
@@ -11,6 +10,25 @@ from typing import Any, Dict, List
 
 import pandas as pd
 import streamlit as st
+
+
+# ─────────────────────────────────────────────────────────────
+# Token → readable label mapping
+# ─────────────────────────────────────────────────────────────
+
+_QUICK_TOKEN_LABELS = {
+    "__quick_sales__":   "📊 Sales overview — trends, top products & regions",
+    "__quick_profit__":  "💹 Profit overview — trends, margin & top regions",
+    "__quick_orders__":  "📦 Orders overview — volume trends & AOV",
+    "__quick_margin__":  "📈 Profit margin — trends & category breakdown",
+}
+
+_KPI_QUICK_QUESTIONS = {
+    "sales":         "__quick_sales__",
+    "profit":        "__quick_profit__",
+    "orders":        "__quick_orders__",
+    "profit_margin": "__quick_margin__",
+}
 
 
 # ─────────────────────────────────────────────────────────────
@@ -56,65 +74,41 @@ def render_filters(filter_options: Dict[str, Any]) -> Dict[str, Any]:
 # ─────────────────────────────────────────────────────────────
 
 def _md_to_html(text: str) -> str:
-    """Convert Markdown subset to safe HTML for chat bubbles."""
-
-    # 1. Escape HTML special chars
     text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-
-    # 2. Fix escaped dollar signs  \$ -> $ then escape ALL $ to HTML entity
-    # (Streamlit renders $ as LaTeX math delimiters, so we must escape them)
     text = text.replace("\\$", "$")
     text = text.replace("$", "&#36;")
-
-    # 3. Horizontal rule ---
     text = re.sub(
         r'\n?-{3,}\n?',
         '<hr style="border:none;border-top:1px solid #e0e0e0;margin:8px 0">',
         text
     )
-
-    # 4. Bold **text**
     text = re.sub(r'\*\*(.+?)\*\*', r'<strong>\1</strong>', text)
-
-    # 5. Italic context line *Jan 2014 - Dec 2017*
     text = re.sub(
         r'(?<!\*)\*(?!\*)([^*\n]+?)(?<!\*)\*(?!\*)',
         r'<span style="color:#888;font-size:0.88em;font-style:italic">\1</span>',
         text
     )
 
-    # 6. Numbered list  1. item
     def render_ol(m: re.Match) -> str:
         items = re.findall(r'^\d+\.\s+(.+)', m.group(0), re.MULTILINE)
-        lis = "".join(
-            f'<li style="margin:4px 0;padding-left:2px">{i}</li>' for i in items
-        )
+        lis = "".join(f'<li style="margin:4px 0;padding-left:2px">{i}</li>' for i in items)
         return f'<ol style="margin:6px 0 6px 4px;padding-left:16px">{lis}</ol>'
     text = re.sub(r'(?:^\d+\..+$\n?)+', render_ol, text, flags=re.MULTILINE)
 
-    # 7. Bullet list  - item  or  * item
     def render_ul(m: re.Match) -> str:
         items = re.findall(r'^[*\-]\s+(.+)', m.group(0), re.MULTILINE)
-        lis = "".join(
-            f'<li style="margin:4px 0;padding-left:2px">{i}</li>' for i in items
-        )
+        lis = "".join(f'<li style="margin:4px 0;padding-left:2px">{i}</li>' for i in items)
         return f'<ul style="margin:6px 0 6px 4px;padding-left:16px;list-style:disc">{lis}</ul>'
     text = re.sub(r'(?:^[*\-]\s+.+$\n?)+', render_ul, text, flags=re.MULTILINE)
 
-    # 8. Newlines -> <br>
     text = re.sub(r'\n', '<br>', text)
-
-    # 9. Clean up <br> around block tags
     text = re.sub(r'(<br>)+(<(?:ul|ol|hr))', r'\2', text)
     text = re.sub(r'(</(?:ul|ol)>)(<br>)+', r'\1', text)
-
-    # 10. Style the insight block nicely
     text = re.sub(
         r'(💡\s*&lt;strong&gt;Insight:&lt;/strong&gt;|💡\s*<strong>Insight:</strong>)',
         r'<span style="color:#7c3aed;font-weight:600">💡 Insight:</span>',
         text
     )
-
     return text
 
 
@@ -182,7 +176,6 @@ def _chat_header() -> str:
 def render_chat_sidebar(chatbot: Any) -> None:
     st.sidebar.markdown("---")
     st.sidebar.markdown("## 💬 AI Assistant")
-
     st.sidebar.markdown(_chat_header(), unsafe_allow_html=True)
 
     history: List[Dict[str, str]] = st.session_state.get("chat_history", [])
@@ -208,13 +201,6 @@ def render_chat_sidebar(chatbot: Any) -> None:
 # ─────────────────────────────────────────────────────────────
 # Internal helpers
 # ─────────────────────────────────────────────────────────────
-_KPI_QUICK_QUESTIONS = {
-    "sales":         "__quick_sales__",        # magic token
-    "profit":        "__quick_profit__",
-    "orders":        "__quick_orders__",
-    "profit_margin": "__quick_margin__",
-}
-
 
 def _quick_buttons(chatbot: Any, thinking_placeholder: Any) -> None:
     quick_qs = [
@@ -229,6 +215,7 @@ def _quick_buttons(chatbot: Any, thinking_placeholder: Any) -> None:
             if st.button(label, key=f"quick_{i}", use_container_width=True):
                 _process_question(chatbot, token, thinking_placeholder)
                 st.rerun()
+
 
 def _chat_form(chatbot: Any, thinking_placeholder: Any) -> None:
     with st.sidebar.form("chat_form", clear_on_submit=True):
@@ -253,31 +240,27 @@ def _chat_form(chatbot: Any, thinking_placeholder: Any) -> None:
             st.session_state.suggestions  = []
             st.rerun()
 
-_QUICK_TOKEN_LABELS = {
-    "__quick_sales__":   "📊 Sales overview — trends, top products & regions",
-    "__quick_profit__":  "💹 Profit overview — trends, margin & top regions",
-    "__quick_orders__":  "📦 Orders overview — volume trends & AOV",
-    "__quick_margin__":  "📈 Profit margin — trends & category breakdown",
-}
-def _process_question(chatbot: Any, question: str, thinking_placeholder: Any,display_text=None) -> None:
-    history = st.session_state.setdefault("chat_history", [])
-    label = display_text or _QUICK_TOKEN_LABELS.get(question, question)
-    history.append({"role": "user", "content": question})
 
+def _process_question(chatbot: Any, question: str, thinking_placeholder: Any,
+                      display_text: str = None) -> None:
+    history = st.session_state.setdefault("chat_history", [])
+
+    # ✅ FIX 1: Dùng label readable thay vì raw token trong history và bubble
+    label = display_text or _QUICK_TOKEN_LABELS.get(question, question)
+
+    history.append({"role": "user", "content": label})          # label, không phải token
     thinking_placeholder.markdown(
-        _user_bubble(question) + _thinking_bubble(),
+        _user_bubble(label) + _thinking_bubble(),                # label, không phải token
         unsafe_allow_html=True
     )
 
-    # Get response
-    response = chatbot.get_response(question)
+    response = chatbot.get_response(question)   # vẫn gửi token gốc để trigger QuickInsight
     suggs    = chatbot.get_suggestions()
     if suggs:
         response += "\n\n**Suggested follow-ups:**\n" + "\n".join(
             f"- {s['text']}" for s in suggs
         )
 
-    # Clear animation, store answer
     thinking_placeholder.empty()
     history.append({"role": "assistant", "content": response})
     st.session_state.suggestions = suggs

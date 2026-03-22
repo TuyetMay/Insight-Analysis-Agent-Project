@@ -26,6 +26,23 @@ from chatbot.suggestions.rag_engine import RAGSuggestionEngine
 from rag.engine import RAGEngine
 
 
+# ── Quick token maps (module-level) ──────────────────────────
+
+_QUICK_TOKENS = {
+    "__quick_sales__":   "sales",
+    "__quick_profit__":  "profit",
+    "__quick_orders__":  "orders",
+    "__quick_margin__":  "profit_margin",
+}
+
+_QUICK_TOKEN_DISPLAY = {
+    "__quick_sales__":   "Sales overview — trends, top products & regions",
+    "__quick_profit__":  "Profit overview — trends, margin & top regions",
+    "__quick_orders__":  "Orders overview — volume trends & AOV",
+    "__quick_margin__":  "Profit margin — trends & category breakdown",
+}
+
+
 class DashboardChatbot:
     """
     Public API:
@@ -44,7 +61,7 @@ class DashboardChatbot:
 
         # ── Gemini setup ──────────────────────────────────────
         api_key = getattr(Config, "GOOGLE_API_KEY", "") or ""
-        self._gemini_ready = bool(api_key)
+        self._gemini_ready  = bool(api_key)
         self._gemini_client = genai.Client(api_key=api_key) if self._gemini_ready else None
         self._model         = getattr(Config, "GEMINI_MODEL", "gemini-1.5-flash")
 
@@ -89,14 +106,8 @@ class DashboardChatbot:
 
         if not q:
             return "Ask me about Sales, Profit, Orders, or Profit Margin."
-        
-        _QUICK_TOKENS = {
-        "__quick_sales__":   "sales",
-        "__quick_profit__":  "profit",
-        "__quick_orders__":  "orders",
-        "__quick_margin__":  "profit_margin",
-            }
-        
+
+        # ── Quick token handler ───────────────────────────────
         if q in _QUICK_TOKENS:
             kpi_name = _QUICK_TOKENS[q]
             handler  = QuickInsightHandler(
@@ -104,9 +115,38 @@ class DashboardChatbot:
                 self._gemini_client, self._model
             )
             answer = handler.generate(kpi_name)
-            self._record(q, answer)
-            return answer
 
+            # ✅ FIX: Set readable last_question so RAG retrieval works properly
+            # → prevents suggestion engine from falling back to generic "Sales by Region"
+            self._last_question = _QUICK_TOKEN_DISPLAY[q]
+            self._last_answer   = answer
+
+            # ✅ FIX: Set synthetic plan so suggestion engine has intent context
+            s0, e0 = self._date_range()
+            metric = kpi_name  # already "sales" / "profit" / "orders" / "profit_margin"
+            self._last_plan = {
+                "intent":              "kpi_trend",
+                "metrics":             [metric],
+                "time_grain":          "year",
+                "breakdown_by":        None,
+                "secondary_breakdown": None,
+                "start_date":          s0,
+                "end_date":            e0,
+                "compare_period":      None,
+                "top_k":               None,
+                "order_by":            metric,
+                "filters": {
+                    "region":   list((self.filters or {}).get("region",   []) or []),
+                    "segment":  list((self.filters or {}).get("segment",  []) or []),
+                    "category": list((self.filters or {}).get("category", []) or []),
+                },
+                "show_extremes": False,
+            }
+
+            # Record with readable label (not raw token)
+            self._rag.add_turn("user",      self._last_question)
+            self._rag.add_turn("assistant", answer)
+            return answer
 
         # ── Tier 1: instant KPI answer (no DB hit) ────────────
         fast = self._parser.fast_kpi_answer(q)
@@ -117,19 +157,15 @@ class DashboardChatbot:
         # ── Tier 2: rule-based plan ───────────────────────────
         rule_plan = self._parser.rule_based_plan(q)
 
-        # If Gemini is not configured, use rule-based only
         if not self._gemini_ready:
             return self._execute_plan(rule_plan, q) or "⚠️ Gemini API Key not configured in .env"
 
-        # ── Key fix: if rule-based plan succeeded, use it directly.
-        # Only call Gemini when the rule-based parser couldn't understand the query.
-        # This prevents Gemini from mishandling date formats like DD/MM/YYYY.
         if rule_plan is not None:
             result = self._execute_plan(rule_plan, q)
             if result:
                 return result
 
-        # ── Tier 3: Gemini plan (only when rule-based returned nothing) ──
+        # ── Tier 3: Gemini plan ───────────────────────────────
         rag_ctx = self._rag.retrieve(q, k=7)
         try:
             raw_plan  = self._parser.gemini_plan(q, rag_ctx)
@@ -158,8 +194,10 @@ class DashboardChatbot:
         )
         engine = self._rag_suggestions or self._rule_suggestions
         if isinstance(engine, RAGSuggestionEngine):
-            suggs = engine.suggest(self._last_question, self._last_answer,
-                                   rag_ctx, self._last_plan, defaults)
+            suggs = engine.suggest(
+                self._last_question, self._last_answer,
+                rag_ctx, self._last_plan, defaults
+            )
         else:
             suggs = engine.suggest(self._last_plan or {}, defaults)
         return self._serialise(suggs)
@@ -240,12 +278,16 @@ Output:""".strip()
 
     def _record(self, question: str, answer: str) -> None:
         self._last_answer = answer
-        self._rag.add_turn("user", question)
+        self._rag.add_turn("user",      question)
         self._rag.add_turn("assistant", answer)
 
     def _filter_lists(self):
         f = self.filters or {}
-        return list(f.get("region") or []), list(f.get("segment") or []), list(f.get("category") or [])
+        return (
+            list(f.get("region",   []) or []),
+            list(f.get("segment",  []) or []),
+            list(f.get("category", []) or []),
+        )
 
     def _date_range(self):
         f  = self.filters or {}
@@ -264,7 +306,8 @@ Output:""".strip()
         s0, e0 = self._date_range()
         f = self.filters or {}
         return {
-            "start_date": s0, "end_date": e0,
+            "start_date": s0,
+            "end_date":   e0,
             "filters": {
                 "region":   list(f.get("region",   []) or []),
                 "segment":  list(f.get("segment",  []) or []),
