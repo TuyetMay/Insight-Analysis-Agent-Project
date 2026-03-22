@@ -1,6 +1,10 @@
 """
 chatbot/suggestions/rule_engine.py
 Deterministic suggestion engine — no LLM required.
+
+v3 additions:
+- _analyst_suggestions(): analyst-level follow-ups from QuickInsight _quick_context
+  e.g. "Which region drove 2016's growth spike?" instead of "Sales by Region"
 """
 
 from __future__ import annotations
@@ -57,10 +61,16 @@ class RuleBasedSuggestionEngine:
             return self._fallback(dashboard_defaults)
 
         base = self._normalize(plan, dashboard_defaults or {})
-        if base.get("breakdown_by") and base.get("secondary_breakdown"):
-         return self._dedup(self._cross_breakdown_suggestions(base))
-        b    = base.get("breakdown_by")
 
+        # ── Quick insight context → analyst-level suggestions ──
+        qctx = plan.get("_quick_context")
+        if qctx:
+            return self._dedup(self._analyst_suggestions(base, qctx))
+
+        if base.get("breakdown_by") and base.get("secondary_breakdown"):
+            return self._dedup(self._cross_breakdown_suggestions(base))
+
+        b = base.get("breakdown_by")
         candidates: List[Suggestion] = []
         if b:
             candidates += self._rank_from_breakdown(base)
@@ -78,6 +88,122 @@ class RuleBasedSuggestionEngine:
             candidates += self._rank_variations(base)
 
         return self._dedup(candidates)
+
+    # ── Analyst-level suggestions for Quick Insight ───────────
+
+    def _analyst_suggestions(self, base: Dict[str, Any],
+                              ctx: Dict[str, Any]) -> List[Suggestion]:
+        """
+        Generate 4 analyst-quality follow-ups that directly follow from what
+        the Quick Insight showed. Each question names a specific number or period.
+        """
+        kpi          = ctx.get("kpi", "sales")
+        m            = base["metrics"][0]
+        best_period  = ctx.get("best_period", "")
+        top_region   = ctx.get("top_region",  "")
+        top_product  = ctx.get("top_product", "")
+        is_decel     = ctx.get("is_decelerating", False)
+        last_pct     = ctx.get("last_transition_pct", 0.0)
+        last_label   = ctx.get("last_label", "")
+        overall_chg  = ctx.get("overall_change_pct", 0.0)
+
+        suggs: List[Suggestion] = []
+
+        # ── 1. Region breakdown — directly ties to best period ─
+        if best_period and top_region:
+            suggs.append(Suggestion(
+                f"Which region drove the {best_period} spike?",
+                self._clone(base, intent="kpi_rank", breakdown_by="region",
+                            top_k=5, secondary_breakdown=None, time_grain="none"),
+            ))
+        elif top_region:
+            suggs.append(Suggestion(
+                f"{self._lm(m)} by region — full breakdown",
+                self._clone(base, intent="kpi_value", breakdown_by="region",
+                            secondary_breakdown=None, time_grain="none"),
+            ))
+        else:
+            suggs.append(Suggestion(
+                f"Top 5 regions by {self._lm(m)}",
+                self._clone(base, intent="kpi_rank", breakdown_by="region",
+                            top_k=5, secondary_breakdown=None, time_grain="none"),
+            ))
+
+        # ── 2. Sub-category drill-down ─────────────────────────
+        if best_period and top_product:
+            suggs.append(Suggestion(
+                f"Top sub-categories by {self._lm(m)} in {best_period}",
+                self._clone(base, intent="kpi_rank", breakdown_by="sub_category",
+                            top_k=5, secondary_breakdown=None, time_grain="none"),
+            ))
+        else:
+            suggs.append(Suggestion(
+                f"Top 5 sub-categories by {self._lm(m)}",
+                self._clone(base, intent="kpi_rank", breakdown_by="sub_category",
+                            top_k=5, secondary_breakdown=None, time_grain="none"),
+            ))
+
+        # ── 3. Deceleration diagnosis OR momentum confirmation ─
+        if is_decel and best_period:
+            # Compare: is volume or AOV responsible?
+            suggs.append(Suggestion(
+                f"Orders trend — is volume also slowing?",
+                self._clone(base, intent="kpi_trend", time_grain="year",
+                            metrics=["orders"], order_by="orders",
+                            breakdown_by=None, secondary_breakdown=None),
+            ))
+        elif kpi in ("sales", "profit") and overall_chg > 10:
+            # Strong growth — check if consistent across regions
+            suggs.append(Suggestion(
+                f"{self._lm(m)} by region × year",
+                self._clone(base, intent="kpi_trend", time_grain="year",
+                            breakdown_by="region", secondary_breakdown=None),
+            ))
+        else:
+            suggs.append(Suggestion(
+                f"{self._lm(m)} — YoY comparison",
+                self._clone(base, intent="kpi_compare", compare_period="yoy",
+                            breakdown_by=None, secondary_breakdown=None,
+                            metrics=[m]),
+            ))
+
+        # ── 4. Cross-breakdown or complementary metric ─────────
+        if kpi == "sales":
+            suggs.append(Suggestion(
+                f"Profit margin by region — is growth profitable?",
+                self._clone(base, intent="kpi_value", breakdown_by="region",
+                            metrics=["profit_margin"], order_by="profit_margin",
+                            secondary_breakdown=None, time_grain="none"),
+            ))
+        elif kpi == "profit":
+            suggs.append(Suggestion(
+                f"Which sub-categories are loss-making?",
+                self._clone(base, intent="kpi_value", breakdown_by="sub_category",
+                            metrics=["profit"], order_by="profit",
+                            secondary_breakdown=None, time_grain="none"),
+            ))
+        elif kpi == "orders":
+            suggs.append(Suggestion(
+                f"Sales by region — does AOV vary by region?",
+                self._clone(base, intent="kpi_value", breakdown_by="region",
+                            metrics=["sales"], order_by="sales",
+                            secondary_breakdown=None, time_grain="none"),
+            ))
+        elif kpi == "profit_margin":
+            suggs.append(Suggestion(
+                f"Profit by sub-category — worst margin offenders",
+                self._clone(base, intent="kpi_rank", breakdown_by="sub_category",
+                            metrics=["profit"], order_by="profit",
+                            top_k=10, secondary_breakdown=None, time_grain="none"),
+            ))
+        else:
+            suggs.append(Suggestion(
+                f"{self._lm(m)} by category",
+                self._clone(base, intent="kpi_value", breakdown_by="category",
+                            secondary_breakdown=None, time_grain="none"),
+            ))
+
+        return suggs
 
     # ── Private helpers ───────────────────────────────────────
 
@@ -130,6 +256,8 @@ class RuleBasedSuggestionEngine:
     @staticmethod
     def _clone(base: Dict[str, Any], **updates: Any) -> Dict[str, Any]:
         p = copy.deepcopy(base)
+        # Remove internal keys before cloning to a clean plan
+        p.pop("_quick_context", None)
         p.update(updates)
         return p
 
@@ -168,20 +296,17 @@ class RuleBasedSuggestionEngine:
 
     def _compare(self, base: Dict[str, Any]) -> List[Suggestion]:
         m = base["metrics"][0]
-        # Lấy context từ base để suggestion có tháng cụ thể
-        bd = base.get("breakdown_by")
-        label_ctx = f"{self._lm(m)} (Oct 2017)" if base.get("start_date", "").startswith("2017-10") else self._lm(m)
         return [
             Suggestion(
                 f"{self._lm(m)} — {self._lc(c)}",
                 self._clone(base, intent="kpi_compare", compare_period=c,
                             top_k=None, metrics=[m]),
-                # start_date/end_date đã được clone từ base nên tự động giữ Oct 2017
             )
             for c in ["yoy", "mom", "prev_period"]
             if c in self.allowed_compare_periods
             and base.get("compare_period") != c
         ]
+
     def _rank_from_breakdown(self, base: Dict[str, Any]) -> List[Suggestion]:
         m, b = base["metrics"][0], base.get("breakdown_by")
         if not b or b not in self.allowed_breakdowns:
@@ -216,9 +341,8 @@ class RuleBasedSuggestionEngine:
             for m in ["sales", "profit", "orders", "profit_margin"]
             if m in self.allowed_metrics and m != current
         ]
-    
+
     def _cross_breakdown_suggestions(self, base: Dict[str, Any]) -> List[Suggestion]:
-        """Suggestions specific to cross-breakdown (region × category) queries."""
         m  = base["metrics"][0]
         b1 = base.get("breakdown_by") or "region"
         b2 = base.get("secondary_breakdown") or "category"

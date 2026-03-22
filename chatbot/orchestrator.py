@@ -1,8 +1,6 @@
 """
 chatbot/orchestrator.py
 DashboardChatbot — the single public entry point for the chatbot feature.
-Coordinates NLParser → PlanValidator → SQLBuilder → AnswerFormatter → InsightGenerator.
-Manages shared state: last plan, last Q&A, RAG engine, suggestion engines.
 """
 
 from __future__ import annotations
@@ -26,8 +24,6 @@ from chatbot.suggestions.rag_engine import RAGSuggestionEngine
 from rag.engine import RAGEngine
 
 
-# ── Quick token maps (module-level) ──────────────────────────
-
 _QUICK_TOKENS = {
     "__quick_sales__":   "sales",
     "__quick_profit__":  "profit",
@@ -42,15 +38,16 @@ _QUICK_TOKEN_DISPLAY = {
     "__quick_margin__":  "Profit margin — trends & category breakdown",
 }
 
+# Keys to harvest from QuickInsightHandler after generate() for analyst suggestions
+_HANDLER_META_KEYS = (
+    "best_period", "top_region", "top_product",
+    "overall_change_pct", "is_decelerating",
+    "last_transition_pct", "prev_transition_pct",
+    "first_label", "last_label", "first_value", "last_value",
+)
+
 
 class DashboardChatbot:
-    """
-    Public API:
-        chatbot = DashboardChatbot(df, kpis, filters)
-        answer  = chatbot.get_response("What is profit by region?")
-        chips   = chatbot.get_suggestions()
-    """
-
     def __init__(self, df: pd.DataFrame, kpis: Dict[str, Any], filters: Dict[str, Any]) -> None:
         self.df      = df.copy()
         self.kpis    = kpis
@@ -59,13 +56,11 @@ class DashboardChatbot:
         if "order_date" in self.df.columns and not pd.api.types.is_datetime64_any_dtype(self.df["order_date"]):
             self.df["order_date"] = pd.to_datetime(self.df["order_date"], errors="coerce")
 
-        # ── Gemini setup ──────────────────────────────────────
         api_key = getattr(Config, "GOOGLE_API_KEY", "") or ""
         self._gemini_ready  = bool(api_key)
         self._gemini_client = genai.Client(api_key=api_key) if self._gemini_ready else None
         self._model         = getattr(Config, "GEMINI_MODEL", "gemini-1.5-flash")
 
-        # ── Core services ─────────────────────────────────────
         regions, segments, categories = self._filter_lists()
         s0, e0 = self._date_range()
 
@@ -75,11 +70,9 @@ class DashboardChatbot:
         self._formatter = AnswerFormatter()
         self._insights  = InsightGenerator(self._gemini_client, self._model)
 
-        # ── RAG engine ────────────────────────────────────────
         self._rag = RAGEngine()
         self._rag.build(self.df, self.kpis, self.filters)
 
-        # ── Suggestion engines ────────────────────────────────
         self._rule_suggestions = RuleBasedSuggestionEngine(
             allowed_metrics=["sales", "profit", "orders", "profit_margin"],
             allowed_breakdowns=["region", "segment", "category", "sub_category"],
@@ -91,7 +84,6 @@ class DashboardChatbot:
             if self._gemini_ready else None
         )
 
-        # ── Session state ─────────────────────────────────────
         self._last_plan:     Optional[Dict[str, Any]] = None
         self._last_question: str = ""
         self._last_answer:   str = ""
@@ -116,17 +108,14 @@ class DashboardChatbot:
             )
             answer = handler.generate(kpi_name)
 
-            # ✅ FIX: Set readable last_question so RAG retrieval works properly
-            # → prevents suggestion engine from falling back to generic "Sales by Region"
             self._last_question = _QUICK_TOKEN_DISPLAY[q]
             self._last_answer   = answer
 
-            # ✅ FIX: Set synthetic plan so suggestion engine has intent context
+            # Build synthetic plan so suggestion engine has intent context
             s0, e0 = self._date_range()
-            metric = kpi_name  # already "sales" / "profit" / "orders" / "profit_margin"
             self._last_plan = {
                 "intent":              "kpi_trend",
-                "metrics":             [metric],
+                "metrics":             [kpi_name],
                 "time_grain":          "year",
                 "breakdown_by":        None,
                 "secondary_breakdown": None,
@@ -134,7 +123,7 @@ class DashboardChatbot:
                 "end_date":            e0,
                 "compare_period":      None,
                 "top_k":               None,
-                "order_by":            metric,
+                "order_by":            kpi_name,
                 "filters": {
                     "region":   list((self.filters or {}).get("region",   []) or []),
                     "segment":  list((self.filters or {}).get("segment",  []) or []),
@@ -143,12 +132,18 @@ class DashboardChatbot:
                 "show_extremes": False,
             }
 
-            # Record with readable label (not raw token)
+            # ── Harvest handler metadata → analyst-level suggestions ──
+            quick_ctx: Dict[str, Any] = {"kpi": kpi_name}
+            for attr in _HANDLER_META_KEYS:
+                if hasattr(handler, attr):
+                    quick_ctx[attr] = getattr(handler, attr)
+            self._last_plan["_quick_context"] = quick_ctx
+
             self._rag.add_turn("user",      self._last_question)
             self._rag.add_turn("assistant", answer)
             return answer
 
-        # ── Tier 1: instant KPI answer (no DB hit) ────────────
+        # ── Tier 1: instant KPI answer ────────────────────────
         fast = self._parser.fast_kpi_answer(q)
         if fast:
             self._record(q, fast)
