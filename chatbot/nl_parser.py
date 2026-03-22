@@ -49,6 +49,8 @@ _GRAIN_KEYWORDS: Dict[str, str] = {
     "monthly": "month", "month": "month",
     "quarterly": "quarter", "quarter": "quarter",
     "yearly": "year", "annual": "year", "year": "year",
+    "trend": "year", "over time": "year", "performance": "year",
+    "growth": "year", "evolution": "year", "progress": "year",
 }
 _COMPARE_KEYWORDS: Dict[str, str] = {
     "yoy": "yoy", "year over year": "yoy", "year-over-year": "yoy",
@@ -429,6 +431,22 @@ class NLParser:
             result["secondary_breakdown"] = secondary_breakdown
             return result
 
+        if detected_grain != "none" and detected_breakdown in ("region", "segment", "category"):
+            # Kiểm tra xem user có mention specific value không (e.g. "West")
+            f_check = self.filters or {}
+            all_vals = list(f_check.get(detected_breakdown, []) or [])
+            mentioned_vals = [v for v in all_vals if v.lower() in ql]
+            
+            if mentioned_vals:
+                # "trend for West" → filter West, không breakdown by region
+                plan.update(
+                    intent="kpi_trend",
+                    time_grain=detected_grain,
+                    breakdown_by=None,  # ← KHÔNG group by region
+                )
+                plan["filters"][detected_breakdown] = mentioned_vals  # ← filter West
+                plan["secondary_breakdown"] = None
+                return self._inject_mentioned_filters(plan, q)
         # ── YoY trend shortcuts ───────────────────────────────
         if detected_compare == "yoy" and _GENERAL_YOY_RE.search(q):
             if not explicit_dates:
