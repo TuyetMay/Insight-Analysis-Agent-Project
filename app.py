@@ -65,9 +65,17 @@ if df.empty:
 
 kpis    = calculate_kpis(df)
 chatbot = DashboardChatbot(df, kpis, filters)
+_QUICK_TOKEN_LABELS = {
+    "__quick_sales__":   "📊 Sales overview — trends, top products & regions",
+    "__quick_profit__":  "💹 Profit overview — trends, margin & top regions",
+    "__quick_orders__":  "📦 Orders overview — volume trends & AOV",
+    "__quick_margin__":  "📈 Profit margin — trends & category breakdown",
+}
+
 if st.session_state.get("pending_question"):
     q = st.session_state.pop("pending_question")
     history = st.session_state.setdefault("chat_history", [])
+    display_q = _QUICK_TOKEN_LABELS.get(q, q)
     history.append({"role": "user", "content": q})
     response = chatbot.get_response(q)
     suggs = chatbot.get_suggestions()
@@ -98,10 +106,10 @@ st.markdown(f"<div class='main-header'>{Config.APP_ICON} {Config.APP_TITLE}</div
 st.markdown("## 📌 Key Performance Indicators")
 kpi_cols = st.columns(4)
 _KPI_QUESTIONS = {
-    0: ("Total Sales",   f"${kpis['total_sales']:,.0f}",  "How have sales trended year-over-year?"),
-    1: ("Total Profit",  f"${kpis['total_profit']:,.0f}", "Which region is most profitable?"),
-    2: ("Total Orders",  f"{kpis['total_orders']:,}",     "What is the monthly order trend?"),
-    3: ("Profit Margin", f"{kpis['profit_margin']:.2f}%", "How does profit margin compare across categories?"),
+    0: ("Total Sales",   f"${kpis['total_sales']:,.0f}",  "__quick_sales__"),
+    1: ("Total Profit",  f"${kpis['total_profit']:,.0f}", "__quick_profit__"),
+    2: ("Total Orders",  f"{kpis['total_orders']:,}",     "__quick_orders__"),
+    3: ("Profit Margin", f"{kpis['profit_margin']:.2f}%", "__quick_margin__"),
 }
 for i, (label, value, question) in _KPI_QUESTIONS.items():
     with kpi_cols[i]:

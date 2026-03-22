@@ -253,9 +253,15 @@ def _chat_form(chatbot: Any, thinking_placeholder: Any) -> None:
             st.session_state.suggestions  = []
             st.rerun()
 
-
-def _process_question(chatbot: Any, question: str, thinking_placeholder: Any) -> None:
+_QUICK_TOKEN_LABELS = {
+    "__quick_sales__":   "📊 Sales overview — trends, top products & regions",
+    "__quick_profit__":  "💹 Profit overview — trends, margin & top regions",
+    "__quick_orders__":  "📦 Orders overview — volume trends & AOV",
+    "__quick_margin__":  "📈 Profit margin — trends & category breakdown",
+}
+def _process_question(chatbot: Any, question: str, thinking_placeholder: Any,display_text=None) -> None:
     history = st.session_state.setdefault("chat_history", [])
+    label = display_text or _QUICK_TOKEN_LABELS.get(question, question)
     history.append({"role": "user", "content": question})
 
     thinking_placeholder.markdown(

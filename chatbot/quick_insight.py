@@ -167,13 +167,14 @@ class QuickInsightHandler:
                 "",
                 "💡 **Insight:**",
             ]
-            lines.append(f"  - The strongest growth was in the **{_period_name(sdf, best+1, grain)}** period "
-                         f"(**{best_pct:+.1f}%**) — {cause}.")
-            # Risk: deceleration
+            lines.append(f"  - The strongest growth was in **{_period_name(sdf, best+1, grain)}** "
+             f"(**{best_pct:+.1f}%**). Root cause requires deeper analysis — "
+             f"check order volume vs AOV to determine whether acquisition or upsell drove it.")
             if len(transitions) >= 2 and transitions[-1][0] < transitions[-2][0]:
-                lines.append(f"  - ⚠️ Growth is **decelerating** — last period "
-                             f"({transitions[-1][0]:+.1f}%) vs prior "
-                             f"({transitions[-2][0]:+.1f}%). Monitor for reversal.")
+               lines.append(f"  - Growth rate slowed from **{transitions[-2][0]:+.1f}%** to "
+                f"**{transitions[-1][0]:+.1f}%** — still strong, but worth monitoring "
+                f"whether this reflects market saturation or a seasonal effect.")
+
             else:
                 lines.append(f"  - Momentum is **sustained** across the last 2 periods — "
                              f"a positive signal for continued trajectory.")
@@ -195,14 +196,39 @@ class QuickInsightHandler:
                          f"(**\\${top_reg_v:,.0f}**, {reg_share:.0f}% of total).")
 
         # Action
+        transitions_text = "\n".join(
+            f"  {_fmt_period(sdf.iloc[i-1].get('period',''), grain)} → "
+            f"{_fmt_period(sdf.iloc[i].get('period',''), grain)}: "
+            f"{transitions[i-1][0]:+.1f}%"
+            for i in range(1, n)
+        )
+
+        action_context = {
+            "period_range":         f"{_fmt_period(sdf.iloc[0].get('period',''), grain)} – {_fmt_period(sdf.iloc[-1].get('period',''), grain)}",
+            "overall_change_pct":   overall_chg,
+            "first_label":          _fmt_period(sdf.iloc[0].get("period", ""), grain),
+            "first_value":          first_v,
+            "last_label":           _fmt_period(sdf.iloc[-1].get("period", ""), grain),
+            "last_value":           last_v,
+            "transitions_text":     transitions_text,
+            "top_product":          top_cat_df.iloc[0].get("breakdown", "—") if not top_cat_df.empty else "—",
+            "top_product_value":    float(top_cat_df.iloc[0].get("sales", 0)) if not top_cat_df.empty else 0,
+            "top_product_share":    (float(top_cat_df.iloc[0].get("sales", 0)) / total * 100) if (not top_cat_df.empty and total) else 0,
+            "top_region":           top_reg_df.iloc[0].get("breakdown", "—") if not top_reg_df.empty else "—",
+            "top_region_value":     float(top_reg_df.iloc[0].get("sales", 0)) if not top_reg_df.empty else 0,
+            "top_region_share":     (float(top_reg_df.iloc[0].get("sales", 0)) / total * 100) if (not top_reg_df.empty and total) else 0,
+            "is_decelerating":      len(transitions) >= 2 and transitions[-1][0] < transitions[-2][0],
+            "last_transition_pct":  transitions[-1][0] if transitions else 0,
+            "prev_transition_pct":  transitions[-2][0] if len(transitions) >= 2 else 0,
+        }
+        action_text = self._generate_action("sales", action_context)
+
         lines += [
             "",
             "🚀 **Action:**",
-            f"  - Drill into **{top_reg_df.iloc[0].get('breakdown', 'top region') if not top_reg_df.empty else 'regions'}** "
-            f"to understand what drove the strongest growth period.",
-            f"  - Check if growth came from **order volume** increase or "
-            f"**higher AOV** — this determines whether to scale acquisition or upsell.",
+            action_text,
         ]
+
 
         return "\n".join(lines)
 
@@ -489,6 +515,102 @@ class QuickInsightHandler:
         ]
 
         return "\n".join(lines)
+    
+    def _generate_action(self, kpi: str, context: dict) -> str:
+        """
+        Gọi Gemini để generate action recommendations dựa trên actual data context.
+        Fallback về rule-based nếu Gemini fail hoặc không có client.
+        """
+        if not self.insight.client or not self.insight.model_name:
+            return self._fallback_action(kpi, context)
+
+        # Build prompt với đầy đủ context
+        prompt = f"""You are a senior business analyst. Based on the following actual data, 
+    write exactly 2 specific, actionable recommendations.
+
+    === DATA CONTEXT ===
+    KPI: {kpi.upper()}
+    Period: {context.get('period_range', 'N/A')}
+    Overall change: {context.get('overall_change_pct', 0):+.1f}% 
+    ({context.get('first_label','')}: ${context.get('first_value',0):,.0f} → 
+    {context.get('last_label','')}: ${context.get('last_value',0):,.0f})
+
+    Growth transitions:
+    {context.get('transitions_text', 'N/A')}
+
+    Top sub-category: {context.get('top_product', 'N/A')} 
+    (${context.get('top_product_value', 0):,.0f}, {context.get('top_product_share', 0):.0f}% of total)
+
+    Top region: {context.get('top_region', 'N/A')} 
+    (${context.get('top_region_value', 0):,.0f}, {context.get('top_region_share', 0):.0f}% of total)
+
+    Deceleration detected: {context.get('is_decelerating', False)}
+    Latest period growth: {context.get('last_transition_pct', 0):+.1f}%
+    Prior period growth: {context.get('prev_transition_pct', 0):+.1f}%
+
+    === RULES ===
+    - Each action must reference specific numbers from the data above
+    - No generic advice (e.g. "monitor performance" is NOT acceptable)
+    - Focus on what to do NEXT based on what the data shows
+    - Max 1 sentence per action, starting with a verb
+    - Format: exactly 2 lines, each starting with "  - "
+
+    Write 2 actions:"""
+
+        from google.genai import types as genai_types
+        try:
+            resp = self.insight.client.models.generate_content(
+                model=self.insight.model_name,
+                contents=prompt,
+                config=genai_types.GenerateContentConfig(
+                    temperature=0.3,
+                    max_output_tokens=150,
+                ),
+            )
+            text = (getattr(resp, "text", "") or "").strip()
+            if text and "  - " in text:
+                return text
+        except Exception:
+            pass
+
+        return self._fallback_action(kpi, context)
+
+
+    def _fallback_action(self, kpi: str, context: dict) -> str:
+        """Rule-based fallback — chỉ dùng khi Gemini fail."""
+        top_region  = context.get("top_region", "top region")
+        top_product = context.get("top_product", "top sub-category")
+        is_decel    = context.get("is_decelerating", False)
+
+        if kpi == "sales":
+            a1 = (f"  - Investigate why growth slowed from "
+                f"**{context.get('prev_transition_pct',0):+.1f}%** to "
+                f"**{context.get('last_transition_pct',0):+.1f}%** — "
+                f"compare order volume vs AOV in **{top_region}** to isolate the cause."
+                if is_decel else
+                f"  - Scale acquisition in **{top_region}** ({context.get('top_region_share',0):.0f}% "
+                f"of sales) by replicating the strategy that drove the strongest growth period.")
+            a2 = (f"  - Audit **{top_product}** ({context.get('top_product_share',0):.0f}% of total) "
+                f"to check if its share is growing or flat — rising share = product-mix win, "
+                f"flat = market-wide lift.")
+        elif kpi == "profit":
+            a1 = (f"  - Review discount policy for products in **{top_region}** where "
+                f"margin pressure is highest — cap discounts at 20% for sub-categories below 10% margin.")
+            a2 = (f"  - Shift sales mix toward **{top_product}** "
+                f"({context.get('top_product_share',0):.0f}% of profit) to lift overall margin.")
+        elif kpi == "orders":
+            aov = context.get("aov", 0)
+            a1 = (f"  - Launch bundle promotions for **{top_product}** to increase AOV "
+                f"beyond current **${aov:,.0f}** — even a 10% AOV lift = significant revenue gain.")
+            a2 = (f"  - Identify peak order months in **{top_region}** and concentrate "
+                f"campaigns there to maximise conversion efficiency.")
+        else:  # profit_margin
+            a1 = (f"  - Cap discounts at 20% in the lowest-margin category to recover "
+                f"at least 2-3pp of margin.")
+            a2 = (f"  - Prioritise upsell toward **{top_product}** which shows highest "
+                f"margin contribution — shift marketing budget accordingly.")
+
+        return f"{a1}\n{a2}"
 
 
 # ── Module helpers ────────────────────────────────────────────
@@ -526,3 +648,4 @@ def _infer_cause(transitions: list) -> str:
         return "possibly driven by expanded product mix or improved retention"
     else:
         return "consistent execution and demand growth"
+    
