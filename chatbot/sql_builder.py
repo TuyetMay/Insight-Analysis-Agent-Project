@@ -7,6 +7,7 @@ Pure data logic — no LLM, no UI.
 from __future__ import annotations
 
 from datetime import date, datetime
+import logging
 from typing import Any, Dict, List, Tuple
 
 import pandas as pd
@@ -14,6 +15,7 @@ import pandas as pd
 from config import Config
 from core.database import execute_query
 
+logger = logging.getLogger(__name__)
 
 _METRIC_EXPR: Dict[str, str] = {
     "sales":         "SUM(sales)",
@@ -33,6 +35,10 @@ _CONDITION_WHERE: Dict[str, str] = {
     "high_discount":   "discount > 0.2",
 }
 
+_ALLOWED_BREAKDOWN_COLS: frozenset = frozenset({
+    "region", "segment", "category", "sub_category", "state", "ship_mode"
+})
+ 
 
 class SQLBuilder:
     """Build and run SQL for validated query plans."""
@@ -155,15 +161,22 @@ class SQLBuilder:
     def _run_detail(self, plan: Dict[str, Any]) -> pd.DataFrame:
         condition = plan.get("condition", "profit_negative")
         breakdown = plan.get("breakdown_by") or "sub_category"
-        f         = plan["filters"]
-        top_k     = plan.get("top_k") or 15
-
+ 
+        # ── THÊM: whitelist check ─────────────────────────────
+        if breakdown not in _ALLOWED_BREAKDOWN_COLS:
+            logger.warning("Blocked unsafe breakdown column: %r", breakdown)
+            breakdown = "sub_category"
+        # ─────────────────────────────────────────────────────
+ 
+        f     = plan["filters"]
+        top_k = plan.get("top_k") or 15
+ 
         base_parts: List[str] = [
             "order_date >= %(start)s",
             "order_date <= %(end)s",
         ]
         params: Dict[str, Any] = {"start": plan["start_date"], "end": plan["end_date"]}
-
+ 
         for col in ("region", "segment", "category", "sub_category", "state"):
             vals = f.get(col)
             if vals:
@@ -171,63 +184,56 @@ class SQLBuilder:
                 base_parts.append(f"{col} IN ({placeholders})")
                 for i, v in enumerate(vals):
                     params[f"{col}_{i}"] = v
-
+ 
         base_where = " AND ".join(base_parts)
-
         params_g = {**params, "top_k": top_k}
-        group_sql = (
-            "SELECT "
-            + breakdown + " AS breakdown, "
-            + "category, "
-            + "COUNT(DISTINCT order_id) AS orders, "
-            + "ROUND(CAST(SUM(sales) AS DECIMAL), 2) AS sales, "
-            + "ROUND(CAST(SUM(profit) AS DECIMAL), 2) AS profit, "
-            + "ROUND(CAST(AVG(discount) * 100 AS DECIMAL), 1) AS avg_discount_pct, "
-            + "CASE WHEN SUM(sales)=0 THEN 0 "
-            + "     ELSE ROUND(CAST(SUM(profit)/SUM(sales)*100 AS DECIMAL), 2) "
-            + "END AS profit_margin "
-            + "FROM " + self.table + " "
-            + "WHERE " + base_where + " "
-            + "GROUP BY " + breakdown + ", category "
-            + "HAVING SUM(profit) < 0 "
-            + "ORDER BY SUM(profit) ASC "
-            + "LIMIT %(top_k)s"
-        )
+ 
+        # ── Dùng f-string CHỈ cho whitelisted column name ────
+        # breakdown đã được validate ở trên → safe
+        group_sql = f"""
+            SELECT
+                {breakdown}        AS breakdown,
+                category,
+                COUNT(DISTINCT order_id)                          AS orders,
+                ROUND(CAST(SUM(sales)   AS DECIMAL), 2)          AS sales,
+                ROUND(CAST(SUM(profit)  AS DECIMAL), 2)          AS profit,
+                ROUND(CAST(AVG(discount) * 100 AS DECIMAL), 1)   AS avg_discount_pct,
+                CASE WHEN SUM(sales) = 0 THEN 0
+                     ELSE ROUND(CAST(SUM(profit)/SUM(sales)*100 AS DECIMAL), 2)
+                END                                               AS profit_margin
+            FROM {self.table}
+            WHERE {base_where}
+            GROUP BY {breakdown}, category
+            HAVING SUM(profit) < 0
+            ORDER BY SUM(profit) ASC
+            LIMIT %(top_k)s
+        """
         grouped_df = execute_query(group_sql, params_g)
-
-        row_where = base_where + " AND profit < 0"
-        params_s  = {**params, "sample_k": 10}
-
-        sample_df = pd.DataFrame()
+ 
+        # Sample orders — giữ nguyên logic cũ, chỉ dùng f-string cho breakdown
+        row_where  = base_where + " AND profit < 0"
+        params_s   = {**params, "sample_k": 10}
+        sample_df  = pd.DataFrame()
+ 
+        sample_sql = f"""
+            SELECT order_id, order_date,
+                   {breakdown} AS breakdown, category, product_name,
+                   sales, profit, discount
+            FROM {self.table}
+            WHERE {row_where}
+            ORDER BY profit ASC
+            LIMIT %(sample_k)s
+        """
         try:
-            s1 = (
-                "SELECT order_id, order_date, "
-                + breakdown + " AS breakdown, category, product_name, "
-                + "sales, profit, discount "
-                + "FROM " + self.table + " "
-                + "WHERE " + row_where + " "
-                + "ORDER BY profit ASC LIMIT %(sample_k)s"
-            )
-            sample_df = execute_query(s1, params_s)
+            sample_df = execute_query(sample_sql, params_s)
         except Exception:
             pass
-
-        if sample_df.empty:
-            s2 = (
-                "SELECT order_id, order_date, "
-                + breakdown + " AS breakdown, category, "
-                + "sales, profit, discount "
-                + "FROM " + self.table + " "
-                + "WHERE " + row_where + " "
-                + "ORDER BY profit ASC LIMIT %(sample_k)s"
-            )
-            sample_df = execute_query(s2, params_s)
-
+ 
         if not grouped_df.empty:
             grouped_df.attrs["detail_type"]   = "grouped_summary"
             grouped_df.attrs["condition"]     = condition
             grouped_df.attrs["sample_orders"] = sample_df
-
+ 
         return grouped_df
 
     # ── Period comparison ─────────────────────────────────────

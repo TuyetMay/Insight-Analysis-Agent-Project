@@ -12,6 +12,7 @@ from charts.trends import create_orders_by_month, create_sales_profit_trend
 from config import Config
 from core.data_loader import load_filtered_data, get_filter_options, calculate_kpis, load_filtered_data_safe
 from chatbot import DashboardChatbot
+from core.database import reset_pool
 from ui import inject_styles, render_filters, render_chat_sidebar
 from ui.components import _KPI_QUICK_QUESTIONS
 
@@ -42,14 +43,13 @@ with st.spinner("⏳ Connecting to database…"):
     filter_options = get_filter_options()
 
 if not filter_options:
-    st.error("❌ Cannot connect to the database. Check your .env configuration.")
+    st.error("Cannot connect to the database. Check your .env configuration.")
 
     col_a, col_b = st.columns([1, 3])
     with col_a:
         if st.button("🔄 Retry Connection", type="primary", use_container_width=True):
             st.cache_data.clear()
-            st.cache_resource.clear()
-            st.session_state.pop("db_pool", None)  # clear cached pool
+            reset_pool()
             st.rerun()
     with col_b:
         with st.expander("🔍 Debug info"):

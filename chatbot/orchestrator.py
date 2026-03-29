@@ -44,8 +44,10 @@ _HANDLER_META_KEYS = (
     "overall_change_pct", "is_decelerating",
     "last_transition_pct", "prev_transition_pct",
     "first_label", "last_label", "first_value", "last_value",
+    "worst_period",          # FIX-9/11: period with worst transition (for decline context)
+    "worst_transition_pct",  # FIX-9/11: magnitude of worst transition
+    "has_partial_period",    # FIX-12: True if any period has partial data
 )
-
 
 class DashboardChatbot:
     def __init__(self, df: pd.DataFrame, kpis: Dict[str, Any], filters: Dict[str, Any]) -> None:
@@ -71,6 +73,7 @@ class DashboardChatbot:
         self._insights  = InsightGenerator(self._gemini_client, self._model)
 
         self._rag = RAGEngine()
+        self._rag.build_static(self.df) 
         self._rag.build(self.df, self.kpis, self.filters)
 
         self._rule_suggestions = RuleBasedSuggestionEngine(

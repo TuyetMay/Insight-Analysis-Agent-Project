@@ -42,6 +42,56 @@ class KnowledgeBaseBuilder:
             chunks += self._discount_impact_chunks(df)
             chunks += self._segment_category_cross_chunks(df)
         return chunks
+    
+    def build_static(self, df: pd.DataFrame) -> List[Chunk]:
+        """
+        Chunks không thay đổi theo filter:
+        schema facts + tất cả dimension values có thể có.
+        """
+        chunks: List[Chunk] = []
+        chunks += self._schema_chunks()
+        if not df.empty:
+            for dim in ("region", "segment", "category", "sub_category", "state"):
+                if dim in df.columns:
+                    chunks += self._dimension_value_chunk(df, dim)
+        return chunks
+    
+    def build_dynamic(self, df: pd.DataFrame, kpis: Dict[str, Any],
+                      filters: Dict[str, Any]) -> List[Chunk]:
+        """
+        Chunks phụ thuộc vào filter hiện tại:
+        KPI values, trends, rankings.
+        """
+        chunks: List[Chunk] = []
+        chunks += self._filter_context_chunks(filters)
+        chunks += self._kpi_chunks(kpis)
+        if not df.empty:
+            chunks += self._time_range_chunks(df)
+            chunks += self._yearly_trend_chunks(df)
+            chunks += self._monthly_chunks(df)
+            chunks += self._quarterly_chunks(df)
+            for dim in ("region", "segment", "category"):
+                chunks += self._dimension_chunks(df, dim)
+            chunks += self._top_k_chunks(df, "sub_category", k=10)
+            chunks += self._top_k_chunks(df, "category",     k=5)
+            chunks += self._top_k_chunks(df, "region",       k=4)
+            chunks += self._discount_impact_chunks(df)
+            chunks += self._segment_category_cross_chunks(df)
+        return chunks
+    
+    def _dimension_value_chunk(self, df: pd.DataFrame, dim: str) -> List[Chunk]:
+        """
+        Chunk nhẹ: chỉ list các giá trị unique của dimension.
+        Dùng cho static layer — không có aggregate numbers.
+        """
+        if dim not in df.columns:
+            return []
+        values = sorted(df[dim].dropna().unique().tolist())
+        return [Chunk(
+            f"dim_values_{dim}",
+            f"All {dim} values in dataset: {values}.",
+            {"type": "schema", "dimension": dim, "values": values},
+        )]
 
     # ── Schema facts ──────────────────────────────────────────
 

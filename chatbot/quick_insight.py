@@ -1,12 +1,11 @@
-# chatbot/quick_insight.py
+# chatbot/quick_insight.py  — PATCHED v2
 """
-Quick KPI insight handler.
-
-Fix v3:
-1. _generate_action: quality gate — reject output that has no numbers (fallback)
-2. Stronger fallback_action with % and $ values
-3. Store metadata as instance vars (best_period, top_region, etc.)
-   → orchestrator reads these to build analyst-level follow-up suggestions
+Fixes applied:
+  FIX-3: n_periods guard — n<3 → "comparison", not "trend"
+  FIX-4: best_period label guard — negative transitions → "least-decline period"
+  FIX-5: Insight severity calibration — decline >50% overrides "no structural issue"
+  FIX-6: situation_type routing — _fallback_action() matches context to scenario
+  (FIX-1, FIX-2 from v1 retained)
 """
 from __future__ import annotations
 from typing import Any, Dict, Optional
@@ -60,6 +59,77 @@ def _period_name(sdf: Any, idx: int, grain: str) -> str:
         return "that period"
 
 
+# ─────────────────────────────────────────────────────────────
+# FIX-1: Data-driven trend description (no hardcoded benchmarks)
+# ─────────────────────────────────────────────────────────────
+
+def _margin_trend_description(overall_chg: float) -> str:
+    """Describe the trend direction from data — no hardcoded benchmarks."""
+    if overall_chg > 20:   return "strong growth trajectory"
+    elif overall_chg > 5:  return "steady upward trend"
+    elif overall_chg > -5: return "relatively stable"
+    else:                   return "declining trend — warrants review"
+
+
+# ─────────────────────────────────────────────────────────────
+# FIX-3: Period-count-aware language helper
+# ─────────────────────────────────────────────────────────────
+
+def _trend_label(n: int, grain_lbl: str) -> str:
+    """
+    FIX-3: When n < 3, calling it a "trend" is misleading — it's a single transition.
+    
+    WHY: A trend requires at least 3 data points to establish direction.
+    With n=2 you have one delta — call it what it is: a comparison.
+    """
+    if n < 2:   return "single data point"
+    if n == 2:  return f"period-over-period comparison ({grain_lbl})"
+    return f"overview ({grain_lbl})"
+
+
+# ─────────────────────────────────────────────────────────────
+# FIX-4: best_period label guard
+# ─────────────────────────────────────────────────────────────
+
+def _best_period_label(best_pct: float) -> str:
+    """
+    FIX-4: best_period = the period with the HIGHEST transition pct.
+    When all transitions are negative, that's the "least-decline" period —
+    calling it "peak growth year" is factually wrong.
+
+    WHY: best_period is max(transitions). If transitions = [-91.3%], the
+    max is -91.3% — there was no growth. "Peak growth year" implies positive
+    growth that didn't exist.
+    """
+    if best_pct > 10:   return "peak growth period"
+    elif best_pct > 0:  return "strongest growth period"
+    elif best_pct > -10: return "most stable period"
+    else:               return "least-decline period"
+
+
+# ─────────────────────────────────────────────────────────────
+# FIX-5: Situation classifier
+# ─────────────────────────────────────────────────────────────
+
+def _classify_situation(overall_chg: float, n: int) -> str:
+    """
+    FIX-5 + FIX-6: Classify the business situation so insights and actions
+    can match the actual context instead of running generic templates.
+    
+    Returns one of: "growth_strong", "growth_mild", "stable",
+                    "decline_mild", "decline_severe"
+    
+    WHY: The same template "cap discounts" is irrelevant for a -91% profit
+    drop. The action must match the severity. We can't know WHY profit dropped
+    without drill-down data, so the correct action is DIAGNOSTIC, not prescriptive.
+    """
+    if overall_chg >= 20:   return "growth_strong"
+    elif overall_chg >= 5:  return "growth_mild"
+    elif overall_chg >= -10: return "stable"
+    elif overall_chg >= -40: return "decline_mild"
+    else:                    return "decline_severe"
+
+
 class QuickInsightHandler:
     def __init__(self, df: pd.DataFrame, kpis: Dict[str, Any],
                  filters: Dict[str, Any],
@@ -72,7 +142,6 @@ class QuickInsightHandler:
         self.grain   = _detect_grain(filters)
         self._s0, self._e0 = self._date_range()
 
-        # ── Metadata exposed to orchestrator for analyst suggestions ──
         self.kpi_name:            str   = ""
         self.best_period:         str   = ""
         self.top_region:          str   = ""
@@ -132,7 +201,7 @@ class QuickInsightHandler:
         }
         trend_df   = self.sql.run(trend_plan)
         top_cat_df = self.sql.run({**trend_plan, "intent": "kpi_rank", "time_grain": "none", "breakdown_by": "sub_category", "top_k": 1})
-        top_reg_df = self.sql.run({**trend_plan, "intent": "kpi_rank", "time_grain": "none", "breakdown_by": "region",       "top_k": 1})
+        top_reg_df = self.sql.run({**trend_plan, "intent": "kpi_rank", "time_grain": "none", "breakdown_by": "region", "top_k": 1})
 
         total = float(self.kpis.get("total_sales", 0))
         lines = []
@@ -146,6 +215,7 @@ class QuickInsightHandler:
         overall_chg = (last_v - first_v) / abs(first_v) * 100 if first_v else 0
         word        = "grown" if overall_chg >= 0 else "declined"
         n           = len(sdf)
+        situation   = _classify_situation(overall_chg, n)
 
         transitions = []
         for i in range(1, n):
@@ -155,15 +225,14 @@ class QuickInsightHandler:
             tag = "🚀" if pct >= 20 else ("📈" if pct >= 5 else ("📉" if pct < 0 else "➡️"))
             transitions.append((pct, tag))
 
-        best        = max(range(len(transitions)), key=lambda i: transitions[i][0])
-        best_pct    = transitions[best][0]
-        best_period = _period_name(sdf, best + 1, grain)
+        best        = max(range(len(transitions)), key=lambda i: transitions[i][0]) if transitions else 0
+        best_pct    = transitions[best][0] if transitions else 0
+        best_period = _period_name(sdf, best + 1, grain) if transitions else ""
         last_period = _fmt_period(sdf.iloc[-1].get("period", ""), grain)
-        top_reg   = top_reg_df.iloc[0].get("breakdown", "—") if not top_reg_df.empty else "—"
-        top_prod  = top_cat_df.iloc[0].get("breakdown", "—") if not top_cat_df.empty else "—"
-        is_decel  = len(transitions) >= 2 and transitions[-1][0] < transitions[-2][0]
+        top_reg     = top_reg_df.iloc[0].get("breakdown", "—") if not top_reg_df.empty else "—"
+        top_prod    = top_cat_df.iloc[0].get("breakdown", "—") if not top_cat_df.empty else "—"
+        is_decel    = len(transitions) >= 2 and transitions[-1][0] < transitions[-2][0]
 
-        # ── Store metadata for orchestrator ───────────────────
         self.best_period         = best_period
         self.top_region          = top_reg
         self.top_product         = top_prod
@@ -176,12 +245,13 @@ class QuickInsightHandler:
         self.first_value         = first_v
         self.last_value          = last_v
 
-        # ── 📌 Summary ────────────────────────────────────────
+        # ── FIX-3: Use _trend_label() for header ─────────────
+        overview_label = _trend_label(n, grain_lbl)
         lines += [
-            f"📌 Sales {word} **{abs(overall_chg):.0f}%** over {n} periods — "
+            f"📌 Sales {word} **{abs(overall_chg):.0f}%** — "
             f"from **\\${first_v:,.0f}** to **\\${last_v:,.0f}**.",
             "",
-            f"🎯 **Overview** ({grain_lbl}):",
+            f"🎯 **{overview_label.capitalize()}:**",
         ]
         for i, (_, r) in enumerate(sdf.iterrows()):
             p = _fmt_period(r.get("period", ""), grain)
@@ -192,50 +262,52 @@ class QuickInsightHandler:
                 pct, tag = transitions[i-1]
                 lines.append(f"  - {p}: **\\${v:,.0f}** {tag} {pct:+.1f}%")
 
-        # ── 💡 Insight ─────────────────────────────────────────
         lines += ["", "💡 **Insight:**"]
 
-        lines.append(
-            f"  - Strongest growth was in **{best_period}** (**{best_pct:+.1f}%**) — "
-            f"compare order count vs AOV between **{best_period}** and the prior period "
-            f"to determine whether this was volume-driven or value-driven."
-        )
+        # ── FIX-5: Severity-calibrated insight ───────────────
+        if situation == "decline_severe":
+            lines.append(
+                f"  - ⚠️ Sales dropped **{abs(overall_chg):.0f}%** — a decline of this magnitude "
+                f"indicates a significant structural shift, not normal fluctuation. "
+                f"Drill down by region and category to isolate the primary source."
+            )
+        elif situation == "decline_mild":
+            lines.append(
+                f"  - Sales declined **{abs(overall_chg):.0f}%** — check whether this is "
+                f"concentrated in one region or category, or spread across the business."
+            )
+        elif best_period and best_pct > 0:
+            lines.append(
+                f"  - Strongest growth was in **{best_period}** (**{best_pct:+.1f}%**) — "
+                f"compare order count vs AOV to determine whether this was volume-driven or value-driven."
+            )
 
-        if len(transitions) >= 2 and is_decel:
-            lines.append(
-                f"  - Growth rate eased from **{transitions[-2][0]:+.1f}%** to "
-                f"**{transitions[-1][0]:+.1f}%** — still strong, but the narrowing "
-                f"gap warrants checking whether it reflects market saturation or seasonal pattern."
-            )
-        else:
-            lines.append(
-                f"  - Momentum is **sustained** — last period (**{last_period}**) "
-                f"continued the positive trajectory with **{transitions[-1][0]:+.1f}%** growth."
-            )
+        if n >= 2 and len(transitions) >= 2:
+            if is_decel and situation not in ("decline_mild", "decline_severe"):
+                lines.append(
+                    f"  - Growth rate eased from **{transitions[-2][0]:+.1f}%** to "
+                    f"**{transitions[-1][0]:+.1f}%** — check whether this reflects market saturation "
+                    f"or a seasonal pattern."
+                )
+            elif not is_decel and overall_chg > 0:
+                lines.append(
+                    f"  - Momentum is **sustained** — last period (**{last_period}**) "
+                    f"continued the positive trajectory with **{transitions[-1][0]:+.1f}%** growth."
+                )
 
         if not top_reg_df.empty:
-            top_reg_v  = float(top_reg_df.iloc[0].get("sales", 0))
-            reg_share  = (top_reg_v / total * 100) if total else 0
+            top_reg_v = float(top_reg_df.iloc[0].get("sales", 0))
+            reg_share = (top_reg_v / total * 100) if total else 0
             lines.append(
                 f"  - **{top_reg}** contributes **{reg_share:.0f}%** of total sales "
-                f"(\\${top_reg_v:,.0f}) — verify whether its **{best_period}** performance "
-                f"spiked specifically, which would confirm it drove the headline growth."
+                f"(\\${top_reg_v:,.0f}) — "
+                + ("verify whether it drove the headline decline." if overall_chg < 0
+                   else f"verify whether its **{best_period}** performance spiked specifically.")
             )
 
-        if not top_cat_df.empty:
-            top_prod_v  = float(top_cat_df.iloc[0].get("sales", 0))
-            prod_share  = (top_prod_v / total * 100) if total else 0
-            lines.append(
-                f"  - **{top_prod}** holds **{prod_share:.0f}%** of total sales "
-                f"(\\${top_prod_v:,.0f}) — if its share grew in **{best_period}**, "
-                f"it's a product-mix driver; if flat, growth was market-wide."
-            )
-
-        # ── 🚀 Action ──────────────────────────────────────────
         transitions_text = "\n".join(
             f"  {_fmt_period(sdf.iloc[i-1].get('period',''), grain)} → "
-            f"{_fmt_period(sdf.iloc[i].get('period',''), grain)}: "
-            f"{transitions[i-1][0]:+.1f}%"
+            f"{_fmt_period(sdf.iloc[i].get('period',''), grain)}: {transitions[i-1][0]:+.1f}%"
             for i in range(1, n)
         )
         action_context = {
@@ -247,6 +319,7 @@ class QuickInsightHandler:
             "last_value":          last_v,
             "transitions_text":    transitions_text,
             "best_period":         best_period,
+            "best_pct":            best_pct,
             "top_product":         top_prod,
             "top_product_value":   float(top_cat_df.iloc[0].get("sales", 0)) if not top_cat_df.empty else 0,
             "top_product_share":   (float(top_cat_df.iloc[0].get("sales", 0)) / total * 100) if (not top_cat_df.empty and total) else 0,
@@ -256,10 +329,10 @@ class QuickInsightHandler:
             "is_decelerating":     is_decel,
             "last_transition_pct": self.last_transition_pct,
             "prev_transition_pct": self.prev_transition_pct,
+            "situation":           situation,   # FIX-6
         }
         action_text = self._generate_action("sales", action_context)
         lines += ["", "🚀 **Action:**", action_text]
-
         return "\n".join(lines)
 
     # ── Profit ────────────────────────────────────────────────
@@ -295,6 +368,7 @@ class QuickInsightHandler:
         overall_chg = (last_v - first_v) / abs(first_v) * 100 if first_v else 0
         word        = "grown" if overall_chg >= 0 else "declined"
         n           = len(sdf)
+        situation   = _classify_situation(overall_chg, n)  # FIX-6
 
         transitions = []
         for i in range(1, n):
@@ -305,12 +379,12 @@ class QuickInsightHandler:
             transitions.append((pct, tag))
 
         best        = max(range(len(transitions)), key=lambda i: transitions[i][0]) if transitions else 0
+        best_pct    = transitions[best][0] if transitions else 0
         best_period = _period_name(sdf, best + 1, grain) if transitions else self.last_label
         last_period = _fmt_period(sdf.iloc[-1].get("period", ""), grain)
         top_reg     = top_reg_df.iloc[0].get("breakdown", "—") if not top_reg_df.empty else "—"
         is_decel    = len(transitions) >= 2 and transitions[-1][0] < transitions[-2][0]
 
-        # ── Store metadata ─────────────────────────────────────
         self.best_period         = best_period
         self.top_region          = top_reg
         self.top_product         = ""
@@ -323,12 +397,21 @@ class QuickInsightHandler:
         self.first_value         = first_v
         self.last_value          = last_v
 
-        margin_health = "healthy" if overall_margin >= 12 else "tight"
+        # ── FIX-1: No hardcoded benchmark ────────────────────
+        # ── FIX-3: n_periods-aware header label ──────────────
+        overview_label = _trend_label(n, grain_lbl)
+
+        # FIX-3: For n=2, don't say "trend" in the summary line
+        if n == 2:
+            summary_period = f"from **{self.first_label}** to **{last_period}**"
+        else:
+            summary_period = grain_lbl
+
         lines += [
-            f"📌 Profit {word} **{abs(overall_chg):.0f}%** {grain_lbl} — "
-            f"margin currently **{overall_margin:.1f}%** ({margin_health}).",
+            f"📌 Profit {word} **{abs(overall_chg):.0f}%** {summary_period} — "
+            f"margin at **{overall_margin:.1f}%**.",
             "",
-            f"🎯 **Overview** ({grain_lbl}):",
+            f"🎯 **{overview_label.capitalize()}:**",
         ]
         for i, (_, r) in enumerate(sdf.iterrows()):
             p = _fmt_period(r.get("period", ""), grain)
@@ -341,32 +424,45 @@ class QuickInsightHandler:
 
         lines += ["", "💡 **Insight:**"]
 
+        # ── FIX-5: Insight severity calibration ──────────────
+        # OLD: "Profit remained positive across all periods — no structural loss-making"
+        # This was ALWAYS shown regardless of magnitude, hiding -91% signals.
+        # NEW: Override generic message when decline is severe.
         negatives = sdf[sdf["profit"] < 0]
-        if not negatives.empty:
+        if situation == "decline_severe":
+            lines.append(
+                f"  - ⚠️ Profit dropped **{abs(overall_chg):.0f}%** — a decline of this "
+                f"magnitude indicates a significant structural issue, not seasonal variation. "
+                f"While profit remains positive, the scale of the drop requires immediate investigation."
+            )
+        elif negatives.empty:
+            lines.append(
+                f"  - Profit remained **positive across all {n} {'periods' if n > 1 else 'period'}** — "
+                f"no structural loss-making detected in this timeframe."
+            )
+        else:
             lines.append(
                 f"  - ⚠️ **{len(negatives)} period(s)** recorded negative profit — "
                 f"cross-reference with discount rate in those periods to confirm causation."
             )
-        else:
-            lines.append(
-                f"  - Profit remained **positive across all {n} periods** — "
-                f"no structural loss-making detected in this timeframe."
-            )
 
-        if overall_margin < 10:
+        # ── FIX-3: Only show trend insight when n≥3 ──────────
+        # For n=2, we have one delta — can't say "trend is X"
+        if n >= 3:
+            if is_decel and overall_chg > 0:
+                lines.append(
+                    f"  - Profit growth is **slowing** ({transitions[-2][0]:+.1f}% → {transitions[-1][0]:+.1f}%) "
+                    f"— check whether this reflects margin compression or a natural volume plateau."
+                )
+            elif overall_chg > 30:
+                lines.append(
+                    f"  - Strong profit growth of **{overall_chg:.0f}%** over the period — "
+                    f"verify whether margin has been maintained or if growth is purely volume-driven."
+                )
+        elif n == 2 and situation not in ("decline_severe", "decline_mild"):
             lines.append(
-                f"  - ⚠️ Margin of **{overall_margin:.1f}%** is below the 12% retail benchmark — "
-                f"identify sub-categories with discount > 20% as the most likely drag."
-            )
-        elif overall_margin > 18:
-            lines.append(
-                f"  - Margin of **{overall_margin:.1f}%** is strong — "
-                f"pricing power is intact; priority is scaling order volume."
-            )
-        else:
-            lines.append(
-                f"  - Margin of **{overall_margin:.1f}%** is within healthy range — "
-                f"targeting 15–18% is achievable with discount discipline."
+                f"  - Single-period comparison: **{self.first_label}** (\\${first_v:,.0f}) → "
+                f"**{last_period}** (\\${last_v:,.0f}). More periods needed to confirm a trend."
             )
 
         if not top_reg_df.empty:
@@ -374,8 +470,9 @@ class QuickInsightHandler:
             reg_share = (top_reg_v / total_profit * 100) if total_profit else 0
             lines.append(
                 f"  - **{top_reg}** leads profitability at **\\${top_reg_v:,.0f}** "
-                f"({reg_share:.0f}% of total profit) — verify whether its margin trend "
-                f"in **{last_period}** mirrors the overall {word} pattern."
+                f"({reg_share:.0f}% of total profit) — "
+                + ("check how much it contributed to the overall decline." if overall_chg < -10
+                   else f"verify whether its margin trend in **{last_period}** mirrors the overall {word} pattern.")
             )
 
         transitions_text = "\n".join(
@@ -393,16 +490,17 @@ class QuickInsightHandler:
             "transitions_text":    transitions_text,
             "overall_margin":      overall_margin,
             "best_period":         best_period,
+            "best_pct":            best_pct,                    # FIX-4
             "top_region":          top_reg,
             "top_region_value":    float(top_reg_df.iloc[0].get("profit", 0)) if not top_reg_df.empty else 0,
             "top_region_share":    (float(top_reg_df.iloc[0].get("profit", 0)) / total_profit * 100) if (not top_reg_df.empty and total_profit) else 0,
             "is_decelerating":     is_decel,
             "last_transition_pct": self.last_transition_pct,
             "prev_transition_pct": self.prev_transition_pct,
+            "situation":           situation,                   # FIX-6
         }
         action_text = self._generate_action("profit", action_context)
         lines += ["", "🚀 **Action:**", action_text]
-
         return "\n".join(lines)
 
     # ── Orders ────────────────────────────────────────────────
@@ -437,6 +535,7 @@ class QuickInsightHandler:
         overall_chg = (last_v - first_v) / abs(first_v) * 100 if first_v else 0
         word        = "grown" if overall_chg >= 0 else "declined"
         n           = len(sdf)
+        situation   = _classify_situation(overall_chg, n)
 
         transitions = []
         for i in range(1, n):
@@ -447,11 +546,11 @@ class QuickInsightHandler:
             transitions.append((pct, tag))
 
         best        = max(range(len(transitions)), key=lambda i: transitions[i][0]) if transitions else 0
+        best_pct    = transitions[best][0] if transitions else 0
         best_period = _period_name(sdf, best + 1, grain) if transitions else ""
         last_period = _fmt_period(sdf.iloc[-1].get("period", ""), grain)
         is_decel    = len(transitions) >= 2 and transitions[-1][0] < transitions[-2][0]
 
-        # ── Store metadata ─────────────────────────────────────
         self.best_period         = best_period
         self.top_region          = ""
         self.top_product         = ""
@@ -464,11 +563,17 @@ class QuickInsightHandler:
         self.first_value         = first_v
         self.last_value          = last_v
 
+        overview_label = _trend_label(n, grain_lbl)
+        if n == 2:
+            summary_period = f"from **{self.first_label}** to **{last_period}**"
+        else:
+            summary_period = grain_lbl
+
         lines += [
-            f"📌 Orders {word} **{abs(overall_chg):.0f}%** {grain_lbl} — "
+            f"📌 Orders {word} **{abs(overall_chg):.0f}%** {summary_period} — "
             f"**{total_orders:,}** total orders, avg **\\${aov:,.0f}** per order.",
             "",
-            f"🎯 **Overview** ({grain_lbl}):",
+            f"🎯 **{overview_label.capitalize()}:**",
         ]
         for i, (_, r) in enumerate(sdf.iterrows()):
             p = _fmt_period(r.get("period", ""), grain)
@@ -480,28 +585,33 @@ class QuickInsightHandler:
                 lines.append(f"  - {p}: **{v:,} orders** {tag} {pct:+.1f}%")
 
         lines += ["", "💡 **Insight:**"]
-        lines.append(
-            f"  - AOV of **\\${aov:,.0f}** — "
-            + ("above $400 suggests high-value items; cross-sell opportunity is strong."
-               if aov > 400 else
-               "below $400 suggests lower-value items; bundle strategy could increase basket size.")
-        )
-        if len(transitions) >= 2:
+
+        if situation == "decline_severe":
+            lines.append(
+                f"  - ⚠️ Orders dropped **{abs(overall_chg):.0f}%** — "
+                f"from **{int(first_v):,}** to **{int(last_v):,}**. "
+                f"This is a significant demand reduction; check whether it's segment-specific "
+                f"or business-wide."
+            )
+        else:
+            lines.append(
+                f"  - AOV of **\\${aov:,.0f}** — "
+                + ("above $400 suggests high-value items; cross-sell opportunity is strong."
+                   if aov > 400 else
+                   "below $400 suggests lower-value items; bundle strategy could increase basket size.")
+            )
+
+        if n >= 3 and len(transitions) >= 2:
             recent_avg = sum(t[0] for t in transitions[-2:]) / 2
             if recent_avg > 10:
                 lines.append(
                     f"  - Recent momentum is **accelerating** — last 2 periods "
-                    f"averaged **+{recent_avg:.0f}%** growth, above the full-period average."
+                    f"averaged **+{recent_avg:.0f}%** growth."
                 )
             elif recent_avg < -5:
                 lines.append(
                     f"  - ⚠️ Recent momentum is **slowing** — last 2 periods "
                     f"averaged **{recent_avg:.0f}%**; check demand signals in **{last_period}**."
-                )
-            else:
-                lines.append(
-                    f"  - Order volume is **stable** — last 2 periods averaged "
-                    f"**{recent_avg:+.0f}%**, no dramatic acceleration or reversal."
                 )
 
         transitions_text = "\n".join(
@@ -518,15 +628,16 @@ class QuickInsightHandler:
             "last_value":          last_v,
             "transitions_text":    transitions_text,
             "best_period":         best_period,
+            "best_pct":            best_pct,
             "aov":                 aov,
             "total_orders":        total_orders,
             "is_decelerating":     is_decel,
             "last_transition_pct": self.last_transition_pct,
             "prev_transition_pct": self.prev_transition_pct,
+            "situation":           situation,
         }
         action_text = self._generate_action("orders", action_context)
         lines += ["", "🚀 **Action:**", action_text]
-
         return "\n".join(lines)
 
     # ── Profit Margin ─────────────────────────────────────────
@@ -552,7 +663,6 @@ class QuickInsightHandler:
             "top_k": 3, "order_by": "profit_margin"})
 
         overall_margin = float(self.kpis.get("profit_margin", 0))
-        vs_benchmark   = overall_margin - 12.0
         lines          = []
 
         if trend_df.empty or "period" not in trend_df.columns:
@@ -564,6 +674,7 @@ class QuickInsightHandler:
         delta   = last_v - first_v
         word    = "improved" if delta >= 0 else "compressed"
         n       = len(sdf)
+        situation = _classify_situation(delta * 5, n)  # scale pp for classifier
 
         transitions = []
         for i in range(1, n):
@@ -574,12 +685,12 @@ class QuickInsightHandler:
             transitions.append((diff, tag))
 
         best        = max(range(len(transitions)), key=lambda i: transitions[i][0]) if transitions else 0
+        best_pct    = transitions[best][0] if transitions else 0
         best_period = _period_name(sdf, best + 1, grain) if transitions else ""
         last_period = _fmt_period(sdf.iloc[-1].get("period", ""), grain)
         lowest_cat  = top_cat_df.iloc[-1].get("breakdown", "—") if not top_cat_df.empty else "—"
         is_decel    = len(transitions) >= 2 and transitions[-1][0] < transitions[-2][0]
 
-        # ── Store metadata ─────────────────────────────────────
         self.best_period         = best_period
         self.top_region          = ""
         self.top_product         = lowest_cat
@@ -592,13 +703,19 @@ class QuickInsightHandler:
         self.first_value         = first_v
         self.last_value          = last_v
 
-        benchmark_str = "above" if vs_benchmark >= 0 else "below"
+        overview_label = _trend_label(n, grain_lbl)
+
+        # FIX-3: n=2 summary language
+        if n == 2:
+            summary_period = f"from **{self.first_label}** to **{last_period}**"
+        else:
+            summary_period = grain_lbl
+
         lines += [
             f"📌 Profit margin {word} from **{first_v:.1f}%** to **{last_v:.1f}%** "
-            f"({delta:+.1f}pp) — currently **{abs(vs_benchmark):.1f}pp {benchmark_str}** "
-            f"the 12% retail benchmark.",
+            f"({delta:+.1f}pp) — current margin **{overall_margin:.1f}%**.",
             "",
-            f"🎯 **Overview** ({grain_lbl}):",
+            f"🎯 **{overview_label.capitalize()}:**",
         ]
         for i, (_, r) in enumerate(sdf.iterrows()):
             p = _fmt_period(r.get("period", ""), grain)
@@ -610,11 +727,16 @@ class QuickInsightHandler:
                 lines.append(f"  - {p}: **{v:.1f}%** {tag} {diff:+.1f}pp")
 
         lines += ["", "💡 **Insight:**"]
-        if delta < -2:
+
+        # FIX-3: only show "further comparison needed" for n=2
+        if n < 3:
             lines.append(
-                f"  - ⚠️ Margin compressed **{abs(delta):.1f}pp** over the period — "
-                f"check whether average discount rate rose or product mix shifted "
-                f"toward lower-margin items in the same window."
+                f"  - Only **{n} period(s)** available — further data needed to confirm a trend direction."
+            )
+        elif delta < -2:
+            lines.append(
+                f"  - ⚠️ Margin compressed **{abs(delta):.1f}pp** — check whether average "
+                f"discount rate rose or product mix shifted toward lower-margin items."
             )
         elif delta > 2:
             lines.append(
@@ -624,11 +746,10 @@ class QuickInsightHandler:
         else:
             lines.append(
                 f"  - Margin is **stable** ({delta:+.1f}pp total change) — "
-                f"no structural shift detected, but still {abs(vs_benchmark):.1f}pp "
-                f"{'above' if vs_benchmark >= 0 else 'below'} the 12% benchmark."
+                f"no structural shift detected in this period."
             )
 
-        if not top_cat_df.empty:
+        if not top_cat_df.empty and n >= 2:
             cat_lines = [
                 f"**{r.get('breakdown','—')}** ({float(r.get('profit_margin',0)):.1f}%)"
                 for _, r in top_cat_df.head(3).iterrows()
@@ -653,58 +774,65 @@ class QuickInsightHandler:
             "last_value":          last_v,
             "transitions_text":    transitions_text,
             "overall_margin":      overall_margin,
-            "vs_benchmark":        vs_benchmark,
             "best_period":         best_period,
+            "best_pct":            best_pct,
             "lowest_margin_cat":   lowest_cat,
             "lowest_margin_val":   float(top_cat_df.iloc[-1].get("profit_margin", 0)) if not top_cat_df.empty else 0,
             "is_decelerating":     is_decel,
             "last_transition_pct": self.last_transition_pct,
             "prev_transition_pct": self.prev_transition_pct,
+            "situation":           situation,
         }
         action_text = self._generate_action("profit_margin", action_context)
         lines += ["", "🚀 **Action:**", action_text]
-
         return "\n".join(lines)
 
     # ── Action generator ──────────────────────────────────────
 
     def _generate_action(self, kpi: str, context: dict) -> str:
-        """
-        LLM-generated action with quality gate:
-        - Must contain at least 1 number per action
-        - Must have 2 lines
-        - Falls back to rule-based if quality check fails
-        """
         if not self.insight.client or not self.insight.model_name:
             return self._fallback_action(kpi, context)
 
-        is_decel    = context.get("is_decelerating", False)
+        situation   = context.get("situation", "stable")
         best_period = context.get("best_period", "peak period")
-        top_region  = context.get("top_region",  "top region")
-        top_product = context.get("top_product", "top sub-category")
+        best_pct    = context.get("best_pct", 0)
+        last_period = context.get("last_label", "most recent period")
+        is_decel    = context.get("is_decelerating", False)
+
+        # FIX-4: Build best_period_label dynamically
+        best_period_label = _best_period_label(best_pct)
 
         prompt = f"""You are a senior business analyst. Write exactly 2 SPECIFIC next actions.
 
 DATA:
 - KPI: {kpi.upper()}
+- Situation: {situation}
 - Period: {context.get('period_range', 'N/A')}
 - Trend: {context.get('first_label')} ${context.get('first_value', 0):,.0f} → {context.get('last_label')} ${context.get('last_value', 0):,.0f} ({context.get('overall_change_pct', 0):+.1f}%)
 - Period transitions:
 {context.get('transitions_text', 'N/A')}
-- Strongest period: {best_period}
-- Top region: {top_region} (${context.get('top_region_value', 0):,.0f}, {context.get('top_region_share', 0):.0f}%)
-- Top sub-category: {top_product} (${context.get('top_product_value', 0):,.0f}, {context.get('top_product_share', 0):.0f}%)
-- Overall margin: {context.get('overall_margin', 'N/A')}
-- Deceleration: {is_decel} (last: {context.get('last_transition_pct', 0):+.1f}%, prev: {context.get('prev_transition_pct', 0):+.1f}%)
+- {best_period_label}: {best_period} ({best_pct:+.1f}%)
+- Most recent period: {last_period}
+- Top region: {context.get('top_region', 'N/A')} (${context.get('top_region_value', 0):,.0f}, {context.get('top_region_share', 0):.0f}%)
+- Top sub-category: {context.get('top_product', 'N/A')} (${context.get('top_product_value', 0):,.0f}, {context.get('top_product_share', 0):.0f}%)
+- Deceleration: {is_decel}
 
-RULES (ALL MANDATORY — violation = your output is discarded):
-1. EACH action MUST contain at least one specific number (%, $, or count) from DATA
-2. Start with: Compare / Drill into / Audit / Cap / Shift / Investigate / Quantify
+SITUATION-SPECIFIC RULES:
+{
+"- Situation is DECLINE_SEVERE (>40% drop). Actions must be DIAGNOSTIC, not prescriptive." +
+"\\n- DO NOT suggest 'cap discounts' — we don't have evidence discount is the cause." +
+"\\n- Action 1: identify WHERE the decline is concentrated (region? category? segment?)" +
+"\\n- Action 2: identify WHAT changed — sales volume, margin, or both?"
+if situation == "decline_severe" else
+"- Situation is " + situation + ". Use standard analytical approach."
+}
+
+MANDATORY RULES (violation = output discarded):
+1. Each action MUST contain at least one specific number from DATA
+2. Start with: Compare / Drill into / Audit / Cap / Shift / Quantify / Break down
 3. One sentence per action, ending with a period
-4. "Investigate root causes" = REJECTED (too vague, no number)
-5. "Monitor trends" = REJECTED (too vague, no number)
-6. Action 1: diagnose {f"WHERE the {context.get('prev_transition_pct',0):+.1f}%→{context.get('last_transition_pct',0):+.1f}% deceleration is concentrated" if is_decel else f"HOW to scale the {context.get('last_transition_pct',0):+.1f}% growth from {best_period}"}
-7. Action 2: target {top_product} ({context.get('top_product_share',0):.0f}% of total) or {top_region}
+4. TIME RULE: Never say 'in {best_period}' as action target. Use 'going forward' or '{last_period}'
+5. {best_period} is a {best_period_label} — label it correctly if referenced
 
 FORMAT: Exactly 2 lines. Each line: "- <action sentence>"
 """
@@ -725,28 +853,29 @@ FORMAT: Exactly 2 lines. Each line: "- <action sentence>"
                     line = line.strip()
                     if not line:
                         continue
-                    # Strip prefixes
                     line = line.lstrip("0123456789.)•–—*·").strip()
                     if line.startswith("- "):
                         line = line[2:].strip()
                     if line:
                         out_lines.append(line)
 
-                # ── QUALITY GATE: reject generic lines ────────
                 valid_lines = []
                 for line in out_lines[:3]:
                     has_number    = bool(_re.search(r'\d', line))
                     is_too_vague  = bool(_re.search(
                         r'\b(investigate root causes?|monitor trends?|review strategy|'
-                        r'explore opportunities?|consider|evaluate|assess)\b',
+                        r'explore opportunities?)\b',
                         line, _re.IGNORECASE
                     ))
-                    if has_number and not is_too_vague:
+                    is_past_action = (
+                        bool(_re.search(r'\bin\s+\d{4}\b(?!.*compared|.*vs|.*versus|.*than)', line, _re.IGNORECASE))
+                        and best_period in line
+                    )
+                    if has_number and not is_too_vague and not is_past_action:
                         valid_lines.append(f"  - {line}")
 
                 if len(valid_lines) >= 2:
                     return "\n".join(valid_lines[:2])
-                # Partial: use what's valid + fill rest from fallback
                 if len(valid_lines) == 1:
                     fallback_lines = self._fallback_action(kpi, context).strip().splitlines()
                     fallback_lines = [l for l in fallback_lines if l.strip()]
@@ -759,68 +888,160 @@ FORMAT: Exactly 2 lines. Each line: "- <action sentence>"
         return self._fallback_action(kpi, context)
 
     def _fallback_action(self, kpi: str, context: dict) -> str:
-        """Rule-based fallback — always produces specific numbers."""
+        """
+        FIX-6: Context-aware action templates routed by situation_type.
+
+        situation_type → action template mapping:
+          decline_severe  → DIAGNOSTIC (where/what, not prescriptive)
+          decline_mild    → DIAGNOSTIC-MILD (narrow down)
+          growth_*        → PRESCRIPTIVE (scale, optimize)
+          stable          → PRESCRIPTIVE (incremental)
+
+        WHY: A -91% profit drop cannot be addressed with "cap discounts at 20%"
+        because we have no evidence discounting is the cause. The correct response
+        is to diagnose FIRST, then prescribe. We only know two things: the magnitude
+        and the region distribution — that's what we act on.
+        """
         top_region  = context.get("top_region",  "top region")
         top_product = context.get("top_product", "top sub-category")
         best_period = context.get("best_period", "peak period")
+        best_pct    = context.get("best_pct", 0.0)
+        last_period = context.get("last_label",  "most recent period")
         is_decel    = context.get("is_decelerating", False)
         last_pct    = context.get("last_transition_pct", 0)
         prev_pct    = context.get("prev_transition_pct", 0)
+        situation   = context.get("situation", "stable")
+        overall_chg = context.get("overall_change_pct", 0)
+        best_period_label = _best_period_label(best_pct)   # FIX-4
 
         if kpi == "sales":
-            if is_decel:
+            if situation == "decline_severe":
                 a1 = (
-                    f"  - Drill into **{top_region}** order data — compare order count vs AOV "
-                    f"between **{best_period}** and {context.get('last_label','last period')} "
-                    f"to explain the {prev_pct:+.1f}%→{last_pct:+.1f}% deceleration."
+                    f"  - Break down the **{abs(overall_chg):.0f}%** sales decline by region — "
+                    f"determine whether **{top_region}** ({context.get('top_region_share',0):.0f}% "
+                    f"of total) led the drop or if it was spread across all regions."
+                )
+                a2 = (
+                    f"  - Compare order count vs AOV between **{best_period}** "
+                    f"({best_period_label}, {best_pct:+.1f}%) and **{last_period}** — "
+                    f"a volume drop means demand loss; an AOV drop means pricing or mix shift."
+                )
+            elif situation == "decline_mild":
+                a1 = (
+                    f"  - Drill into **{top_region}** ({context.get('top_region_share',0):.0f}% of total) "
+                    f"to identify whether the **{last_pct:+.1f}%** change is concentrated there "
+                    f"or spread across all regions."
+                )
+                a2 = (
+                    f"  - Audit **{top_product}** ({context.get('top_product_share',0):.0f}% of total, "
+                    f"\\${context.get('top_product_value',0):,.0f}) performance in **{last_period}** "
+                    f"vs baseline to check for category-level weakness."
                 )
             else:
-                a1 = (
-                    f"  - Quantify **{top_region}**'s ({context.get('top_region_share',0):.0f}% of total) "
-                    f"contribution to the **{last_pct:+.1f}%** growth in "
-                    f"**{context.get('last_label','last period')}** — if outsized, replicate its playbook."
+                if is_decel:
+                    a1 = (
+                        f"  - Drill into **{top_region}** order data — compare order count vs AOV "
+                        f"between **{best_period}** and **{last_period}** to explain "
+                        f"the {prev_pct:+.1f}%→{last_pct:+.1f}% deceleration."
+                    )
+                else:
+                    a1 = (
+                        f"  - Quantify **{top_region}**'s ({context.get('top_region_share',0):.0f}% of total) "
+                        f"contribution to the **{last_pct:+.1f}%** growth in **{last_period}** — "
+                        f"if outsized, replicate its playbook going forward."
+                    )
+                a2 = (
+                    f"  - Audit **{top_product}** ({context.get('top_product_share',0):.0f}% of total, "
+                    f"\\${context.get('top_product_value',0):,.0f}) share compared to **{best_period}** "
+                    f"({best_period_label}) — rising share = product-mix driver, flat = market-wide lift."
                 )
-            a2 = (
-                f"  - Audit **{top_product}** ({context.get('top_product_share',0):.0f}% of total, "
-                f"\\${context.get('top_product_value',0):,.0f}) share in **{best_period}** vs baseline — "
-                f"rising share = product-mix driver, flat share = market-wide lift."
-            )
 
         elif kpi == "profit":
-            a1 = (
-                f"  - Cap discounts at 20% in **{top_region}** "
-                f"(\\${context.get('top_region_value',0):,.0f} profit, "
-                f"{context.get('top_region_share',0):.0f}% of total) — "
-                f"this is the fastest lever to close the gap to 15% margin "
-                f"from the current **{context.get('overall_margin',0):.1f}%**."
-            )
-            a2 = (
-                f"  - Shift sales mix in **{best_period}** toward highest-margin categories to lift "
-                f"overall margin from **{context.get('overall_margin',0):.1f}%** toward 15%."
-            )
+            if situation == "decline_severe":
+                # FIX-6: For severe decline, diagnose — don't prescribe "cap discount"
+                a1 = (
+                    f"  - Break down the **{abs(overall_chg):.0f}%** profit decline by region and category — "
+                    f"**{top_region}** holds {context.get('top_region_share',0):.0f}% of remaining profit "
+                    f"(\\${context.get('top_region_value',0):,.0f}); determine if it also led the decline."
+                )
+                a2 = (
+                    f"  - Compare category mix in **{best_period}** ({best_period_label}) vs "
+                    f"**{last_period}** — identify whether higher-margin categories shrank in share "
+                    f"or whether discounting rose, then prioritise the confirmed driver."
+                )
+            elif situation == "decline_mild":
+                a1 = (
+                    f"  - Drill into **{top_region}** (\\${context.get('top_region_value',0):,.0f}, "
+                    f"{context.get('top_region_share',0):.0f}% of total profit) — "
+                    f"check whether its margin compressed in **{last_period}** vs **{best_period}**."
+                )
+                a2 = (
+                    f"  - Review discount levels in the current period vs **{best_period}** "
+                    f"({best_period_label}) — if avg discount rose, that is the most likely driver "
+                    f"of the **{abs(overall_chg):.0f}%** profit drop."
+                )
+            else:
+                # Growth — FIX-2: forward-looking, not "shift in {best_period}"
+                a1 = (
+                    f"  - Cap discounts at 20% in **{top_region}** "
+                    f"(\\${context.get('top_region_value',0):,.0f} profit, "
+                    f"{context.get('top_region_share',0):.0f}% of total) — "
+                    f"fastest lever to improve margin from the current "
+                    f"**{context.get('overall_margin',0):.1f}%**."
+                )
+                a2 = (
+                    f"  - Shift sales mix going forward toward highest-margin categories — "
+                    f"compare category mix in **{best_period}** ({best_period_label}) vs "
+                    f"**{last_period}** to identify which categories to prioritise."
+                )
 
         elif kpi == "orders":
             aov = context.get("aov", 0)
-            a1 = (
-                f"  - Compare order count vs AOV between **{best_period}** and the prior period — "
-                f"determine whether the **{last_pct:+.1f}%** {'deceleration' if is_decel else 'growth'} "
-                f"is volume-driven or basket-size-driven at \\${aov:,.0f} AOV."
-            )
-            a2 = (
-                f"  - Launch bundles targeting AOV > \\${aov*1.1:,.0f} (+10%) — "
-                f"applied to **{context.get('total_orders',0):,}** orders, "
-                f"that's a direct \\${aov*0.1*context.get('total_orders',0):,.0f} revenue lift."
-            )
+            if situation in ("decline_severe", "decline_mild"):
+                a1 = (
+                    f"  - Break down the **{abs(overall_chg):.0f}%** order decline by segment — "
+                    f"determine whether demand dropped uniformly or is concentrated in specific customer groups."
+                )
+                a2 = (
+                    f"  - Compare order count and AOV between **{best_period}** ({best_period_label}) "
+                    f"and **{last_period}** — if AOV held but volume fell, the issue is acquisition; "
+                    f"if AOV fell, it's pricing or mix."
+                )
+            else:
+                a1 = (
+                    f"  - Compare order count vs AOV between **{best_period}** ({best_period_label}) "
+                    f"and **{last_period}** — determine whether the **{last_pct:+.1f}%** "
+                    f"{'deceleration' if is_decel else 'growth'} is volume-driven or basket-size-driven "
+                    f"at \\${aov:,.0f} AOV."
+                )
+                a2 = (
+                    f"  - Launch bundles targeting AOV > \\${aov*1.1:,.0f} (+10%) — "
+                    f"applied to **{context.get('total_orders',0):,}** orders, "
+                    f"that's a direct \\${aov*0.1*context.get('total_orders',0):,.0f} revenue lift."
+                )
 
         else:  # profit_margin
-            a1 = (
-                f"  - Cap discounts at 20% in **{context.get('lowest_margin_cat','lowest-margin category')}** "
-                f"({context.get('lowest_margin_val',0):.1f}% margin) — fastest lever to recover "
-                f"the **{abs(context.get('vs_benchmark',0)):.1f}pp gap** vs the 12% benchmark."
-            )
-            a2 = (
-                f"  - Shift sales mix toward highest-margin category to lift overall "
-                f"margin from **{context.get('overall_margin',0):.1f}%** toward 15%."
-            )
+            if situation in ("decline_severe", "decline_mild"):
+                a1 = (
+                    f"  - Break down margin by category in **{last_period}** vs **{best_period}** "
+                    f"({best_period_label}) — **{context.get('lowest_margin_cat','lowest-margin category')}** "
+                    f"at {context.get('lowest_margin_val',0):.1f}% is the priority to investigate."
+                )
+                a2 = (
+                    f"  - Check whether average discount rose between **{best_period}** and "
+                    f"**{last_period}** — if yes, discounting is the driver; "
+                    f"if no, the issue is product mix or cost structure."
+                )
+            else:
+                a1 = (
+                    f"  - Cap discounts at 20% in **{context.get('lowest_margin_cat','lowest-margin category')}** "
+                    f"({context.get('lowest_margin_val',0):.1f}% margin) — "
+                    f"fastest lever to recover margin compression."
+                )
+                a2 = (
+                    f"  - Compare category mix in **{best_period}** ({best_period_label}) vs "
+                    f"**{last_period}** — identify whether highest-margin categories grew or "
+                    f"shrank in share and adjust the sales focus accordingly."
+                )
 
         return f"{a1}\n{a2}"

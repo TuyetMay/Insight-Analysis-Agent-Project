@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 import socket
 from contextlib import contextmanager
+import threading
 from typing import Any, Dict, Generator, Optional
 
 import pandas as pd
@@ -20,6 +21,8 @@ from config import Config
 
 logger = logging.getLogger(__name__)
 
+_pool_lock = threading.Lock()
+_shared_pool: Optional[psycopg2.pool.ThreadedConnectionPool] = None
 
 def _resolve_ipv4(hostname: str) -> Optional[str]:
     try:
@@ -31,36 +34,47 @@ def _resolve_ipv4(hostname: str) -> Optional[str]:
     return None
 
 
-def _get_pool() -> Optional[psycopg2.pool.SimpleConnectionPool]:
+def _get_pool() -> Optional[psycopg2.pool.ThreadedConnectionPool]:
     """
-    Get or create connection pool.
-    FIXED: No longer uses @st.cache_resource to avoid caching None permanently.
-    Pool is stored in st.session_state so it can be reset on retry.
+    Module-level singleton pool — shared across all Streamlit sessions.
+    ThreadedConnectionPool thay vì SimpleConnectionPool để thread-safe.
     """
-    # Check if we have a valid cached pool
-    if "db_pool" in st.session_state and st.session_state["db_pool"] is not None:
-        return st.session_state["db_pool"]
-
-    # Try to create a new pool
-    host = _resolve_ipv4(Config.DB_HOST) or Config.DB_HOST
-    try:
-        p = psycopg2.pool.SimpleConnectionPool(
-            minconn=1,
-            maxconn=10,
-            host=host,
-            port=int(Config.DB_PORT),
-            dbname=Config.DB_NAME,
-            user=Config.DB_USER,
-            password=Config.DB_PASSWORD,
-            sslmode="require",
-            connect_timeout=10,
-        )
-        st.session_state["db_pool"] = p
-        return p
-    except Exception as exc:
-        logger.error("Failed to create connection pool: %s", exc)
-        st.session_state["db_pool"] = None   # store None but don't cache permanently
-        return None
+    global _shared_pool
+    if _shared_pool is not None:
+        return _shared_pool
+ 
+    with _pool_lock:
+        if _shared_pool is not None:          # double-check sau khi acquire lock
+            return _shared_pool
+        host = _resolve_ipv4(Config.DB_HOST) or Config.DB_HOST
+        try:
+            _shared_pool = psycopg2.pool.ThreadedConnectionPool(
+                minconn=2,
+                maxconn=15,                   # tổng connections dùng chung
+                host=host,
+                port=int(Config.DB_PORT),
+                dbname=Config.DB_NAME,
+                user=Config.DB_USER,
+                password=Config.DB_PASSWORD,
+                sslmode="require",
+                connect_timeout=10,
+            )
+            logger.info("DB pool created (shared, threaded)")
+            return _shared_pool
+        except Exception as exc:
+            logger.error("Failed to create shared pool: %s", exc)
+            return None
+ 
+def reset_pool() -> None:
+    """Gọi từ UI retry button để force-rebuild pool."""
+    global _shared_pool
+    with _pool_lock:
+        if _shared_pool:
+            try:
+                _shared_pool.closeall()
+            except Exception:
+                pass
+        _shared_pool = None
 
 
 @contextmanager
