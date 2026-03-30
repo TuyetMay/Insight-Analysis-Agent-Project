@@ -2,6 +2,9 @@
 chatbot/answer_formatter.py
 Converts a validated plan + result DataFrame into a nicely formatted Markdown string.
 Pure presentation logic — no LLM, no DB calls.
+
+FIX: _format_trend with breakdown now groups by segment and calculates
+     YoY within the same segment (not across consecutive rows).
 """
 
 from __future__ import annotations
@@ -230,7 +233,6 @@ class AnswerFormatter:
             show_extremes = plan.get("show_extremes", False)
 
             # ── Cross-breakdown: region × category tree layout ──
-            # Must be checked FIRST, before show_extremes logic
             if "breakdown2" in df.columns:
                 dim1_label   = breakdown.replace("_", " ").title()
                 dim2_label   = (plan.get("secondary_breakdown") or "").replace("_", " ").title()
@@ -374,6 +376,10 @@ class AnswerFormatter:
 
         return "\n".join(lines)
 
+    # ──────────────────────────────────────────────────────────
+    # FIX: _format_trend — properly handles breakdown dimension
+    # ──────────────────────────────────────────────────────────
+
     def _format_trend(self, plan: Dict[str, Any], df: pd.DataFrame,
                       metrics: List[str], grain: str, breakdown: Any, ctx_line: str) -> str:
         grain_label = {
@@ -381,6 +387,20 @@ class AnswerFormatter:
             "quarter": "quarter", "year": "year"
         }.get(grain, grain)
         metric_str  = " & ".join(_METRIC_LABELS.get(m, m) for m in metrics)
+
+        # ──────────────────────────────────────────────────────
+        # FIXED: When breakdown exists, group by breakdown and
+        # calculate YoY WITHIN the same breakdown value.
+        # OLD BUG: compared consecutive rows regardless of segment,
+        # e.g. Consumer 2014 vs Corporate 2014 → wrong % change.
+        # ──────────────────────────────────────────────────────
+        if breakdown and "breakdown" in df.columns:
+            return self._format_trend_grouped(
+                plan, df, metrics, grain, breakdown, ctx_line,
+                metric_str, grain_label
+            )
+
+        # ── Original logic: no breakdown ──────────────────────
         lines = [f"Here's the **{metric_str}** trend by {grain_label}:{ctx_line}", ""]
 
         def fmt_period(raw_period: Any, grain: str) -> str:
@@ -402,10 +422,6 @@ class AnswerFormatter:
         show = df.copy()
         if "period" in show.columns:
             show = show.sort_values("period").tail(24)
-        if breakdown and "breakdown" in show.columns:
-            m0   = metrics[0]
-            top5 = show.groupby("breakdown")[m0].sum().sort_values(ascending=False).head(5).index.tolist()
-            show = show[show["breakdown"].isin(top5)]
 
         rows_list = list(show.iterrows())
         for i, (_, r) in enumerate(rows_list):
@@ -422,12 +438,123 @@ class AnswerFormatter:
                     arrow = "📈" if chg >= 0 else "📉"
                     yoy_note = f"  {arrow} {chg:+.1f}% vs {fmt_period(rows_list[i-1][1].get('period',''), grain)}"
 
-            prefix = f"{p} | {r.get('breakdown')}" if breakdown else p
-            lines.append(f"- **{prefix}:** {vals}{yoy_note}")
+            lines.append(f"- **{p}:** {vals}{yoy_note}")
 
-        # ── REMOVED: hard 32-line truncation limit ──
-        # The old limit was cutting off the insight section that follows.
-        # All periods are now shown (capped at 24 by .tail(24) above).
+        return "\n".join(lines)
+
+    # ──────────────────────────────────────────────────────────
+    # NEW: Grouped trend formatter (segment-first layout)
+    # ──────────────────────────────────────────────────────────
+
+    def _format_trend_grouped(self, plan: Dict[str, Any], df: pd.DataFrame,
+                              metrics: List[str], grain: str, breakdown: str,
+                              ctx_line: str, metric_str: str,
+                              grain_label: str) -> str:
+        """
+        Format trend data grouped by breakdown dimension.
+
+        Output structure:
+            **Consumer**
+              - 2014: $24,320 *(baseline)*
+              - 2015: $28,460  📈 +17.0%
+              - 2016: $35,771  📈 +25.7%
+              - 2017: $45,568  📈 +27.4%
+              *Overall: +87.3% ($24,320 → $45,568)*
+
+            **Corporate**
+              ...
+
+        This ensures YoY % is always comparing the SAME segment
+        across consecutive periods.
+        """
+        m0        = plan.get("order_by") or metrics[0]
+        dim_label = breakdown.replace("_", " ").title()
+
+        lines = [
+            f"Here's **{metric_str}** by **{dim_label}** — {grain_label} trend:{ctx_line}",
+            "",
+        ]
+
+        def fmt_period(raw_period: Any) -> str:
+            s = str(raw_period)
+            if grain == "year":    return s[:4]
+            elif grain == "quarter":
+                try:
+                    dt = datetime.strptime(s[:10], "%Y-%m-%d")
+                    return f"{dt.year} Q{(dt.month - 1) // 3 + 1}"
+                except Exception:
+                    return s[:7]
+            elif grain == "month": return s[:7]
+            else:                  return s[:10]
+
+        # Sort by period within each group, rank groups by total metric desc
+        group_totals = df.groupby("breakdown")[m0].sum().sort_values(ascending=False)
+
+        # Grand total for share calculation
+        grand_total = float(group_totals.sum()) if not group_totals.empty else 0
+
+        for bk_name in group_totals.index:
+            bk_df = df[df["breakdown"] == bk_name].copy()
+            if "period" in bk_df.columns:
+                bk_df = bk_df.sort_values("period")
+
+            bk_total = float(group_totals[bk_name])
+            share    = (bk_total / grand_total * 100) if grand_total else 0
+
+            lines.append(f"**{bk_name}** ({share:.0f}% of total)")
+
+            prev_v = None
+            first_v = None
+            last_v  = None
+            for _, r in bk_df.iterrows():
+                p = fmt_period(r.get("period", ""))
+                v = float(r.get(m0, 0))
+                vals = " / ".join(self._fv(float(r[m]), m) for m in metrics if m in r)
+
+                if first_v is None:
+                    first_v = v
+
+                last_v = v
+
+                if prev_v is not None and prev_v != 0:
+                    chg = (v - prev_v) / abs(prev_v) * 100
+                    arrow = "🚀" if chg >= 20 else ("📈" if chg >= 5 else ("📉" if chg < 0 else "➡️"))
+                    lines.append(f"  - {p}: {vals}  {arrow} {chg:+.1f}%")
+                else:
+                    lines.append(f"  - {p}: {vals} *(baseline)*")
+
+                prev_v = v
+
+            # Overall change for this segment
+            if first_v is not None and last_v is not None and len(bk_df) >= 2:
+                if first_v != 0:
+                    overall = (last_v - first_v) / abs(first_v) * 100
+                    word = "up" if overall >= 0 else "down"
+                    lines.append(
+                        f"  *Overall: {word} {abs(overall):.1f}% "
+                        f"({self._fv(first_v, m0)} → {self._fv(last_v, m0)})*"
+                    )
+            lines.append("")
+
+        # ── Summary: total across all segments per period ─────
+        if "period" in df.columns and len(group_totals) > 1:
+            period_totals = (
+                df.groupby("period")[m0].sum()
+                .sort_index()
+            )
+            if len(period_totals) >= 2:
+                total_first = float(period_totals.iloc[0])
+                total_last  = float(period_totals.iloc[-1])
+                if total_first != 0:
+                    total_chg = (total_last - total_first) / abs(total_first) * 100
+                    p_first = fmt_period(period_totals.index[0])
+                    p_last  = fmt_period(period_totals.index[-1])
+                    lines.append(
+                        f"**Total across all {dim_label}s:** "
+                        f"{self._fv(total_first, m0)} ({p_first}) → "
+                        f"{self._fv(total_last, m0)} ({p_last}) — "
+                        f"**{total_chg:+.1f}%** overall"
+                    )
 
         return "\n".join(lines)
 
