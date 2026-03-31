@@ -1,36 +1,169 @@
 """
 rag/retriever.py
-Lightweight TF-IDF retriever (pure NumPy — no sklearn dependency).
-Supports unigrams + bigrams for better phrase matching.
+Dense-embedding retriever using sentence-transformers (all-MiniLM-L6-v2).
+
+Upgrade từ TF-IDF:
+  - TF-IDF chỉ match exact token → "revenue" KHÔNG match "sales"
+  - Dense embeddings match nghĩa → "revenue", "income", "turnover" đều match "sales"
+  - Model all-MiniLM-L6-v2: ~80MB, chạy nhanh trên CPU, embedding 384 chiều
+
+Interface giữ NGUYÊN với TFIDFRetriever cũ:
+  - fit(chunks)  → DenseRetriever
+  - retrieve(query, k)  → List[Chunk]
+Không cần thay đổi rag/engine.py.
+
+Lazy loading: model chỉ load lần đầu khi gọi fit() hoặc retrieve(),
+dùng module-level singleton để tránh load lại giữa các request.
 """
 
 from __future__ import annotations
 
-import re
-from typing import Dict, List
+import logging
+import threading
+from typing import List, Optional
 
 import numpy as np
 
 from rag.knowledge_builder import Chunk
 
+logger = logging.getLogger(__name__)
 
-class TFIDFRetriever:
-    """Index a list of Chunks and retrieve the top-k most relevant ones for a query."""
+# ── Singleton model (load một lần duy nhất) ───────────────────
+_model_lock  = threading.Lock()
+_shared_model = None   # SentenceTransformer instance
+
+
+def _get_model():
+    """
+    Lazy-load sentence-transformers model.
+    Thread-safe singleton — model chỉ load 1 lần dù có nhiều retriever instances.
+    """
+    global _shared_model
+    if _shared_model is not None:
+        return _shared_model
+
+    with _model_lock:
+        if _shared_model is not None:   # double-check sau khi lock
+            return _shared_model
+        try:
+            from sentence_transformers import SentenceTransformer
+            logger.info("Loading sentence-transformers model all-MiniLM-L6-v2 ...")
+            _shared_model = SentenceTransformer(
+                "all-MiniLM-L6-v2",
+                device="cpu",          # CPU-only, không cần GPU
+            )
+            logger.info("Dense embedding model loaded successfully.")
+        except ImportError:
+            logger.warning(
+                "sentence-transformers not installed. "
+                "Falling back to TF-IDF retriever. "
+                "Run: pip install sentence-transformers"
+            )
+            _shared_model = None
+    return _shared_model
+
+
+# ── Dense Retriever ───────────────────────────────────────────
+
+class DenseRetriever:
+    """
+    Cosine-similarity retriever over dense sentence embeddings.
+
+    Encoding batch size = 64 (đủ nhanh trên CPU cho ~100 chunks).
+    Embeddings được L2-normalize → dot product = cosine similarity.
+    """
 
     def __init__(self) -> None:
-        self._chunks: List[Chunk] = []
-        self._vocab: Dict[str, int] = {}
-        self._idf: np.ndarray = np.array([])
-        self._matrix: np.ndarray = np.array([])
+        self._chunks:     List[Chunk]   = []
+        self._embeddings: Optional[np.ndarray] = None   # shape (N, 384)
 
-    # ── Public API ────────────────────────────────────────────
+    # ── Public API (same as TFIDFRetriever) ───────────────────
 
-    def fit(self, chunks: List[Chunk]) -> "TFIDFRetriever":
+    def fit(self, chunks: List[Chunk]) -> "DenseRetriever":
+        """Encode all chunks into dense vectors and store them."""
+        self._chunks = chunks
+        if not chunks:
+            self._embeddings = None
+            return self
+
+        model = _get_model()
+        if model is None:
+            # Graceful fallback: use TF-IDF if model unavailable
+            self._embeddings = None
+            self._tfidf_fallback = TFIDFFallback()
+            self._tfidf_fallback.fit(chunks)
+            return self
+
+        texts = [c.text for c in chunks]
+        raw = model.encode(
+            texts,
+            batch_size=64,
+            show_progress_bar=False,
+            convert_to_numpy=True,
+            normalize_embeddings=True,   # L2-norm → dot = cosine
+        )
+        self._embeddings = raw.astype(np.float32)
+        return self
+
+    def retrieve(self, query: str, k: int = 6) -> List[Chunk]:
+        """Return top-k chunks by cosine similarity to query."""
+        if not self._chunks:
+            return []
+
+        # Fallback path (model failed to load)
+        if self._embeddings is None:
+            if hasattr(self, "_tfidf_fallback"):
+                return self._tfidf_fallback.retrieve(query, k)
+            return []
+
+        model = _get_model()
+        if model is None:
+            return []
+
+        q_vec = model.encode(
+            [query],
+            show_progress_bar=False,
+            convert_to_numpy=True,
+            normalize_embeddings=True,
+        )[0].astype(np.float32)                  # shape (384,)
+
+        scores = self._embeddings.dot(q_vec)     # shape (N,) — cosine similarity
+
+        top_k   = min(k, len(self._chunks))
+        top_idx = np.argsort(scores)[::-1][:top_k]
+
+        return [
+            Chunk(
+                chunk_id=self._chunks[i].chunk_id,
+                text=self._chunks[i].text,
+                metadata=self._chunks[i].metadata,
+                score=float(scores[i]),
+            )
+            for i in top_idx
+        ]
+
+
+# ── TF-IDF Fallback (giữ lại khi sentence-transformers chưa install) ──
+
+class TFIDFFallback:
+    """
+    Pure-NumPy TF-IDF retriever — fallback khi sentence-transformers chưa cài.
+    Code giữ nguyên từ phiên bản cũ.
+    """
+
+    def __init__(self) -> None:
+        from typing import Dict
+        self._chunks:  List[Chunk]      = []
+        self._vocab:   Dict[str, int]   = {}
+        self._idf:     np.ndarray       = np.array([])
+        self._matrix:  np.ndarray       = np.array([])
+
+    def fit(self, chunks: List[Chunk]) -> "TFIDFFallback":
         self._chunks = chunks
         if not chunks:
             return self
 
-        vocab: Dict[str, int] = {}
+        vocab: dict = {}
         for chunk in chunks:
             for tok in self._tokenize(chunk.text):
                 if tok not in vocab:
@@ -59,7 +192,6 @@ class TFIDFRetriever:
     def retrieve(self, query: str, k: int = 6) -> List[Chunk]:
         if not self._chunks or self._matrix.size == 0:
             return []
-
         V = len(self._vocab)
         qv = np.zeros(V, dtype=np.float32)
         for tok in self._tokenize(query):
@@ -69,9 +201,8 @@ class TFIDFRetriever:
         norm = np.linalg.norm(qv)
         if norm > 0:
             qv /= norm
-
         scores = self._matrix.dot(qv)
-        top_k = min(k, len(self._chunks))
+        top_k  = min(k, len(self._chunks))
         top_idx = np.argsort(scores)[::-1][:top_k]
         return [
             Chunk(
@@ -83,10 +214,11 @@ class TFIDFRetriever:
             for i in top_idx
         ]
 
-    # ── Internal ──────────────────────────────────────────────
-
     @staticmethod
     def _tokenize(text: str) -> List[str]:
+        import re
         tokens = re.findall(r"[a-z0-9_]+", text.lower())
         bigrams = [f"{tokens[i]}_{tokens[i+1]}" for i in range(len(tokens) - 1)]
         return tokens + bigrams
+
+TFIDFRetriever = DenseRetriever

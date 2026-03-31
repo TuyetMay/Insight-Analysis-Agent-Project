@@ -78,6 +78,13 @@ _EXTREMES_RE = re.compile(
     r"|most.*least|least.*most)\b",
     re.IGNORECASE,
 )
+
+# Detect "across all X", "all regions", "every region" → clear dimension filter
+_ALL_DIMS_RE = re.compile(
+    r'\b(across\s+all|all|every|each|any)\s+'
+    r'(region|area|segment|category|sub.?category|zone|market)s?\b',
+    re.IGNORECASE,
+)
 _SUPERLATIVE_RE = re.compile(
     r'\b(best|highest|most|top|leading|greatest|biggest|largest|number\s*one)\b',
     re.IGNORECASE,
@@ -134,6 +141,8 @@ _RELATIVE_DATE_RE = re.compile(
     r"|\b(this|current)\s+(week|month|quarter|year)\b",
     re.IGNORECASE,
 )
+_COMPARE_VS_RE = re.compile(r'\b(compare|vs\.?|versus)\b', re.IGNORECASE)
+
 
 _GROWTH_RANK_RE = re.compile(
     r"\b(strongest|highest|most|best|biggest|largest|fastest)\s+"
@@ -448,14 +457,23 @@ class NLParser:
                 plan["secondary_breakdown"] = None
                 return self._inject_mentioned_filters(plan, q)
         # ── YoY trend shortcuts ───────────────────────────────
+
         if detected_compare == "yoy" and _GENERAL_YOY_RE.search(q):
             if not explicit_dates:
-                plan.update(
-                    intent="kpi_trend",
-                    time_grain="year",
-                    compare_period=None,
-                    metrics=[detected_metrics[0]],
-                )
+                # Nếu có "compare" hoặc "vs" → kpi_compare, không phải trend
+                if _COMPARE_VS_RE.search(q):
+                    plan.update(
+                        intent="kpi_compare",
+                        compare_period="yoy",
+                        metrics=[detected_metrics[0]],
+                    )
+                else:
+                    plan.update(
+                        intent="kpi_trend",
+                        time_grain="year",
+                        compare_period=None,
+                        metrics=[detected_metrics[0]],
+                    )
                 plan["secondary_breakdown"] = secondary_breakdown
                 return self._inject_mentioned_filters(plan, q)
 
@@ -521,17 +539,24 @@ class NLParser:
         plan["secondary_breakdown"] = secondary_breakdown
         plan = self._inject_mentioned_filters(plan, q)
 
-        if plan.get("breakdown_by") and plan.get("intent") == "kpi_value":
-            dim    = plan["breakdown_by"]
-            f_copy = self.filters or {}
+        if plan.get("breakdown_by") and plan.get("intent") in ("kpi_value", "kpi_rank"):
+            dim      = plan["breakdown_by"]
+            f_copy   = self.filters or {}
             all_vals = list(f_copy.get(dim, []) or [])
+
             if dim in ("region", "segment", "category") and len(all_vals) > 0:
                 ql_check = q.lower()
+
+                #  "all regions / across all areas / every region"
+                # → bỏ filter, query toàn bộ dữ liệu
+                force_all = bool(_ALL_DIMS_RE.search(q))
+
                 mentioned_specific = [
                     v for v in all_vals
                     if re.search(r"\b" + re.escape(v.lower()) + r"\b", ql_check)
                 ]
-                if not mentioned_specific:
+
+                if force_all or not mentioned_specific:
                     plan["filters"][dim] = []
 
         return plan
@@ -767,9 +792,38 @@ class NLParser:
             "sub_category": all_sub_categories,
         }
 
+        # ── Detect "all X / across all X / every X" → force clear filter ──
+        _ALL_RE = re.compile(
+            r'\b(across\s+all|all|every|each|any)\s+'
+            r'(region|area|segment|category|sub.?category|zone|market)s?\b',
+            re.IGNORECASE,
+        )
+        force_all_dims = set()
+        m_all = _ALL_RE.search(q)
+        if m_all:
+            raw = m_all.group(2).lower()
+            if "area" in raw or "region" in raw or "zone" in raw or "market" in raw:
+                force_all_dims.add("region")
+            elif "segment" in raw:
+                force_all_dims.add("segment")
+            elif "sub" in raw:
+                force_all_dims.add("sub_category")
+            elif "category" in raw:
+                force_all_dims.add("category")
+
+        # ── kpi_rank không mention cụ thể → luôn clear filter của breakdown dim ──
+        if plan.get("intent") == "kpi_rank" and plan.get("breakdown_by"):
+            force_all_dims.add(plan["breakdown_by"])
+
         for key, all_vals in _DIM_MAP.items():
             if not all_vals:
                 continue
+
+            # Force clear nếu user muốn "all" hoặc đây là ranking query
+            if key in force_all_dims:
+                filters[key] = []
+                continue
+
             mentioned = [
                 v for v in all_vals
                 if re.search(r"\b" + re.escape(v.lower()) + r"\b", ql)
@@ -783,7 +837,6 @@ class NLParser:
 
         plan["filters"] = filters
         return plan
-
     @staticmethod
     def _extract_json(text: str) -> Dict[str, Any]:
         try:
