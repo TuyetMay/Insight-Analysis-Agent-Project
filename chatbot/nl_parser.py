@@ -5,6 +5,13 @@ Three tiers (fastest to slowest):
   1. Fast KPI path   — regex, no LLM, for simple total/margin questions
   2. Rule-based path — keyword matching, no LLM
   3. Gemini path     — full LLM with RAG-grounded prompt
+
+FIXES APPLIED:
+  - FIX-A: kpi_detail không inject sidebar filters (chỉ filter khi user mention cụ thể)
+  - FIX-B: "compare 2017 and 2016" → kpi_compare với đúng date range
+  - FIX-C: "compare X vs last year" → kpi_compare, không phải kpi_trend
+  - FIX-D: _BREAKDOWN_RE bổ sung "area", "zone", "market"
+  - FIX-E: Dùng module-level _ALL_DIMS_RE thống nhất (không có local duplicate)
 """
 
 from __future__ import annotations
@@ -30,12 +37,17 @@ _GRAINS     = {"none", "week", "month", "quarter", "year"}
 
 _METRIC_KEYWORDS: Dict[str, str] = {
     "sale": "sales", "sales": "sales", "revenue": "sales", "income": "sales",
+    "earning": "sales", "earnings": "sales", "turnover": "sales",
     "profit": "profit", "margin": "profit_margin", "profit margin": "profit_margin",
     "profitability": "profit_margin",
     "order": "orders", "orders": "orders", "transaction": "orders",
+    "transactions": "orders", "purchase": "orders", "purchases": "orders",
 }
 _BREAKDOWN_KEYWORDS: Dict[str, str] = {
     "region": "region", "regions": "region",
+    "area": "region", "areas": "region",
+    "zone": "region", "zones": "region",
+    "market": "region", "markets": "region",
     "segment": "segment", "segments": "segment",
     "category": "category", "categories": "category",
     "sub-category": "sub_category", "subcategory": "sub_category",
@@ -79,12 +91,13 @@ _EXTREMES_RE = re.compile(
     re.IGNORECASE,
 )
 
-# Detect "across all X", "all regions", "every region" → clear dimension filter
+# FIX-E: Duy nhất một regex cho "all X / across all X / every X"
 _ALL_DIMS_RE = re.compile(
     r'\b(across\s+all|all|every|each|any)\s+'
     r'(region|area|segment|category|sub.?category|zone|market)s?\b',
     re.IGNORECASE,
 )
+
 _SUPERLATIVE_RE = re.compile(
     r'\b(best|highest|most|top|leading|greatest|biggest|largest|number\s*one)\b',
     re.IGNORECASE,
@@ -94,6 +107,9 @@ _GENERAL_YOY_RE = re.compile(
     r"\b(how\s+did|show|display|what\s+is|trend|change|growth|evolve|progress)\b",
     re.IGNORECASE,
 )
+
+# FIX-C: Regex detect "compare/vs/versus" → force kpi_compare
+_COMPARE_VS_RE = re.compile(r'\b(compare|vs\.?|versus)\b', re.IGNORECASE)
 
 _MONTH_MAP: Dict[str, int] = {
     "january": 1, "jan": 1,
@@ -110,6 +126,7 @@ _MONTH_MAP: Dict[str, int] = {
     "december": 12, "dec": 12,
 }
 
+# FIX-D: Bổ sung "area", "zone", "market" vào _BREAKDOWN_RE
 _BREAKDOWN_RE = re.compile(
     r"\b(by|per|across|for each|breakdown|group by|split by)\s+"
     r"(region|area|zone|market|segment|category|sub.?category|"
@@ -142,8 +159,6 @@ _RELATIVE_DATE_RE = re.compile(
     r"|\b(this|current)\s+(week|month|quarter|year)\b",
     re.IGNORECASE,
 )
-_COMPARE_VS_RE = re.compile(r'\b(compare|vs\.?|versus)\b', re.IGNORECASE)
-
 
 _GROWTH_RANK_RE = re.compile(
     r"\b(strongest|highest|most|best|biggest|largest|fastest)\s+"
@@ -279,7 +294,9 @@ class NLParser:
         ql = (q or "").lower().strip()
         s0, e0 = self._date_range()
 
-        # ── Detect negative-profit drill-down ────────────────
+        # ── FIX-A: Detect negative-profit drill-down ─────────
+        # kpi_detail KHÔNG inherit sidebar filters — chỉ filter khi
+        # user mention cụ thể (VD: "in West region")
         if _DETAIL_NEGATIVE_RE.search(q):
             explicit_dates = self._extract_date_range(ql)
             if explicit_dates:
@@ -289,21 +306,40 @@ class NLParser:
                 if kw in ql:
                     breakdown = dim
                     break
-            plan = {
-                "intent":            "kpi_detail",
-                "condition":         "profit_negative",
-                "metrics":           ["sales", "profit"],
-                "time_grain":        "none",
-                "breakdown_by":      breakdown,
+            plan: Dict[str, Any] = {
+                "intent":              "kpi_detail",
+                "condition":           "profit_negative",
+                "metrics":             ["sales", "profit"],
+                "time_grain":          "none",
+                "breakdown_by":        breakdown,
                 "secondary_breakdown": None,
-                "start_date":        s0,
-                "end_date":          e0,
-                "compare_period":    None,
-                "top_k":             15,
-                "order_by":          "profit",
-                "filters":           {"region": [], "segment": [], "category": [], "sub_category": []},
+                "start_date":          s0,
+                "end_date":            e0,
+                "compare_period":      None,
+                "top_k":               15,
+                "order_by":            "profit",
+                # Bắt đầu với empty filters
+                "filters": {"region": [], "segment": [], "category": [], "sub_category": []},
             }
-            return self._inject_mentioned_filters(plan, q)
+            # FIX-A: Chỉ inject filter nếu user mention cụ thể dimension value
+            # KHÔNG gọi _inject_mentioned_filters (vì nó sẽ inherit toàn bộ sidebar)
+            ql_lower = q.lower()
+            f = self.filters or {}
+            for dim, all_vals in [
+                ("region",   list(f.get("region",   []) or [])),
+                ("segment",  list(f.get("segment",  []) or [])),
+                ("category", list(f.get("category", []) or [])),
+            ]:
+                if not all_vals:
+                    continue
+                mentioned = [
+                    v for v in all_vals
+                    if re.search(r"\b" + re.escape(v.lower()) + r"\b", ql_lower)
+                ]
+                # Chỉ filter nếu user nói rõ: "losing money in West"
+                if mentioned:
+                    plan["filters"][dim] = mentioned
+            return plan
 
         explicit_dates = self._extract_date_range(ql) or self._extract_relative_date(ql)
         if explicit_dates:
@@ -312,7 +348,7 @@ class NLParser:
         show_extremes  = bool(_EXTREMES_RE.search(q))
         is_growth_rank = bool(_GROWTH_RANK_RE.search(q))
 
-        plan: Dict[str, Any] = {
+        plan = {
             "intent": "kpi_value", "metrics": ["sales"], "time_grain": "none",
             "breakdown_by": None, "secondary_breakdown": None,
             "start_date": s0, "end_date": e0,
@@ -347,6 +383,8 @@ class NLParser:
                     raw = "sub_category"
                 if raw in _BREAKDOWNS:
                     detected_breakdown = raw
+                elif raw in ("area", "zone", "market"):
+                    detected_breakdown = "region"
 
         # ── Fallback 1: detect from sub_category values in df ─
         if detected_breakdown is None and not self.df.empty and "sub_category" in self.df.columns:
@@ -369,7 +407,6 @@ class NLParser:
                     break
 
         # ── Detect secondary breakdown ────────────────────────
-        # Must run AFTER all primary breakdown detection is complete
         secondary_breakdown: Optional[str] = None
         if detected_breakdown:
             remaining_keywords = {
@@ -416,6 +453,26 @@ class NLParser:
                     detected_compare = cp
                     break
 
+        # ── FIX-B: 2-year comparison "compare 2017 and 2016" ─
+        year_matches_in_q = _TIME_YEAR.findall(ql)
+        if (len(year_matches_in_q) == 2
+                and _COMPARE_RE.search(ql)
+                and not detected_breakdown):
+            y1, y2 = int(year_matches_in_q[0]), int(year_matches_in_q[1])
+            later, earlier = max(y1, y2), min(y1, y2)
+            plan.update(
+                intent="kpi_compare",
+                compare_period="prev_period",
+                metrics=[detected_metrics[0]],
+                start_date=f"{later}-01-01",
+                end_date=f"{later}-12-31",
+            )
+            # Override prev dates: earlier year as previous period
+            plan["_override_prev_start"] = f"{earlier}-01-01"
+            plan["_override_prev_end"]   = f"{earlier}-12-31"
+            plan["secondary_breakdown"]  = secondary_breakdown
+            return self._inject_mentioned_filters(plan, q)
+
         # ── Growth rank ───────────────────────────────────────
         if is_growth_rank and detected_breakdown:
             plan.update(
@@ -434,41 +491,38 @@ class NLParser:
                 ql_check = q.lower()
                 f_check  = self.filters or {}
                 all_vals = list(f_check.get(detected_breakdown, []) or [])
-                import re as _re
-                mentioned = [v for v in all_vals if _re.search(r"\b" + _re.escape(v.lower()) + r"\b", ql_check)]
+                mentioned = [v for v in all_vals if re.search(r"\b" + re.escape(v.lower()) + r"\b", ql_check)]
                 if not mentioned:
                     result["filters"][detected_breakdown] = []
             result["secondary_breakdown"] = secondary_breakdown
             return result
 
         if detected_grain != "none" and detected_breakdown in ("region", "segment", "category"):
-            # Kiểm tra xem user có mention specific value không (e.g. "West")
             f_check = self.filters or {}
             all_vals = list(f_check.get(detected_breakdown, []) or [])
             mentioned_vals = [v for v in all_vals if v.lower() in ql]
-            
             if mentioned_vals:
-                # "trend for West" → filter West, không breakdown by region
                 plan.update(
                     intent="kpi_trend",
                     time_grain=detected_grain,
-                    breakdown_by=None,  # ← KHÔNG group by region
+                    breakdown_by=None,
                 )
-                plan["filters"][detected_breakdown] = mentioned_vals  # ← filter West
+                plan["filters"][detected_breakdown] = mentioned_vals
                 plan["secondary_breakdown"] = None
                 return self._inject_mentioned_filters(plan, q)
-        # ── YoY trend shortcuts ───────────────────────────────
 
+        # ── FIX-C: YoY shortcuts với compare/vs → kpi_compare ─
         if detected_compare == "yoy" and _GENERAL_YOY_RE.search(q):
             if not explicit_dates:
-                # Nếu có "compare" hoặc "vs" → kpi_compare, không phải trend
                 if _COMPARE_VS_RE.search(q):
+                    # "compare earnings vs last year" → kpi_compare
                     plan.update(
                         intent="kpi_compare",
                         compare_period="yoy",
                         metrics=[detected_metrics[0]],
                     )
                 else:
+                    # "show yoy trend" → kpi_trend
                     plan.update(
                         intent="kpi_trend",
                         time_grain="year",
@@ -478,16 +532,28 @@ class NLParser:
                 plan["secondary_breakdown"] = secondary_breakdown
                 return self._inject_mentioned_filters(plan, q)
 
+        # FIX-C: Block thứ 2 — cũng cần check _COMPARE_VS_RE
         if detected_compare == "yoy" and not explicit_dates:
-            plan.update(
-                intent="kpi_trend",
-                time_grain="year",
-                compare_period=None,
-                metrics=[detected_metrics[0]],
-                breakdown_by=detected_breakdown,
-            )
-            plan["secondary_breakdown"] = secondary_breakdown
-            return self._inject_mentioned_filters(plan, q)
+            if _COMPARE_VS_RE.search(q):
+                # "compare X vs last year" → kpi_compare
+                plan.update(
+                    intent="kpi_compare",
+                    compare_period="yoy",
+                    metrics=[detected_metrics[0]],
+                )
+                plan["secondary_breakdown"] = secondary_breakdown
+                return self._inject_mentioned_filters(plan, q)
+            else:
+                # "sales last year trend" → kpi_trend
+                plan.update(
+                    intent="kpi_trend",
+                    time_grain="year",
+                    compare_period=None,
+                    metrics=[detected_metrics[0]],
+                    breakdown_by=detected_breakdown,
+                )
+                plan["secondary_breakdown"] = secondary_breakdown
+                return self._inject_mentioned_filters(plan, q)
 
         if detected_compare == "yoy":
             if not explicit_dates:
@@ -547,16 +613,11 @@ class NLParser:
 
             if dim in ("region", "segment", "category") and len(all_vals) > 0:
                 ql_check = q.lower()
-
-                #  "all regions / across all areas / every region"
-                # → bỏ filter, query toàn bộ dữ liệu
                 force_all = bool(_ALL_DIMS_RE.search(q))
-
                 mentioned_specific = [
                     v for v in all_vals
                     if re.search(r"\b" + re.escape(v.lower()) + r"\b", ql_check)
                 ]
-
                 if force_all or not mentioned_specific:
                     plan["filters"][dim] = []
 
@@ -624,6 +685,7 @@ class NLParser:
             return f"{year}-{sm:02d}-{sd:02d}", f"{year}-{em:02d}-{ed:02d}"
 
         year_matches = _TIME_YEAR.findall(ql)
+        # FIX-B: 2 năm riêng lẻ được xử lý trong rule_based_plan, không ở đây
         if len(year_matches) == 1:
             year = int(year_matches[0])
             return f"{year}-01-01", f"{year}-12-31"
@@ -753,6 +815,7 @@ class NLParser:
         - kpi_detail: use when user asks "which orders/products have negative profit",
           "what is losing money", "show loss-making items" etc.
           Set condition="profit_negative", breakdown_by="sub_category"
+          IMPORTANT: filters must be [] for kpi_detail unless user explicitly mentions a region/segment
         - secondary_breakdown: set when user asks "X by A broken down by B"
           e.g. "sales by region broken down by category" →
           breakdown_by="region", secondary_breakdown="category"
@@ -761,6 +824,7 @@ class NLParser:
         - For "year-over-year" or "yoy" WITHOUT a specific date: use kpi_trend + time_grain="year"
         - For "month-over-month" or "mom" WITHOUT a specific date: use kpi_trend + time_grain="month"
         - kpi_compare is ONLY for "compare [specific period] vs [other period]"
+        - "compare 2017 and 2016" → kpi_compare with start_date=2017-01-01, end_date=2017-12-31
 
         === JSON SCHEMA ===
         {{"intent":"kpi_value","metrics":["sales"],"time_grain":"none","breakdown_by":null,"secondary_breakdown":null,"start_date":"{s0}","end_date":"{e0}","compare_period":null,"top_k":null,"order_by":"sales","filters":{{"region":[],"segment":[],"category":[]}}}}
@@ -793,8 +857,9 @@ class NLParser:
             "sub_category": all_sub_categories,
         }
 
+        # FIX-E: Dùng module-level _ALL_DIMS_RE (không tạo local duplicate)
         force_all_dims = set()
-        m_all = _ALL_DIMS_RE.search(q) 
+        m_all = _ALL_DIMS_RE.search(q)
         if m_all:
             raw = m_all.group(2).lower()
             if "area" in raw or "region" in raw or "zone" in raw or "market" in raw:
@@ -806,7 +871,7 @@ class NLParser:
             elif "category" in raw:
                 force_all_dims.add("category")
 
-        # ── kpi_rank không mention cụ thể → luôn clear filter của breakdown dim ──
+        # kpi_rank không mention cụ thể → luôn clear filter của breakdown dim
         if plan.get("intent") == "kpi_rank" and plan.get("breakdown_by"):
             force_all_dims.add(plan["breakdown_by"])
 
@@ -814,7 +879,6 @@ class NLParser:
             if not all_vals:
                 continue
 
-            # Force clear nếu user muốn "all" hoặc đây là ranking query
             if key in force_all_dims:
                 filters[key] = []
                 continue
@@ -832,6 +896,7 @@ class NLParser:
 
         plan["filters"] = filters
         return plan
+
     @staticmethod
     def _extract_json(text: str) -> Dict[str, Any]:
         try:

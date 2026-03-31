@@ -310,6 +310,12 @@ class SQLBuilder:
         ed = datetime.strptime(plan["end_date"],   "%Y-%m-%d").date()
         cp = plan["compare_period"]
 
+        if plan.get("_override_prev_start"):
+            return {
+                "start_date": plan["_override_prev_start"],
+                "end_date":   plan["_override_prev_end"],
+            }
+        
         if cp == "prev_period":
             delta      = (ed - sd).days + 1
             prev_end   = date.fromordinal(sd.toordinal() - 1)

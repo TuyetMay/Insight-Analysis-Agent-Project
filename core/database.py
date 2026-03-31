@@ -113,7 +113,11 @@ def execute_query(sql: str, params: Optional[Dict[str, Any]] = None) -> pd.DataF
         if conn is None:
             return pd.DataFrame()
         try:
-            return pd.read_sql_query(sql, conn, params=params)
+            with conn.cursor() as cur:
+                cur.execute(sql, params)
+                cols = [desc[0] for desc in cur.description] if cur.description else []
+                rows = cur.fetchall()
+                return pd.DataFrame(rows, columns=cols)
         except Exception as exc:
             logger.error("Query execution error: %s", exc)
             return pd.DataFrame()
