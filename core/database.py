@@ -84,6 +84,16 @@ def get_connection() -> Generator:
     try:
         if db_pool:
             conn = db_pool.getconn()
+            try:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT 1")
+            except Exception:
+                logger.warning("Stale connection detected, replacing...")
+                try:
+                    db_pool.putconn(conn, close=True)
+                except Exception:
+                    pass
+                conn = db_pool.getconn()
         yield conn
     except Exception as exc:
         logger.error("DB connection error: %s", exc)
@@ -91,6 +101,8 @@ def get_connection() -> Generator:
     finally:
         if db_pool and conn:
             try:
+                if not conn.closed:
+                    conn.rollback()   # reset transaction state
                 db_pool.putconn(conn)
             except Exception:
                 pass

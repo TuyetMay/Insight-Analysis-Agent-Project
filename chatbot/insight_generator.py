@@ -8,12 +8,14 @@ FIX: _data_summary and _rule_insight now correctly handle trend+breakdown
 """
 
 from __future__ import annotations
-
+import logging
+import re as _re
 import statistics
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
 from google.genai import types as genai_types
+logger = logging.getLogger(__name__)
 
 
 class InsightGenerator:
@@ -163,16 +165,18 @@ class InsightGenerator:
             Write the complete, full-length insight now (do not truncate):"""
 
         try:
-            resp = self.client.models.generate_content(
-                model=self.model_name,
-                contents=prompt,
-                config=genai_types.GenerateContentConfig(
-                    temperature=0.55,
-                    max_output_tokens=max_tokens,
-                ),
-            )
+            resp = self.client.models.generate_content(...)
             text = (getattr(resp, "text", "") or "").strip()
+
             if len(text) > 30:
+                # ── Grounding check ───────────────────────────
+                score = self._verify_grounding(text, summary)
+                if score < 0.5:
+                    logger.warning(
+                        "Insight grounding score %.2f < 0.5 — "
+                        "possible hallucination, falling back to rule-based", score
+                    )
+                    return ""   # trigger rule-based fallback
                 return self._trim_to_complete_sentence(text)
         except Exception:
             pass
@@ -838,6 +842,23 @@ class InsightGenerator:
             last = matches[-1]
             return text[:last.end()].strip()
         return text
+    
+    def _verify_grounding(self, insight_text: str, data_summary: str) -> float:
+        """
+        Trả về tỉ lệ 0.0–1.0: số liệu trong insight có xuất hiện trong data_summary.
+        < 0.6 = insight có khả năng hallucinate.
+        """
+        # Extract: $123,456 | 12.3% | 1,234
+        number_pattern = _re.compile(r'\$[\d,]+|\d+\.?\d*%|\b\d{3,}[\d,]*\b')
+        insight_nums = set(number_pattern.findall(insight_text))
+        summary_nums = set(number_pattern.findall(data_summary))
+
+        if not insight_nums:
+            return 1.0  # không có số → không thể verify, assume OK
+
+        matched = insight_nums & summary_nums
+        score = len(matched) / len(insight_nums)
+        return score
 
 
 # ── Module-level helpers ──────────────────────────────────────

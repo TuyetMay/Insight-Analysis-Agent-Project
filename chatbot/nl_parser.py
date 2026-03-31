@@ -112,7 +112,8 @@ _MONTH_MAP: Dict[str, int] = {
 
 _BREAKDOWN_RE = re.compile(
     r"\b(by|per|across|for each|breakdown|group by|split by)\s+"
-    r"(region|segment|category|sub.?category|product|state|city|ship\s*mode)\b",
+    r"(region|area|zone|market|segment|category|sub.?category|"
+    r"product|state|city|ship\s*mode)\b",
     re.IGNORECASE,
 )
 _TOP_RE        = re.compile(r"\btop[\s-]?(\d+)\b", re.IGNORECASE)
@@ -792,14 +793,8 @@ class NLParser:
             "sub_category": all_sub_categories,
         }
 
-        # ── Detect "all X / across all X / every X" → force clear filter ──
-        _ALL_RE = re.compile(
-            r'\b(across\s+all|all|every|each|any)\s+'
-            r'(region|area|segment|category|sub.?category|zone|market)s?\b',
-            re.IGNORECASE,
-        )
         force_all_dims = set()
-        m_all = _ALL_RE.search(q)
+        m_all = _ALL_DIMS_RE.search(q) 
         if m_all:
             raw = m_all.group(2).lower()
             if "area" in raw or "region" in raw or "zone" in raw or "market" in raw:

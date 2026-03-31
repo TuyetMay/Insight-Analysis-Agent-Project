@@ -11,6 +11,7 @@ import logging
 from typing import Any, Dict, List, Tuple
 
 import pandas as pd
+import re as _re
 
 from config import Config
 from core.database import execute_query
@@ -23,6 +24,7 @@ _METRIC_EXPR: Dict[str, str] = {
     "orders":        "COUNT(DISTINCT order_id)",
     "profit_margin": "CASE WHEN SUM(sales)=0 THEN 0 ELSE SUM(profit)/SUM(sales)*100 END",
 }
+_SAFE_TABLE_RE = _re.compile(r'^[a-zA-Z_][a-zA-Z0-9_]*$')
 
 _GRAIN_MAP: Dict[str, str] = {
     "week": "week", "month": "month", "quarter": "quarter", "year": "year",
@@ -44,7 +46,10 @@ class SQLBuilder:
     """Build and run SQL for validated query plans."""
 
     def __init__(self, table: str = "") -> None:
-        self.table = table or Config.DB_TABLE
+        raw = table or Config.DB_TABLE
+        if not _SAFE_TABLE_RE.match(raw):
+            raise ValueError(f"Unsafe table name: {raw!r}")
+        self.table = raw
 
     # ── Public ────────────────────────────────────────────────
 

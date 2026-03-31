@@ -28,6 +28,13 @@ from rag.knowledge_builder import Chunk
 
 logger = logging.getLogger(__name__)
 
+import hashlib
+import pickle
+import pathlib
+
+_CACHE_DIR = pathlib.Path(".embedding_cache")
+_CACHE_DIR.mkdir(exist_ok=True)
+
 # ── Singleton model (load một lần duy nhất) ───────────────────
 _model_lock  = threading.Lock()
 _shared_model = None   # SentenceTransformer instance
@@ -80,7 +87,6 @@ class DenseRetriever:
     # ── Public API (same as TFIDFRetriever) ───────────────────
 
     def fit(self, chunks: List[Chunk]) -> "DenseRetriever":
-        """Encode all chunks into dense vectors and store them."""
         self._chunks = chunks
         if not chunks:
             self._embeddings = None
@@ -88,21 +94,29 @@ class DenseRetriever:
 
         model = _get_model()
         if model is None:
-            # Graceful fallback: use TF-IDF if model unavailable
             self._embeddings = None
             self._tfidf_fallback = TFIDFFallback()
             self._tfidf_fallback.fit(chunks)
             return self
 
-        texts = [c.text for c in chunks]
+        # ── Cache lookup ──────────────────────────────────────
+        texts     = [c.text for c in chunks]
+        cache_key = hashlib.md5("".join(texts).encode()).hexdigest()
+        cache_path = _CACHE_DIR / f"{cache_key}.pkl"
+
+        if cache_path.exists():
+            logger.info("Loading embeddings from cache: %s", cache_key[:8])
+            self._embeddings = pickle.loads(cache_path.read_bytes())
+            return self
+
+        # ── Encode + save ─────────────────────────────────────
         raw = model.encode(
-            texts,
-            batch_size=64,
-            show_progress_bar=False,
-            convert_to_numpy=True,
-            normalize_embeddings=True,   # L2-norm → dot = cosine
+            texts, batch_size=64, show_progress_bar=False,
+            convert_to_numpy=True, normalize_embeddings=True,
         )
         self._embeddings = raw.astype(np.float32)
+        cache_path.write_bytes(pickle.dumps(self._embeddings))
+        logger.info("Embeddings cached: %s", cache_key[:8])
         return self
 
     def retrieve(self, query: str, k: int = 6) -> List[Chunk]:

@@ -1,10 +1,12 @@
 from __future__ import annotations
 from dataclasses import dataclass, field
+import logging
 from typing import Any, Dict, List, Optional, Set
 import pandas as pd
 from rag.knowledge_builder import Chunk, KnowledgeBaseBuilder
 from rag.retriever import TFIDFRetriever
- 
+logger = logging.getLogger(__name__)
+
  
 @dataclass
 class RAGContext:
@@ -60,19 +62,27 @@ class RAGEngine:
         self._static_built = True
  
     def build(self, df: pd.DataFrame, kpis: Dict[str, Any],
-              filters: Dict[str, Any]) -> None:
-        """
-        Gọi mỗi khi filter thay đổi — chỉ rebuild dynamic layer.
-        Static layer giữ nguyên (không refit).
-        """
+          filters: Dict[str, Any]) -> None:
         if not self._static_built:
             self.build_static(df)
- 
+
         builder = KnowledgeBaseBuilder()
-        self._dynamic_chunks = builder.build_dynamic(df, kpis, filters)
-        self._dynamic_retriever.fit(self._dynamic_chunks)
+        new_chunks = builder.build_dynamic(df, kpis, filters)
+
+        # ── Chỉ re-fit khi nội dung chunk thực sự thay đổi ──
+        new_texts = {c.chunk_id: c.text for c in new_chunks}
+        old_texts = {c.chunk_id: c.text for c in self._dynamic_chunks}
+
+        self._dynamic_chunks = new_chunks
+
+        if new_texts != old_texts:
+            self._dynamic_retriever.fit(self._dynamic_chunks)
+            logger.info("Dynamic retriever re-fitted (%d chunks)", len(new_chunks))
+        else:
+            logger.info("Chunk content unchanged — skipping re-fit")
+
         self._built = True
- 
+    
     @property
     def total_chunks(self) -> int:
         return len(self._static_chunks) + len(self._dynamic_chunks)
@@ -91,48 +101,46 @@ class RAGEngine:
     # ── Retrieve ──────────────────────────────────────────────
  
     def retrieve(self, query: str, k: int = 6,
-                 min_score: float = 0.03,
-                 metadata_filter: Optional[Dict[str, Any]] = None) -> RAGContext:
-        """
-        Retrieval với metadata pre-filter.
-        metadata_filter vd: {"topic": "trend"} hoặc {"dimension": "region"}
-        """
+             min_score: float = 0.03,
+             metadata_filter: Optional[Dict[str, Any]] = None) -> RAGContext:
         if not self._built:
             return RAGContext(query=query, chunks=[], chat_summary=self._history_summary())
- 
-        # ── Metadata pre-filter → search trong subset ────────
-        static_pool  = self._apply_metadata_filter(self._static_chunks,  metadata_filter)
-        dynamic_pool = self._apply_metadata_filter(self._dynamic_chunks, metadata_filter)
- 
-        static_hits  = TFIDFRetriever().fit(static_pool).retrieve(query,  k=k // 2 + 2) \
-                       if static_pool else []
-        dynamic_hits = TFIDFRetriever().fit(dynamic_pool).retrieve(query, k=k) \
-                       if dynamic_pool else []
- 
-        # ── Merge, dedup, must-haves ─────────────────────────
-        seen:    set        = set()
+
+        # ── FIX: dùng pre-built retrievers, KHÔNG tạo instance mới ──
+        static_hits  = self._static_retriever.retrieve(query,  k=k // 2 + 2)
+        dynamic_hits = self._dynamic_retriever.retrieve(query, k=k)
+
+        # Metadata filter áp dụng POST-retrieval
+        if metadata_filter:
+            static_hits  = [c for c in static_hits
+                            if all(c.metadata.get(fk) == fv
+                                for fk, fv in metadata_filter.items())]
+            dynamic_hits = [c for c in dynamic_hits
+                            if all(c.metadata.get(fk) == fv
+                                for fk, fv in metadata_filter.items())]
+
+        seen: set        = set()
         results: List[Chunk] = []
- 
+
         for c in dynamic_hits + static_hits:
             if c.score >= min_score and c.chunk_id not in seen:
                 results.append(c)
                 seen.add(c.chunk_id)
- 
-        # Đảm bảo schema + KPI summary luôn có mặt
+
         all_chunks = self._static_chunks + self._dynamic_chunks
         for c in all_chunks:
             if c.chunk_id in self._MUST_HAVE_IDS and c.chunk_id not in seen:
                 results.append(c)
                 seen.add(c.chunk_id)
- 
+
         must = [c for c in results if c.chunk_id in self._MUST_HAVE_IDS]
         rest = sorted(
             [c for c in results if c.chunk_id not in self._MUST_HAVE_IDS],
             key=lambda x: x.score, reverse=True,
         )
         return RAGContext(query=query, chunks=must + rest,
-                         chat_summary=self._history_summary())
- 
+                        chat_summary=self._history_summary())
+    
     def retrieve_for_suggestions(self, last_question: str, last_answer: str,
                                  k: int = 8) -> RAGContext:
         combined = f"{last_question} {last_answer}"

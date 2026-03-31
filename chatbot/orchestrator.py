@@ -54,6 +54,7 @@ class DashboardChatbot:
         self.df      = df.copy()
         self.kpis    = kpis
         self.filters = filters
+        self._plan_history: List[Dict[str, Any]] = []
 
         if "order_date" in self.df.columns and not pd.api.types.is_datetime64_any_dtype(self.df["order_date"]):
             self.df["order_date"] = pd.to_datetime(self.df["order_date"], errors="coerce")
@@ -267,6 +268,12 @@ Output:""".strip()
             insight   = self._insights.generate(plan, result_df)
             answer    = self._formatter.format(plan, result_df, insight)
             self._last_plan = plan
+
+            # ── Lưu plan history ──────────────────────────────
+            self._plan_history.append(plan)
+            if len(self._plan_history) > 5:
+                self._plan_history = self._plan_history[-5:]
+
             self._record(q, answer)
             return answer
         except Exception as exc:
