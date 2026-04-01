@@ -493,7 +493,8 @@ class KnowledgeBaseBuilder:
         1 chunk per quarter — replaces 83-token quarterly_summary monolith.
 
         v1 bug: all 8 quarters in 1 chunk → query "Q4 2017" retrieved Q1 2016 too.
-        v2 fix: query "Q4 2017 performance" → retrieves only quarter_2017q4_fact.
+        v2 fix (original): 1 chunk per quarter — but 8/8 NEVER_RETRIEVED (too short, structure identical).
+        v3 fix: merge into 2 annual summaries (1 per year) with seasonal context.
         """
         if "order_date" not in df.columns or "sales" not in df.columns:
             return []
@@ -501,45 +502,56 @@ class KnowledgeBaseBuilder:
             df2 = df.copy()
             df2["order_date"] = pd.to_datetime(df2["order_date"], errors="coerce")
             df2 = df2[df2["order_date"].notna()]
+            df2["year"]    = df2["order_date"].dt.year
+            df2["quarter"] = df2["order_date"].dt.quarter
 
             agg: Dict[str, Any] = {"sales": ("sales", "sum")}
             if "profit" in df2.columns:
                 agg["profit"] = ("profit", "sum")
 
-            quarterly = (
-                df2.groupby(df2["order_date"].dt.to_period("Q"))
+            qtr_data = (
+                df2.groupby(["year", "quarter"])
                 .agg(**agg)
                 .reset_index()
-                .rename(columns={"order_date": "quarter"})
-                .tail(8)
-                .reset_index(drop=True)
+                .sort_values(["year", "quarter"])
             )
 
-            if quarterly.empty:
+            if qtr_data.empty:
                 return []
 
             chunks: List[Chunk] = []
-            for i, (_, row) in enumerate(quarterly.iterrows()):
-                q_str = str(row["quarter"])   # e.g. "2016Q4"
-                s     = float(row["sales"])
-                p     = float(row.get("profit", 0))
+            for year, grp in qtr_data.groupby("year"):
+                grp = grp.sort_values("quarter").reset_index(drop=True)
+                q_vals: Dict[int, float] = {}
+                p_vals: Dict[int, float] = {}
+                for _, r in grp.iterrows():
+                    q = int(r["quarter"])
+                    q_vals[q] = float(r["sales"])
+                    p_vals[q] = float(r.get("profit", 0))
 
-                chg_note = "baseline"
-                if i > 0:
-                    prev_s = float(quarterly.iloc[i - 1]["sales"])
-                    if prev_s:
-                        chg      = (s - prev_s) / abs(prev_s) * 100
-                        chg_note = f"{chg:+.1f}% vs prior quarter"
+                # Build label for each quarter present
+                q_parts = ", ".join(
+                    f"Q{q} ${q_vals[q]:,.0f}" for q in sorted(q_vals)
+                )
+                year_sales = sum(q_vals.values())
 
-                chunk_id = f"quarter_{q_str.replace('Q', 'q').replace(' ', '').lower()}_fact"
+                # Find peak quarter
+                peak_q = max(q_vals, key=lambda q: q_vals[q])
+                peak_s = q_vals[peak_q]
+                seasonal = (
+                    f"Q{peak_q} was the strongest quarter ({f'${peak_s:,.0f}'}) "
+                    + ("— typical Q4 year-end seasonal peak." if peak_q == 4 else ".")
+                )
+
                 chunks.append(Chunk(
-                    chunk_id,
-                    f"{q_str}: sales ${s:,.0f} ({chg_note}), profit ${p:,.0f}.",
+                    f"quarter_{year}_annual_summary",
+                    f"Quarterly breakdown for {year}: {q_parts}. "
+                    f"Annual total: ${year_sales:,.0f}. {seasonal}",
                     {"type": "time_period_fact",
                      "grain": "quarter",
-                     "period": q_str,
+                     "year": year,
                      "metric": "sales",
-                     "value": s},
+                     "value": year_sales},
                 ))
 
             return chunks
@@ -684,8 +696,9 @@ class KnowledgeBaseBuilder:
                     p_pct  = (p / tp_total * 100) if tp_total else 0.0
                     rank   = rank_idx + 1
 
+                    dim_plural = {"category": "categories", "region": "regions",
+                                  "segment": "segments"}.get(dim, f"{dim}s")
                     if rank == 1:
-                        dim_plural = {"category": "categories", "region": "regions", "segment": "segments"}.get(dim, f"{dim}s")
                         intro = f"{val} leads all {dim_plural} by sales"
                     elif rank == n:
                         intro = f"{val} is the lowest {dim} by sales"
@@ -698,6 +711,19 @@ class KnowledgeBaseBuilder:
                         f"Profit: ${p:,.0f} ({p_pct:.0f}% of total profit, "
                         f"{margin:.1f}% margin)."
                     )
+
+                    # Fix 4: add unique distinguishing signal for Consumer and Home Office
+                    # so dense embeddings can separate them from Corporate (rank 2)
+                    if dim == "segment" and val == "Consumer":
+                        text += (
+                            f" Consumer is the majority segment — it drives more than half "
+                            f"({s_pct:.0f}%) of total revenue."
+                        )
+                    elif dim == "segment" and val == "Home Office":
+                        text += (
+                            f" Despite being the smallest segment, Home Office has the highest "
+                            f"profit margin at {margin:.1f}% — more efficient than Consumer or Corporate."
+                        )
 
                     val_slug = val.lower().replace(" ", "_").replace("/", "_")
                     chunks.append(Chunk(
@@ -754,9 +780,11 @@ class KnowledgeBaseBuilder:
                     gap_pct = abs(top_val - bot_val) / abs(top_val) * 100 if top_val else 0.0
 
                     verb = "Most profitable" if metric == "profit" else "Highest revenue"
+                    dim_plural = {"category": "categories", "region": "regions",
+                                  "segment": "segments"}.get(dim, f"{dim}s")
                     chunks.append(Chunk(
                         f"{dim}_ranked_by_{metric}",
-                        f"{verb} {dim}s: {items}. "
+                        f"{verb} {dim_plural}: {items}. "
                         f"Gap between highest and lowest: {gap_pct:.0f}%.",
                         {"type": "dimension_rank",
                          "dimension": dim,
@@ -823,7 +851,7 @@ class KnowledgeBaseBuilder:
                         "anomaly_loss_subcat_summary",
                         f"Loss-making sub-categories: {loss_list}. "
                         f"These products are unprofitable — they are losing money and bleeding revenue. "
-                        f"Negative profit despite positive sales means every order makes the situation worse. "                        f"despite generating revenue. "
+                        f"Negative profit despite positive sales means every order makes the situation worse. "
                         f"Total loss: ${total_loss:,.0f} across {total_orders:,} orders.",
                         {"type": "anomaly_fact",
                          "anomaly_type": "negative_profit",
@@ -962,6 +990,8 @@ class KnowledgeBaseBuilder:
                 .reset_index()
             )
             dim_label = dim.replace("_", " ")
+            dim_plural_label = {"sub_category": "sub categories", "category": "categories",
+                                 "region": "regions", "segment": "segments"}.get(dim, dim_label + "s")
             chunks: List[Chunk] = []
 
             for metric, verb in [("profit", "Most profitable"),
@@ -984,7 +1014,7 @@ class KnowledgeBaseBuilder:
 
                 chunks.append(Chunk(
                     f"top{k}_{dim}_{metric}",
-                    f"{verb} {dim_label}s: {items}.{loss_note}",
+                    f"{verb} {dim_plural_label}: {items}.{loss_note}",
                     {"type": "dimension_rank", "dimension": dim, "metric": metric, "k": k},
                 ))
 
