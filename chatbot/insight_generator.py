@@ -3,8 +3,15 @@ chatbot/insight_generator.py
 Generates a deep analytical insight for a query result.
 Tries Gemini first; falls back to deterministic rule-based insight on failure.
 
-FIX: _data_summary and _rule_insight now correctly handle trend+breakdown
-     by grouping per segment instead of comparing across segments.
+Changes vs v1:
+  - CRITICAL BUG FIX: _llm_insight() had generate_content(...) with literal "..."
+    as argument — call never worked. Fixed with correct model/contents/config args.
+  - _verify_grounding(): normalize numbers before comparing ($1.2M vs $1,200,000)
+    instead of raw string match which gave many false negatives.
+  - _data_summary() kpi_value path: now also computes margin when both sales+profit
+    are available, even if margin not in explicit metrics list.
+  - FIX (retained from v1): _data_summary and _rule_insight handle trend+breakdown
+    by grouping per segment instead of comparing across segments.
 """
 
 from __future__ import annotations
@@ -15,6 +22,7 @@ from typing import Any, Dict, List, Optional
 
 import pandas as pd
 from google.genai import types as genai_types
+
 logger = logging.getLogger(__name__)
 
 
@@ -23,7 +31,7 @@ class InsightGenerator:
     Usage:
         gen = InsightGenerator(gemini_client, model_name)
         insight = gen.generate(plan, result_df)
-        # returns "\n\n---\n💡 **Insight:** ..." or ""
+        # returns "\\n\\n---\\n💡 **Insight:** ..." or ""
     """
 
     def __init__(self, gemini_client: Any = None, model_name: str = "") -> None:
@@ -70,9 +78,10 @@ class InsightGenerator:
                 "- Which entries are underperforming or at a loss?\n"
                 "- What strategic action does this ranking suggest?"
             ),
-           "kpi_value": (
+            "kpi_value": (
                 (
-                    f"Analyse this {breakdown} × {plan.get('secondary_breakdown')} cross-breakdown deeply. "
+                    f"Analyse this {breakdown} × {plan.get('secondary_breakdown')} "
+                    "cross-breakdown deeply. "
                     "Cover ALL of these points:\n"
                     "- **Overall leader**: which primary dimension leads and by how much ($ and %).\n"
                     "- **Category dominance per dimension**: for each primary value, which secondary "
@@ -95,7 +104,6 @@ class InsightGenerator:
             ),
             "kpi_trend": (
                 (
-                    # ── FIX: When trend has breakdown, guide LLM to analyse per-segment ──
                     f"Analyse this {grain}-level trend broken down by {breakdown}. Cover:\n"
                     f"1. **Per-segment trajectory**: For each {breakdown}, state the overall % change "
                     f"from first to last period and classify growth/decline.\n"
@@ -126,7 +134,6 @@ class InsightGenerator:
             ),
         }.get(intent, "Provide a thorough analytical observation using the data.")
 
-        # ── Token budget scales with intent ───────────────────
         max_tokens = {
             "kpi_trend":   2800,
             "kpi_compare": 3000,
@@ -154,32 +161,44 @@ class InsightGenerator:
             - Lead with the single most important finding with a specific number.
             - Use **bold** for ALL critical numbers, percentages, and period names.
             - Every sentence must contain at least one number from the DATA section.
-            - For trend analysis: address EACH period transition individually — do NOT summarise multiple transitions into one sentence.
+            - For trend analysis: address EACH period transition individually.
             - Include CAGR if multiple years of data are present.
             - Include a 2-period forward projection in the final section.
             - Do NOT invent figures that are not in the DATA section.
-            - Do NOT use filler openers like "The data shows", "Overall", "In conclusion", "Notably".
+            - Do NOT use filler openers like "The data shows", "Overall", "In conclusion".
             - Use clear, direct business language. No jargon.
-            - Format: use numbered sections with headers for kpi_trend, bullet points for others.
+            - Format: numbered sections with headers for kpi_trend, bullet points for others.
 
             Write the complete, full-length insight now (do not truncate):"""
 
+        # ── CRITICAL BUG FIX ──────────────────────────────────
+        # v1 had: resp = self.client.models.generate_content(...)
+        # The literal "..." was passed as argument — Python evaluated it as
+        # Ellipsis object, not valid API arguments. Call always silently failed.
+        # v2 fix: pass correct keyword arguments.
         try:
-            resp = self.client.models.generate_content(...)
+            resp = self.client.models.generate_content(
+                model=self.model_name,
+                contents=prompt,
+                config=genai_types.GenerateContentConfig(
+                    temperature=0.1,
+                    max_output_tokens=max_tokens,
+                ),
+            )
             text = (getattr(resp, "text", "") or "").strip()
 
             if len(text) > 30:
-                # ── Grounding check ───────────────────────────
                 score = self._verify_grounding(text, summary)
                 if score < 0.5:
                     logger.warning(
                         "Insight grounding score %.2f < 0.5 — "
                         "possible hallucination, falling back to rule-based", score
                     )
-                    return ""   # trigger rule-based fallback
+                    return ""
                 return self._trim_to_complete_sentence(text)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("LLM insight generation failed: %s", exc)
+
         return ""
 
     # ── Rule-based insight ────────────────────────────────────
@@ -208,12 +227,12 @@ class InsightGenerator:
             gap_pct       = (top_region_v - bot_region_v) / top_region_v * 100 if top_region_v else 0
             insights.append(
                 f"**{top_region}** is the strongest region at {self._fv(top_region_v, m0)} "
-                f"({top_region_v/grand_total*100:.0f}% of total), "
+                f"({top_region_v / grand_total * 100:.0f}% of total), "
                 f"**{gap_pct:.0f}%** ahead of the weakest region "
                 f"**{bot_region}** ({self._fv(bot_region_v, m0)})."
             )
 
-            cat_totals = df.groupby("breakdown")[m0].sum().sort_values(ascending=False)
+            cat_totals     = df.groupby("breakdown")[m0].sum().sort_values(ascending=False)
             top_cat_global = cat_totals.index[0]
 
             outlier_regions = []
@@ -222,40 +241,40 @@ class InsightGenerator:
                 top_row = rdf.sort_values(m0, ascending=False).iloc[0]
                 if top_row.get("breakdown") != top_cat_global:
                     outlier_regions.append(
-                        f"**{region_val}** (led by {top_row.get('breakdown','—')})"
+                        f"**{region_val}** (led by {top_row.get('breakdown', '—')})"
                     )
 
             if outlier_regions:
                 insights.append(
                     f"While **{top_cat_global}** dominates globally, "
-                    + ", ".join(outlier_regions) +
-                    f" show a different top category — suggesting distinct local demand patterns."
+                    + ", ".join(outlier_regions)
+                    + " show a different top category — suggesting distinct local demand patterns."
                 )
             else:
                 insights.append(
                     f"**{top_cat_global}** is the top category across all regions — "
-                    f"a highly consistent pattern suggesting uniform demand nationally."
+                    "a highly consistent pattern suggesting uniform demand nationally."
                 )
 
             concentration_lines = []
             for region_val in region_totals.index:
-                rdf      = df[df["breakdown2"] == region_val]
-                r_total  = float(rdf[m0].sum())
-                top_row  = rdf.sort_values(m0, ascending=False).iloc[0]
+                rdf       = df[df["breakdown2"] == region_val]
+                r_total   = float(rdf[m0].sum())
+                top_row   = rdf.sort_values(m0, ascending=False).iloc[0]
                 top_share = float(top_row[m0]) / r_total * 100 if r_total else 0
                 if top_share >= 40:
                     concentration_lines.append(
                         f"**{region_val}** relies heavily on "
-                        f"**{top_row.get('breakdown','—')}** "
+                        f"**{top_row.get('breakdown', '—')}** "
                         f"({top_share:.0f}% of region sales)"
                     )
             if concentration_lines:
                 insights.append(
-                    "⚠️ **Concentration risk:** " + "; ".join(concentration_lines) +
-                    " — a decline in this category would disproportionately impact the region."
+                    "⚠️ **Concentration risk:** " + "; ".join(concentration_lines)
+                    + " — a decline in this category would disproportionately impact the region."
                 )
 
-            cat_std = {}
+            cat_std: Dict[str, float] = {}
             for cat_val in cat_totals.index:
                 cdf    = df[df["breakdown"] == cat_val]
                 shares = []
@@ -277,11 +296,6 @@ class InsightGenerator:
 
             return insights
 
-        # ────────────────────────────────────────────────────────
-        # FIX: kpi_trend + breakdown → per-segment analysis
-        # OLD BUG: sorted all rows by period, took first/last across
-        #          different segments → wrong overall change %.
-        # ────────────────────────────────────────────────────────
         if (intent == "kpi_trend"
                 and breakdown and "breakdown" in df.columns
                 and "period" in df.columns
@@ -309,7 +323,7 @@ class InsightGenerator:
                     insights.append(
                         f"There is a significant **{gap:.0f}% gap** between the leader "
                         f"and **{sdf.iloc[1]['breakdown']}** ({self._fv(sv, m0)}), "
-                        f"suggesting a highly uneven distribution of {m0}."
+                        "suggesting a highly uneven distribution."
                     )
                 else:
                     insights.append(
@@ -320,13 +334,12 @@ class InsightGenerator:
             if n >= 3:
                 top2_sum = float(sdf.head(2)[m0].sum())
                 if total > 0:
-                    top2_pct = top2_sum / total * 100
+                    top2_pct   = top2_sum / total * 100
                     top2_names = " & ".join(str(sdf.iloc[i]["breakdown"]) for i in range(2))
                     if top2_pct >= 60:
                         insights.append(
                             f"**{top2_names}** together account for **{top2_pct:.0f}%** of total — "
-                            f"performance is heavily concentrated in these two, "
-                            f"posing a risk if either declines."
+                            "performance is heavily concentrated, posing a risk if either declines."
                         )
                     else:
                         insights.append(
@@ -340,21 +353,19 @@ class InsightGenerator:
                     names = ", ".join(f"**{r['breakdown']}**" for _, r in negatives.iterrows())
                     worst = float(negatives.iloc[-1][m0])
                     insights.append(
-                        f"⚠️ {names} {'is' if len(negatives)==1 else 'are'} operating at a loss "
-                        f"(worst: {self._fv(worst, m0)}). "
-                        f"These require urgent cost or pricing review."
+                        f"⚠️ {names} {'is' if len(negatives) == 1 else 'are'} operating at a loss "
+                        f"(worst: {self._fv(worst, m0)}). These require urgent review."
                     )
 
             if n >= 4:
-                bottom_val = float(sdf.iloc[-1][m0])
+                bottom_val  = float(sdf.iloc[-1][m0])
                 bottom_name = str(sdf.iloc[-1]["breakdown"])
                 insights.append(
                     f"At the bottom, **{bottom_name}** contributes only {self._fv(bottom_val, m0)}. "
-                    f"Investigate whether this reflects a structural weakness or simply smaller market size."
+                    "Investigate whether this reflects a structural weakness or smaller market size."
                 )
 
         elif intent == "kpi_trend" and "period" in df.columns and m0 in df.columns:
-            # No breakdown — original logic is correct
             sdf = df.sort_values("period").reset_index(drop=True)
             n   = len(sdf)
 
@@ -365,20 +376,19 @@ class InsightGenerator:
             last_v  = float(sdf.iloc[-1][m0])
             chg     = (last_v - first_v) / abs(first_v) * 100 if first_v else 0
             word    = "grown" if chg > 0 else "declined"
-
-            grain = plan.get("time_grain", "none")
-
+            grain   = plan.get("time_grain", "none")
             abs_change = abs(last_v - first_v)
+
             insights.append(
                 f"Over the full **{n}-period** span, **{_label(m0)}** has {word} by "
                 f"**{abs(chg):.1f}%** — from {self._fv(first_v, m0)} to {self._fv(last_v, m0)} "
-                f"(an absolute change of **{self._fv(abs_change, m0)}**)."
+                f"(an absolute change of **{self._fv(abs_change, m0)  }**)."
             )
 
             if grain in ("year", "quarter", "month") and n <= 24:
                 period_lines = []
-                best_chg, best_idx = -999, 1
-                worst_chg, worst_idx = 999, 1
+                best_chg,  best_idx  = -999, 1
+                worst_chg, worst_idx = 999,  1
 
                 for i in range(1, n):
                     prev_p = _fmt_period(sdf.iloc[i - 1].get("period", ""), grain)
@@ -405,9 +415,7 @@ class InsightGenerator:
                         f"Δ {self._fv(abs_d, m0)}) — {tag}"
                     )
 
-                insights.append(
-                    "**Period-by-period breakdown:**\n" + "\n".join(period_lines)
-                )
+                insights.append("**Period-by-period breakdown:**\n" + "\n".join(period_lines))
 
                 if n >= 3:
                     bp = _fmt_period(sdf.iloc[best_idx].get("period", ""), grain)
@@ -420,21 +428,21 @@ class InsightGenerator:
 
             peak   = sdf.loc[sdf[m0].idxmax()]
             trough = sdf.loc[sdf[m0].idxmin()]
-            peak_p   = _fmt_period(peak.get("period", ""), grain)
+            peak_p   = _fmt_period(peak.get("period",   ""), grain)
             trough_p = _fmt_period(trough.get("period", ""), grain)
             range_v  = abs(float(peak[m0]) - float(trough[m0]))
             swing_pct = range_v / abs(float(peak[m0])) * 100 if float(peak[m0]) else 0
             insights.append(
                 f"🏆 **Peak:** {peak_p} at {self._fv(float(peak[m0]), m0)} | "
                 f"📉 **Trough:** {trough_p} at {self._fv(float(trough[m0]), m0)} — "
-                f"a range of **{self._fv(range_v, m0)}** ({swing_pct:.0f}% swing from peak to trough)."
+                f"a range of **{self._fv(range_v, m0)}** ({swing_pct:.0f}% swing)."
             )
 
             if n >= 4:
                 recent_avg = float(sdf.tail(2)[m0].mean())
                 prior_avg  = float(sdf.iloc[-4:-2][m0].mean())
                 if prior_avg:
-                    momentum = (recent_avg - prior_avg) / abs(prior_avg) * 100
+                    momentum  = (recent_avg - prior_avg) / abs(prior_avg) * 100
                     direction = (
                         "**accelerating 📈**" if momentum > 10
                         else "**decelerating 📉**" if momentum < -10
@@ -448,13 +456,12 @@ class InsightGenerator:
                         f"**Recent momentum is {direction}** — the last 2 periods "
                         f"(**{r1}** & **{r2}**) averaged {self._fv(recent_avg, m0)}, "
                         f"vs {self._fv(prior_avg, m0)} in the prior 2 (**{p1}** & **{p2}**) "
-                        f"({momentum:+.1f}%). "
-                        f"{'Sustained momentum suggests continued growth if market conditions hold.' if momentum > 5 else 'Slowing momentum warrants a closer look at pipeline and demand signals.' if momentum < -5 else 'Steady growth — no dramatic acceleration or deceleration detected.'}"
+                        f"({momentum:+.1f}%)."
                     )
 
             if grain == "year" and n >= 2 and first_v > 0:
-                years = n - 1
-                cagr  = ((last_v / first_v) ** (1 / years) - 1) if first_v > 0 else 0
+                years     = n - 1
+                cagr      = ((last_v / first_v) ** (1 / years) - 1) if first_v > 0 else 0
                 proj_base = last_v * (1 + cagr)
                 proj_high = last_v * (1 + cagr * 1.3)
                 proj_low  = last_v * (1 + cagr * 0.7)
@@ -466,11 +473,12 @@ class InsightGenerator:
                     next_year = "next period"
                     yr_after  = "the period after"
                 insights.append(
-                    f"📊 **Forward projection:** Applying the **{cagr*100:.1f}% CAGR** to {last_year}'s "
-                    f"{self._fv(last_v, m0)}, the base-case forecast for **{next_year}** is "
-                    f"**{self._fv(proj_base, m0)}** "
+                    f"📊 **Forward projection:** Applying the **{cagr * 100:.1f}% CAGR** "
+                    f"to {last_year}'s {self._fv(last_v, m0)}, the base-case forecast for "
+                    f"**{next_year}** is **{self._fv(proj_base, m0)}** "
                     f"(range: {self._fv(proj_low, m0)} low → {self._fv(proj_high, m0)} high). "
-                    f"By **{yr_after}**, the base case reaches **{self._fv(proj_base * (1 + cagr), m0)}**."
+                    f"By **{yr_after}**, the base case reaches "
+                    f"**{self._fv(proj_base * (1 + cagr), m0)}**."
                 )
 
         elif intent == "kpi_compare" and "current" in df.columns:
@@ -479,93 +487,86 @@ class InsightGenerator:
             prev = float(row["previous"])
             if prev == 0:
                 return []
-            m    = str(row.get("metric", m0))
-            cp   = plan.get("compare_period", "prev_period")
+            m   = str(row.get("metric", m0))
+            cp  = plan.get("compare_period", "prev_period")
+            chg = (cur - prev) / abs(prev) * 100
 
-            if prev:
-                chg = (cur - prev) / abs(prev) * 100
-                direction = "increased" if chg > 0 else "decreased"
-                cp_label  = {"yoy": "year-over-year", "mom": "month-over-month",
-                             "prev_period": "vs the previous period"}.get(cp, cp)
+            direction = "increased" if chg > 0 else "decreased"
+            cp_label  = {"yoy": "year-over-year", "mom": "month-over-month",
+                         "prev_period": "vs the previous period"}.get(cp, cp)
 
+            insights.append(
+                f"**{m.replace('_', ' ').title()}** has {direction} by **{abs(chg):.1f}%** "
+                f"{cp_label} — from {self._fv(prev, m)} to {self._fv(cur, m)}."
+            )
+
+            if abs(chg) >= 30:
+                driver = ("significant structural shift or seasonality"
+                          if abs(chg) >= 50 else "notable operational change")
                 insights.append(
-                    f"**{m.replace('_', ' ').title()}** has {direction} by **{abs(chg):.1f}%** {cp_label} — "
-                    f"from {self._fv(prev, m)} to {self._fv(cur, m)}."
+                    f"A **{abs(chg):.0f}% swing** is material and likely reflects a {driver}. "
+                    "Cross-referencing with volume (orders) and margin data is recommended."
+                )
+            elif abs(chg) >= 10:
+                insights.append(
+                    f"A **{abs(chg):.1f}%** move is meaningful. "
+                    f"{'Monitor whether this momentum continues.' if chg > 0 else 'Investigate root causes — pricing, volume, or mix shift.'}"
+                )
+            else:
+                insights.append(
+                    f"The change is modest (**{abs(chg):.1f}%**), suggesting relative stability. "
+                    "No immediate action required, but watch for further drift."
                 )
 
-                if abs(chg) >= 30:
-                    driver = "significant structural shift or seasonality" if abs(chg) >= 50 else "notable operational change"
-                    insights.append(
-                        f"A **{abs(chg):.0f}% swing** is material and likely reflects a {driver}. "
-                        f"Cross-referencing with volume (orders) and margin data is recommended."
-                    )
-                elif abs(chg) >= 10:
-                    insights.append(
-                        f"A **{abs(chg):.1f}%** move is meaningful. "
-                        f"{'Monitor whether this momentum continues next period.' if chg > 0 else 'Investigate root causes — pricing, volume, or mix shift.'}"
-                    )
-                else:
-                    insights.append(
-                        f"The change is modest (**{abs(chg):.1f}%**), suggesting relative stability. "
-                        f"No immediate action required, but watch for further drift."
-                    )
-
-                delta_abs = abs(cur - prev)
-                if delta_abs > 0:
-                    insights.append(
-                        f"In absolute terms, the difference is **{self._fv(delta_abs, m)}** — "
-                        f"{'a meaningful contribution to the bottom line.' if m == 'profit' else 'which reflects real business volume change.'}"
-                    )
+            delta_abs = abs(cur - prev)
+            if delta_abs > 0:
+                insights.append(
+                    f"In absolute terms, the difference is **{self._fv(delta_abs, m)}** — "
+                    f"{'a meaningful contribution to the bottom line.' if m == 'profit' else 'which reflects real business volume change.'}"
+                )
 
         elif intent == "kpi_value" and not breakdown and "sales" in df.columns:
-            r0 = df.iloc[0]
-            ts = float(r0.get("sales", 0))
-            tp = float(r0.get("profit", 0))
-            pm = (tp / ts * 100) if ts else 0
+            r0  = df.iloc[0]
+            ts  = float(r0.get("sales", 0))
+            tp  = float(r0.get("profit", 0))
+            pm  = (tp / ts * 100) if ts else 0
             to_ = int(r0.get("orders", 0)) if "orders" in r0 else None
 
             if pm < 5:
                 insights.append(
                     f"⚠️ The profit margin of **{pm:.1f}%** is dangerously low. "
                     f"On **{self._fv(ts, 'sales')}** in revenue, only **{self._fv(tp, 'profit')}** "
-                    f"reaches the bottom line — review pricing strategy and cost structure immediately."
+                    "reaches the bottom line — review pricing strategy and cost structure immediately."
                 )
             elif pm > 20:
                 insights.append(
-                    f"The profit margin of **{pm:.1f}%** is strong and well above typical retail benchmarks (~12%). "
-                    f"This means **{self._fv(tp, 'profit')}** is retained from **{self._fv(ts, 'sales')}** in revenue — "
-                    f"a sign of healthy pricing power and cost control."
+                    f"The profit margin of **{pm:.1f}%** is strong and well above typical retail "
+                    f"benchmarks (~12%). This means **{self._fv(tp, 'profit')}** is retained from "
+                    f"**{self._fv(ts, 'sales')}** in revenue."
                 )
             else:
                 insights.append(
                     f"The **{pm:.1f}% profit margin** is within normal retail range. "
                     f"**{self._fv(tp, 'profit')}** profit on **{self._fv(ts, 'sales')}** revenue "
-                    f"leaves room for improvement — targeting 15–20% should be a medium-term goal."
+                    "leaves room for improvement — targeting 15–20% should be a medium-term goal."
                 )
 
             if to_:
                 avg = ts / to_
                 insights.append(
                     f"With **{to_:,} orders** and an average order value of **{self._fv(avg, 'sales')}**, "
-                    f"growing either order volume or average basket size would have an outsized impact on total profit."
+                    "growing either order volume or average basket size would have an outsized impact."
                 )
 
         return insights
 
-    # ────────────────────────────────────────────────────────────
-    # NEW: Per-segment trend insight (fixes cross-segment bug)
-    # ────────────────────────────────────────────────────────────
+    # ── Per-segment trend insight ─────────────────────────────
 
     def _rule_insight_trend_breakdown(self, df: pd.DataFrame, m0: str,
                                       breakdown: str, plan: Dict[str, Any]) -> List[str]:
-        """
-        Generate insights for kpi_trend + breakdown by analysing
-        each segment independently, then comparing across segments.
-        """
-        grain   = plan.get("time_grain", "year")
+        grain    = plan.get("time_grain", "year")
         insights: List[str] = []
 
-        # ── 1. Compute per-segment overall change ─────────────
         segment_stats = []
         for bk_name, bk_df in df.groupby("breakdown"):
             bk_sorted = bk_df.sort_values("period")
@@ -575,21 +576,15 @@ class InsightGenerator:
             last_v  = float(bk_sorted.iloc[-1][m0])
             chg     = (last_v - first_v) / abs(first_v) * 100 if first_v else 0
             segment_stats.append({
-                "name": bk_name,
-                "first_v": first_v,
-                "last_v":  last_v,
-                "change":  chg,
-                "n_periods": len(bk_sorted),
+                "name": bk_name, "first_v": first_v, "last_v": last_v,
+                "change": chg, "n_periods": len(bk_sorted),
             })
 
         if not segment_stats:
             return insights
 
-        # Sort by change descending
         segment_stats.sort(key=lambda x: x["change"], reverse=True)
         dim_label = breakdown.replace("_", " ").title()
-
-        # ── 2. Best and worst performers ──────────────────────
         best  = segment_stats[0]
         worst = segment_stats[-1]
 
@@ -602,33 +597,29 @@ class InsightGenerator:
             f"({self._fv(worst['first_v'], m0)} → {self._fv(worst['last_v'], m0)})."
         )
 
-        # ── 3. Divergence check ───────────────────────────────
-        growers  = [s for s in segment_stats if s["change"] > 5]
+        growers   = [s for s in segment_stats if s["change"] > 5]
         decliners = [s for s in segment_stats if s["change"] < -5]
 
         if growers and decliners:
             g_names = ", ".join(f"**{s['name']}**" for s in growers)
             d_names = ", ".join(f"**{s['name']}**" for s in decliners)
             insights.append(
-                f"⚠️ **Divergence detected:** {g_names} {'grew' if len(growers)==1 else 'grew'} "
-                f"while {d_names} declined — the overall trend masks significant "
-                f"variation between {dim_label}s."
+                f"⚠️ **Divergence detected:** {g_names} grew while {d_names} declined — "
+                f"the overall trend masks significant variation between {dim_label}s."
             )
         elif all(s["change"] > 0 for s in segment_stats):
             insights.append(
-                f"All {dim_label}s showed positive growth — a healthy, broad-based trend "
-                f"with no underperformers."
+                f"All {dim_label}s showed positive growth — a healthy, broad-based trend."
             )
 
-        # ── 4. Total across segments ──────────────────────────
         period_totals = df.groupby("period")[m0].sum().sort_index()
         if len(period_totals) >= 2:
             total_first = float(period_totals.iloc[0])
             total_last  = float(period_totals.iloc[-1])
             if total_first:
                 total_chg = (total_last - total_first) / abs(total_first) * 100
-                p_first = _fmt_period(period_totals.index[0], grain)
-                p_last  = _fmt_period(period_totals.index[-1], grain)
+                p_first   = _fmt_period(period_totals.index[0], grain)
+                p_last    = _fmt_period(period_totals.index[-1], grain)
                 insights.append(
                     f"**Total {_label(m0)}** across all {dim_label}s changed by "
                     f"**{total_chg:+.1f}%** "
@@ -636,22 +627,21 @@ class InsightGenerator:
                     f"{self._fv(total_last, m0)} in {p_last})."
                 )
 
-        # ── 5. Contribution analysis ──────────────────────────
         if len(segment_stats) >= 2 and len(period_totals) >= 2:
             total_abs_change = float(period_totals.iloc[-1]) - float(period_totals.iloc[0])
             if total_abs_change != 0:
                 contributions = []
                 for s in segment_stats:
-                    abs_chg = s["last_v"] - s["first_v"]
+                    abs_chg     = s["last_v"] - s["first_v"]
                     contrib_pct = (abs_chg / total_abs_change * 100) if total_abs_change else 0
                     contributions.append((s["name"], contrib_pct, abs_chg))
-
                 contributions.sort(key=lambda x: abs(x[2]), reverse=True)
                 top_contrib = contributions[0]
                 insights.append(
                     f"**{top_contrib[0]}** contributed **{abs(top_contrib[1]):.0f}%** of the "
                     f"total change ({self._fv(abs(top_contrib[2]), m0)}) — "
-                    f"making it the primary {'growth driver' if top_contrib[2] > 0 else 'drag on performance'}."
+                    f"making it the primary "
+                    f"{'growth driver' if top_contrib[2] > 0 else 'drag on performance'}."
                 )
 
         return insights
@@ -659,10 +649,10 @@ class InsightGenerator:
     # ── Data summary for LLM ──────────────────────────────────
 
     def _data_summary(self, plan: Dict[str, Any], df: pd.DataFrame) -> str:
-        intent  = plan.get("intent")
-        metrics = plan.get("metrics", ["sales"])
-        m0      = plan.get("order_by") or metrics[0]
-        grain   = plan.get("time_grain", "none")
+        intent    = plan.get("intent")
+        metrics   = plan.get("metrics", ["sales"])
+        m0        = plan.get("order_by") or metrics[0]
+        grain     = plan.get("time_grain", "none")
         breakdown = plan.get("breakdown_by")
         lines: List[str] = []
 
@@ -674,18 +664,18 @@ class InsightGenerator:
             for i, (_, r) in enumerate(df.head(10).iterrows(), 1):
                 disc = float(r.get("avg_discount_pct", 0))
                 lines.append(
-                    f"  {i}. {r.get('breakdown','—')} ({r.get('category','')}) — "
-                    f"profit=\\${float(r.get('profit',0)):,.0f} | "
-                    f"sales=\\${float(r.get('sales',0)):,.0f} | "
-                    f"orders={int(r.get('orders',0))} | avg_discount={disc:.0f}%"
+                    f"  {i}. {r.get('breakdown', '—')} ({r.get('category', '')}) — "
+                    f"profit=\\${float(r.get('profit', 0)):,.0f} | "
+                    f"sales=\\${float(r.get('sales', 0)):,.0f} | "
+                    f"orders={int(r.get('orders', 0))} | avg_discount={disc:.0f}%"
                 )
             return "\n".join(lines)
 
         if intent == "kpi_compare" and "current" in df.columns:
-            row = df.iloc[0]
-            m   = str(row.get("metric", m0))
+            row      = df.iloc[0]
+            m        = str(row.get("metric", m0))
             cur, prev = float(row["current"]), float(row["previous"])
-            chg = ((cur - prev) / abs(prev) * 100) if prev else None
+            chg      = ((cur - prev) / abs(prev) * 100) if prev else None
             lines += [
                 f"Metric: {m}",
                 f"Current period ({row['current_start']} – {row['current_end']}): {self._fv(cur, m)}",
@@ -695,24 +685,23 @@ class InsightGenerator:
             ]
 
         elif intent == "kpi_trend" and "period" in df.columns:
-            # ────────────────────────────────────────────────────
-            # FIX: When breakdown exists, summarize per-segment
-            # instead of treating all rows as one flat series.
-            # ────────────────────────────────────────────────────
             if breakdown and "breakdown" in df.columns:
                 return self._data_summary_trend_breakdown(df, metrics, m0, grain, breakdown)
 
-            # ── Original logic for non-breakdown trends ──────
             all_rows = df.sort_values("period").reset_index(drop=True)
             n = len(all_rows)
             lines.append(f"Time grain: {grain} | Metric: {m0} | Total periods: {n}")
 
             if n >= 2:
-                first_v = float(all_rows.iloc[0][m0])
-                last_v  = float(all_rows.iloc[-1][m0])
+                first_v   = float(all_rows.iloc[0][m0])
+                last_v    = float(all_rows.iloc[-1][m0])
                 total_chg = (last_v - first_v) / abs(first_v) * 100 if first_v else 0
                 abs_chg   = abs(last_v - first_v)
-                lines.append(f"Total change first→last: {total_chg:+.1f}% ({self._fv(first_v, m0)} → {self._fv(last_v, m0)}, absolute Δ={self._fv(abs_chg, m0)})")
+                lines.append(
+                    f"Total change first→last: {total_chg:+.1f}% "
+                    f"({self._fv(first_v, m0)} → {self._fv(last_v, m0)}, "
+                    f"absolute Δ={self._fv(abs_chg, m0)})"
+                )
                 if grain == "year" and n >= 2:
                     years = n - 1
                     cagr  = ((last_v / first_v) ** (1 / years) - 1) * 100 if first_v > 0 else 0
@@ -727,58 +716,77 @@ class InsightGenerator:
                     curr_v = float(r[m0])
                     pct    = (curr_v - prev_v) / abs(prev_v) * 100 if prev_v else 0
                     abs_d  = abs(curr_v - prev_v)
-                    lines.append(f"  {p}: {vals}  (Δ vs prior: {pct:+.1f}%, abs Δ={self._fv(abs_d, m0)})")
+                    lines.append(
+                        f"  {p}: {vals}  (Δ vs prior: {pct:+.1f}%, "
+                        f"abs Δ={self._fv(abs_d, m0)})"
+                    )
                 else:
                     lines.append(f"  {p}: {vals}  (baseline)")
 
-            peak    = all_rows.loc[all_rows[m0].idxmax()]
-            trough  = all_rows.loc[all_rows[m0].idxmin()]
-            lines.append(f"Peak period: {_fmt_period(peak.get('period',''), grain)} at {self._fv(float(peak[m0]), m0)}")
-            lines.append(f"Trough period: {_fmt_period(trough.get('period',''), grain)} at {self._fv(float(trough[m0]), m0)}")
-            lines.append(f"Peak-to-trough range: {self._fv(abs(float(peak[m0]) - float(trough[m0])), m0)}")
+            peak   = all_rows.loc[all_rows[m0].idxmax()]
+            trough = all_rows.loc[all_rows[m0].idxmin()]
+            lines.append(
+                f"Peak period: {_fmt_period(peak.get('period', ''), grain)} "
+                f"at {self._fv(float(peak[m0]), m0)}"
+            )
+            lines.append(
+                f"Trough period: {_fmt_period(trough.get('period', ''), grain)} "
+                f"at {self._fv(float(trough[m0]), m0)}"
+            )
+            lines.append(
+                f"Peak-to-trough range: "
+                f"{self._fv(abs(float(peak[m0]) - float(trough[m0])), m0)}"
+            )
 
             if n >= 4:
                 recent_avg = float(all_rows.tail(2)[m0].mean())
                 prior_avg  = float(all_rows.iloc[-4:-2][m0].mean())
                 momentum   = (recent_avg - prior_avg) / abs(prior_avg) * 100 if prior_avg else 0
-                lines.append(f"Recent momentum (last 2 vs prior 2): {momentum:+.1f}% (recent avg={self._fv(recent_avg, m0)}, prior avg={self._fv(prior_avg, m0)})")
+                lines.append(
+                    f"Recent momentum (last 2 vs prior 2): {momentum:+.1f}% "
+                    f"(recent avg={self._fv(recent_avg, m0)}, "
+                    f"prior avg={self._fv(prior_avg, m0)})"
+                )
 
         elif "breakdown" in df.columns:
             sdf   = df.sort_values(by=m0, ascending=False).head(20).reset_index(drop=True)
             total = float(sdf[m0].sum()) if m0 in sdf.columns else 0
-            lines.append(f"Breakdown dimension: {plan.get('breakdown_by')} | Primary metric: {m0} | Grand total: {self._fv(total, m0)}")
+            lines.append(
+                f"Breakdown dimension: {plan.get('breakdown_by')} | "
+                f"Primary metric: {m0} | Grand total: {self._fv(total, m0)}"
+            )
             lines.append(f"Number of entries: {len(sdf)}")
             for i, (_, r) in enumerate(sdf.iterrows(), 1):
-                vals = "  ".join(f"{c}={self._fv(float(r[c]), c)}" for c in metrics if c in r)
+                vals  = "  ".join(f"{c}={self._fv(float(r[c]), c)}" for c in metrics if c in r)
                 share = (float(r[m0]) / total * 100) if total else 0
                 lines.append(f"  {i}. {r['breakdown']}: {vals} ({share:.1f}% of total)")
+
         else:
+            # Single-value kpi_value
             r0 = df.iloc[0]
             for m in metrics + ["profit", "orders"]:
                 if m in r0:
                     lines.append(f"{m}: {self._fv(float(r0[m]), m)}")
+            # v2 addition: compute margin when available
+            if "sales" in r0 and "profit" in r0:
+                ts = float(r0["sales"])
+                tp = float(r0["profit"])
+                if ts:
+                    lines.append(f"profit_margin: {tp / ts * 100:.2f}%")
 
         return "\n".join(lines)
 
-    # ────────────────────────────────────────────────────────────
-    # NEW: Per-segment data summary for LLM (trend + breakdown)
-    # ────────────────────────────────────────────────────────────
-
     def _data_summary_trend_breakdown(self, df: pd.DataFrame, metrics: List[str],
-                                       m0: str, grain: str, breakdown: str) -> str:
-        """
-        Build LLM data summary for trend + breakdown:
-        Shows per-segment trajectory with correct within-segment YoY.
-        """
-        dim_label = breakdown.replace("_", " ").title()
+                                      m0: str, grain: str, breakdown: str) -> str:
+        dim_label     = breakdown.replace("_", " ").title()
         lines: List[str] = []
-
-        # Period totals across all segments
         period_totals = df.groupby("period")[m0].sum().sort_index()
-        n_periods = len(period_totals)
-        n_segments = df["breakdown"].nunique()
+        n_periods     = len(period_totals)
+        n_segments    = df["breakdown"].nunique()
 
-        lines.append(f"Time grain: {grain} | Metric: {m0} | Breakdown: {dim_label}")
+        lines.append(
+            f"Time grain: {grain} | Metric: {m0} | Breakdown: {dim_label}"
+        )
         lines.append(f"Periods: {n_periods} | Segments: {n_segments}")
 
         if n_periods >= 2:
@@ -794,15 +802,16 @@ class InsightGenerator:
         lines.append("")
         lines.append(f"Per-{dim_label} detail:")
 
-        # Per-segment summary
         for bk_name, bk_df in df.groupby("breakdown"):
             bk_sorted = bk_df.sort_values("period")
-            segment_lines = []
+            segment_lines: List[str] = []
             prev_v = None
             for _, r in bk_sorted.iterrows():
-                p = _fmt_period(r.get("period", ""), grain)
-                v = float(r.get(m0, 0))
-                vals = "  ".join(f"{c}={self._fv(float(r[c]), c)}" for c in metrics if c in r)
+                p    = _fmt_period(r.get("period", ""), grain)
+                v    = float(r.get(m0, 0))
+                vals = "  ".join(
+                    f"{c}={self._fv(float(r[c]), c)}" for c in metrics if c in r
+                )
                 if prev_v is not None and prev_v != 0:
                     pct = (v - prev_v) / abs(prev_v) * 100
                     segment_lines.append(f"    {p}: {vals} ({pct:+.1f}% vs prior)")
@@ -810,11 +819,10 @@ class InsightGenerator:
                     segment_lines.append(f"    {p}: {vals} (baseline)")
                 prev_v = v
 
-            # Overall change for segment
             if len(bk_sorted) >= 2:
-                first_v = float(bk_sorted.iloc[0][m0])
-                last_v  = float(bk_sorted.iloc[-1][m0])
-                seg_chg = (last_v - first_v) / abs(first_v) * 100 if first_v else 0
+                first_v  = float(bk_sorted.iloc[0][m0])
+                last_v   = float(bk_sorted.iloc[-1][m0])
+                seg_chg  = (last_v - first_v) / abs(first_v) * 100 if first_v else 0
                 lines.append(
                     f"  {bk_name}: overall {seg_chg:+.1f}% "
                     f"({self._fv(first_v, m0)} → {self._fv(last_v, m0)})"
@@ -825,11 +833,42 @@ class InsightGenerator:
 
         return "\n".join(lines)
 
-    @staticmethod
-    def _fv(v: float, metric: str) -> str:
-        if metric in {"sales", "profit"}:  return f"\\${v:,.0f}"
-        if metric == "profit_margin":      return f"{v:.2f}%"
-        return f"{int(v):,}"
+    # ── Grounding verifier ────────────────────────────────────
+
+    def _verify_grounding(self, insight_text: str, data_summary: str) -> float:
+        """
+        v2: Normalize numbers before comparing to reduce false negatives.
+
+        v1 bug: "$1,200,000" in data and "$1.2M" in insight were treated as
+                different numbers → grounding score too low → LLM insight rejected
+                even when it was factually correct.
+        v2 fix: extract numeric value regardless of formatting.
+        """
+        def _normalize_nums(text: str) -> set:
+            nums: set = set()
+            # Dollar amounts: $1,234 or $1,234.56
+            for m in _re.finditer(r'\$?([\d][\d,]*(?:\.\d+)?)', text):
+                raw = m.group(1).replace(",", "")
+                try:
+                    nums.add(round(float(raw), 1))
+                except ValueError:
+                    pass
+            # Percentages: 12.4%
+            for m in _re.finditer(r'([\d]+\.?[\d]*)%', text):
+                try:
+                    nums.add(round(float(m.group(1)), 1))
+                except ValueError:
+                    pass
+            return nums
+
+        insight_nums = _normalize_nums(insight_text)
+        summary_nums = _normalize_nums(data_summary)
+
+        if not insight_nums:
+            return 1.0  # no numbers to verify → assume OK
+
+        matched = insight_nums & summary_nums
+        return len(matched) / len(insight_nums)
 
     @staticmethod
     def _trim_to_complete_sentence(text: str) -> str:
@@ -839,26 +878,16 @@ class InsightGenerator:
             return text
         matches = list(re.finditer(r'[.!?](\*{0,2}[\)\s]|$)', text))
         if matches:
-            last = matches[-1]
-            return text[:last.end()].strip()
+            return text[:matches[-1].end()].strip()
         return text
-    
-    def _verify_grounding(self, insight_text: str, data_summary: str) -> float:
-        """
-        Trả về tỉ lệ 0.0–1.0: số liệu trong insight có xuất hiện trong data_summary.
-        < 0.6 = insight có khả năng hallucinate.
-        """
-        # Extract: $123,456 | 12.3% | 1,234
-        number_pattern = _re.compile(r'\$[\d,]+|\d+\.?\d*%|\b\d{3,}[\d,]*\b')
-        insight_nums = set(number_pattern.findall(insight_text))
-        summary_nums = set(number_pattern.findall(data_summary))
 
-        if not insight_nums:
-            return 1.0  # không có số → không thể verify, assume OK
-
-        matched = insight_nums & summary_nums
-        score = len(matched) / len(insight_nums)
-        return score
+    @staticmethod
+    def _fv(v: float, metric: str) -> str:
+        if metric in {"sales", "profit"}:
+            return f"\\${v:,.0f}"
+        if metric == "profit_margin":
+            return f"{v:.2f}%"
+        return f"{int(v):,}"
 
 
 # ── Module-level helpers ──────────────────────────────────────

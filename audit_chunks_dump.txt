@@ -1,0 +1,461 @@
+================================================================================
+FULL CHUNK DUMP — RAG Audit Step 1.1
+================================================================================
+
+STATIC CHUNKS (4 total)
+------------------------------------------------------------
+
+chunk_id   : schema_metrics
+type       : schema_fact
+tokens     : ~43
+metadata   : {"schema_aspect": "metrics", "inject_tier": [3]}
+text       :
+Available metrics: sales (total revenue in USD), profit (net profit, can be negative), orders (count of unique orders), profit_margin (profit divided by sales, as percentage).
+
+----------------------------------------
+
+chunk_id   : schema_dimensions
+type       : schema_fact
+tokens     : ~63
+metadata   : {"schema_aspect": "dimensions", "inject_tier": [3]}
+text       :
+Data can be grouped by: region (4 values: Central, East, South, West), segment (3 values: Consumer, Corporate, Home Office), category (3 values: Furniture, Office Supplies, Technology), and sub_category (17 product types including Phones, Chairs, Tables).
+
+----------------------------------------
+
+chunk_id   : schema_compare
+type       : schema_fact
+tokens     : ~31
+metadata   : {"schema_aspect": "compare_periods", "inject_tier": [3]}
+text       :
+Period comparison options: yoy (same period vs last year), mom (vs prior month), prev_period (vs prior window of same length).
+
+----------------------------------------
+
+chunk_id   : schema_intents
+type       : schema_fact
+tokens     : ~46
+metadata   : {"schema_aspect": "intents", "inject_tier": [3]}
+text       :
+Query types supported: aggregate totals (kpi_value), time series trends (kpi_trend), top-k rankings (kpi_rank), period comparisons (kpi_compare), loss or anomaly drill-down (kpi_detail).
+
+----------------------------------------
+
+
+DYNAMIC CHUNKS (46 total)
+------------------------------------------------------------
+
+chunk_id   : filter_active
+type       : filter_context
+tokens     : ~19
+metadata   : {"start_date": "2014-01-03", "end_date": "2017-12-30"}
+text       :
+Data covers 4 years from 2014 to 2017 (Jan 2014 to Dec 2017), 48 months total.
+
+----------------------------------------
+
+chunk_id   : kpi_sales_snapshot
+type       : kpi_snapshot
+tokens     : ~23
+metadata   : {"metric": "sales", "value": 2297200.8603}
+text       :
+Total sales revenue is $2,297,201, generated from 5,009 orders at an average of $459 per order.
+
+----------------------------------------
+
+chunk_id   : kpi_profit_snapshot
+type       : kpi_snapshot
+tokens     : ~35
+metadata   : {"metric": "profit", "value": 286397.02170000004}
+text       :
+Total profit is $286,397, representing a 12.5% profit margin on $2,297,201 in revenue. Profitability is above the typical 12% retail benchmark.
+
+----------------------------------------
+
+chunk_id   : kpi_orders_snapshot
+type       : kpi_snapshot
+tokens     : ~23
+metadata   : {"metric": "orders", "value": 5009}
+text       :
+Total orders placed: 5,009, averaging $459 in revenue per order and $57 in profit per order.
+
+----------------------------------------
+
+chunk_id   : kpi_margin_snapshot
+type       : kpi_snapshot
+tokens     : ~31
+metadata   : {"metric": "profit_margin", "value": 12.467217240315607}
+text       :
+Overall profit margin is 12.47% — above the typical 12% retail benchmark. $286,397 profit retained from $2,297,201 in revenue.
+
+----------------------------------------
+
+chunk_id   : year_2014_sales_fact
+type       : time_period_fact
+tokens     : ~31
+metadata   : {"grain": "year", "year": 2014, "metric": "sales", "value": 484247.4981, "is_best_period": false, "is_worst_period": false}
+text       :
+In 2014 (lowest profit margin across all years), sales were $484,247 with a 10.2% profit margin. Profit: $49,544, orders: 969.
+
+----------------------------------------
+
+chunk_id   : year_2015_sales_fact
+type       : time_period_fact
+tokens     : ~46
+metadata   : {"grain": "year", "year": 2015, "metric": "sales", "value": 470532.509, "is_best_period": false, "is_worst_period": true}
+text       :
+In 2015, sales declined 2.8% to $470,533 (from 2014's $484,247) — the only year in the dataset with a sales drop. Despite lower revenue, profit improved +24.4% to $61,619 (13.1% margin).
+
+----------------------------------------
+
+chunk_id   : year_2016_sales_fact
+type       : time_period_fact
+tokens     : ~29
+metadata   : {"grain": "year", "year": 2016, "metric": "sales", "value": 609205.598, "is_best_period": false, "is_worst_period": false}
+text       :
+In 2016, sales grew to $609,206 (the strongest single-year growth rate). Profit $81,795 (13.4% margin), orders 1,315.
+
+----------------------------------------
+
+chunk_id   : year_2017_sales_fact
+type       : time_period_fact
+tokens     : ~25
+metadata   : {"grain": "year", "year": 2017, "metric": "sales", "value": 733215.2552, "is_best_period": true, "is_worst_period": false}
+text       :
+2017 was the peak revenue year: $733,215 (+20.4% vs 2016), 1,687 orders. Profit $93,439 (12.7% margin).
+
+----------------------------------------
+
+chunk_id   : trend_year_sales_2014_2015
+type       : trend_transition
+tokens     : ~30
+metadata   : {"grain": "year", "metric": "sales", "period_from": 2014, "period_to": 2015, "value_from": 484247.4981, "value_to": 470532.509, "pct_change": -2.8, "direction": "down", "classification": "flat"}
+text       :
+From 2014 to 2015, sales declined 2.8% (flat): $484,247 → $470,533 (Δ $13,715). Profit changed +24.4%: $49,544 → $61,619.
+
+----------------------------------------
+
+chunk_id   : trend_year_sales_2015_2016
+type       : trend_transition
+tokens     : ~32
+metadata   : {"grain": "year", "metric": "sales", "period_from": 2015, "period_to": 2016, "value_from": 470532.509, "value_to": 609205.598, "pct_change": 29.5, "direction": "up", "classification": "strong growth"}
+text       :
+From 2015 to 2016, sales grew 29.5% (strong growth): $470,533 → $609,206 (Δ $138,673). Profit changed +32.7%: $61,619 → $81,795.
+
+----------------------------------------
+
+chunk_id   : trend_year_sales_2016_2017
+type       : trend_transition
+tokens     : ~32
+metadata   : {"grain": "year", "metric": "sales", "period_from": 2016, "period_to": 2017, "value_from": 609205.598, "value_to": 733215.2552, "pct_change": 20.4, "direction": "up", "classification": "strong growth"}
+text       :
+From 2016 to 2017, sales grew 20.4% (strong growth): $609,206 → $733,215 (Δ $124,010). Profit changed +14.2%: $81,795 → $93,439.
+
+----------------------------------------
+
+chunk_id   : trend_overview_sales_yearly
+type       : trend_overview
+tokens     : ~48
+metadata   : {"grain": "year", "metric": "sales", "period_from": 2014, "period_to": 2017, "overall_pct_change": 51.4, "cagr_pct": 14.8, "n_periods": 4}
+text       :
+Over 3 years (2014 to 2017), total sales grew +51.4% from $484,247 to $733,215, with a compound annual growth rate (CAGR) of 14.8%. Profit grew +88.6% over the same period ($49,544 → $93,439).
+
+----------------------------------------
+
+chunk_id   : quarter_2016q1_fact
+type       : time_period_fact
+tokens     : ~12
+metadata   : {"grain": "quarter", "period": "2016Q1", "metric": "sales", "value": 93237.181}
+text       :
+2016Q1: sales $93,237 (baseline), profit $11,441.
+
+----------------------------------------
+
+chunk_id   : quarter_2016q2_fact
+type       : time_period_fact
+tokens     : ~16
+metadata   : {"grain": "quarter", "period": "2016Q2", "metric": "sales", "value": 136082.301}
+text       :
+2016Q2: sales $136,082 (+46.0% vs prior quarter), profit $16,390.
+
+----------------------------------------
+
+chunk_id   : quarter_2016q3_fact
+type       : time_period_fact
+tokens     : ~16
+metadata   : {"grain": "quarter", "period": "2016Q3", "metric": "sales", "value": 143787.3622}
+text       :
+2016Q3: sales $143,787 (+5.7% vs prior quarter), profit $15,824.
+
+----------------------------------------
+
+chunk_id   : quarter_2016q4_fact
+type       : time_period_fact
+tokens     : ~16
+metadata   : {"grain": "quarter", "period": "2016Q4", "metric": "sales", "value": 236098.7538}
+text       :
+2016Q4: sales $236,099 (+64.2% vs prior quarter), profit $38,140.
+
+----------------------------------------
+
+chunk_id   : quarter_2017q1_fact
+type       : time_period_fact
+tokens     : ~16
+metadata   : {"grain": "quarter", "period": "2017Q1", "metric": "sales", "value": 123144.8602}
+text       :
+2017Q1: sales $123,145 (-47.8% vs prior quarter), profit $23,506.
+
+----------------------------------------
+
+chunk_id   : quarter_2017q2_fact
+type       : time_period_fact
+tokens     : ~16
+metadata   : {"grain": "quarter", "period": "2017Q2", "metric": "sales", "value": 133764.372}
+text       :
+2017Q2: sales $133,764 (+8.6% vs prior quarter), profit $15,499.
+
+----------------------------------------
+
+chunk_id   : quarter_2017q3_fact
+type       : time_period_fact
+tokens     : ~16
+metadata   : {"grain": "quarter", "period": "2017Q3", "metric": "sales", "value": 196251.956}
+text       :
+2017Q3: sales $196,252 (+46.7% vs prior quarter), profit $26,985.
+
+----------------------------------------
+
+chunk_id   : quarter_2017q4_fact
+type       : time_period_fact
+tokens     : ~16
+metadata   : {"grain": "quarter", "period": "2017Q4", "metric": "sales", "value": 280054.067}
+text       :
+2017Q4: sales $280,054 (+42.7% vs prior quarter), profit $27,449.
+
+----------------------------------------
+
+chunk_id   : month_peak_sales
+type       : time_period_fact
+tokens     : ~27
+metadata   : {"grain": "month", "period": "2017-11", "metric": "sales", "value": 118447.825, "is_best_period": true}
+text       :
+November 2017 was the highest revenue month: $118,448 in sales ($9,690 profit, 8.2% margin). Q4 seasonal peak.
+
+----------------------------------------
+
+chunk_id   : month_worst_profit
+type       : anomaly_fact
+tokens     : ~30
+metadata   : {"anomaly_type": "negative_profit", "dimension": "month", "metric": "profit", "value": -3281.007, "severity": "moderate"}
+text       :
+January 2015 had negative overall profit: $-3,281 loss. This is the only month in the dataset with negative profitability.
+
+----------------------------------------
+
+chunk_id   : region_west_fact
+type       : dimension_value
+tokens     : ~29
+metadata   : {"dimension": "region", "dimension_value": "West", "metric": "sales", "value": 725457.8245, "rank": 1, "rank_of": 4, "is_highest": true, "is_lowest": false, "margin": 14.9, "pct_of_total": 31.6}
+text       :
+West leads all regions by sales: $725,458 (32% of total revenue). Profit: $108,418 (38% of total profit, 14.9% margin).
+
+----------------------------------------
+
+chunk_id   : region_east_fact
+type       : dimension_value
+tokens     : ~32
+metadata   : {"dimension": "region", "dimension_value": "East", "metric": "sales", "value": 678781.24, "rank": 2, "rank_of": 4, "is_highest": false, "is_lowest": false, "margin": 13.5, "pct_of_total": 29.5}
+text       :
+East is the second highest region by sales: $678,781 (30% of total revenue). Profit: $91,523 (32% of total profit, 13.5% margin).
+
+----------------------------------------
+
+chunk_id   : region_central_fact
+type       : dimension_value
+tokens     : ~32
+metadata   : {"dimension": "region", "dimension_value": "Central", "metric": "sales", "value": 501239.8908, "rank": 3, "rank_of": 4, "is_highest": false, "is_lowest": false, "margin": 7.9, "pct_of_total": 21.8}
+text       :
+Central is the third highest region by sales: $501,240 (22% of total revenue). Profit: $39,706 (14% of total profit, 7.9% margin).
+
+----------------------------------------
+
+chunk_id   : region_south_fact
+type       : dimension_value
+tokens     : ~30
+metadata   : {"dimension": "region", "dimension_value": "South", "metric": "sales", "value": 391721.905, "rank": 4, "rank_of": 4, "is_highest": false, "is_lowest": true, "margin": 11.9, "pct_of_total": 17.1}
+text       :
+South is the lowest region by sales: $391,722 (17% of total revenue). Profit: $46,749 (16% of total profit, 11.9% margin).
+
+----------------------------------------
+
+chunk_id   : segment_consumer_fact
+type       : dimension_value
+tokens     : ~31
+metadata   : {"dimension": "segment", "dimension_value": "Consumer", "metric": "sales", "value": 1161401.345, "rank": 1, "rank_of": 3, "is_highest": true, "is_lowest": false, "margin": 11.5, "pct_of_total": 50.6}
+text       :
+Consumer leads all segments by sales: $1,161,401 (51% of total revenue). Profit: $134,119 (47% of total profit, 11.5% margin).
+
+----------------------------------------
+
+chunk_id   : segment_corporate_fact
+type       : dimension_value
+tokens     : ~33
+metadata   : {"dimension": "segment", "dimension_value": "Corporate", "metric": "sales", "value": 706146.3668, "rank": 2, "rank_of": 3, "is_highest": false, "is_lowest": false, "margin": 13.0, "pct_of_total": 30.7}
+text       :
+Corporate is the second highest segment by sales: $706,146 (31% of total revenue). Profit: $91,979 (32% of total profit, 13.0% margin).
+
+----------------------------------------
+
+chunk_id   : segment_home_office_fact
+type       : dimension_value
+tokens     : ~32
+metadata   : {"dimension": "segment", "dimension_value": "Home Office", "metric": "sales", "value": 429653.1485, "rank": 3, "rank_of": 3, "is_highest": false, "is_lowest": true, "margin": 14.0, "pct_of_total": 18.7}
+text       :
+Home Office is the lowest segment by sales: $429,653 (19% of total revenue). Profit: $60,299 (21% of total profit, 14.0% margin).
+
+----------------------------------------
+
+chunk_id   : category_technology_fact
+type       : dimension_value
+tokens     : ~31
+metadata   : {"dimension": "category", "dimension_value": "Technology", "metric": "sales", "value": 836154.033, "rank": 1, "rank_of": 3, "is_highest": true, "is_lowest": false, "margin": 17.4, "pct_of_total": 36.4}
+text       :
+Technology leads all categorys by sales: $836,154 (36% of total revenue). Profit: $145,455 (51% of total profit, 17.4% margin).
+
+----------------------------------------
+
+chunk_id   : category_furniture_fact
+type       : dimension_value
+tokens     : ~33
+metadata   : {"dimension": "category", "dimension_value": "Furniture", "metric": "sales", "value": 741999.7953, "rank": 2, "rank_of": 3, "is_highest": false, "is_lowest": false, "margin": 2.5, "pct_of_total": 32.3}
+text       :
+Furniture is the second highest category by sales: $742,000 (32% of total revenue). Profit: $18,451 (6% of total profit, 2.5% margin).
+
+----------------------------------------
+
+chunk_id   : category_office_supplies_fact
+type       : dimension_value
+tokens     : ~33
+metadata   : {"dimension": "category", "dimension_value": "Office Supplies", "metric": "sales", "value": 719047.032, "rank": 3, "rank_of": 3, "is_highest": false, "is_lowest": true, "margin": 17.0, "pct_of_total": 31.3}
+text       :
+Office Supplies is the lowest category by sales: $719,047 (31% of total revenue). Profit: $122,491 (43% of total profit, 17.0% margin).
+
+----------------------------------------
+
+chunk_id   : region_ranked_by_sales
+type       : dimension_rank
+tokens     : ~33
+metadata   : {"dimension": "region", "metric": "sales", "gap_top_bottom_pct": 46.0}
+text       :
+Highest revenue regions: West ($725,458), East ($678,781), Central ($501,240), South ($391,722). Gap between highest and lowest: 46%.
+
+----------------------------------------
+
+chunk_id   : region_ranked_by_profit
+type       : dimension_rank
+tokens     : ~32
+metadata   : {"dimension": "region", "metric": "profit", "gap_top_bottom_pct": 63.4}
+text       :
+Most profitable regions: West ($108,418), East ($91,523), South ($46,749), Central ($39,706). Gap between highest and lowest: 63%.
+
+----------------------------------------
+
+chunk_id   : segment_ranked_by_sales
+type       : dimension_rank
+tokens     : ~32
+metadata   : {"dimension": "segment", "metric": "sales", "gap_top_bottom_pct": 63.0}
+text       :
+Highest revenue segments: Consumer ($1,161,401), Corporate ($706,146), Home Office ($429,653). Gap between highest and lowest: 63%.
+
+----------------------------------------
+
+chunk_id   : segment_ranked_by_profit
+type       : dimension_rank
+tokens     : ~31
+metadata   : {"dimension": "segment", "metric": "profit", "gap_top_bottom_pct": 55.0}
+text       :
+Most profitable segments: Consumer ($134,119), Corporate ($91,979), Home Office ($60,299). Gap between highest and lowest: 55%.
+
+----------------------------------------
+
+chunk_id   : category_ranked_by_sales
+type       : dimension_rank
+tokens     : ~34
+metadata   : {"dimension": "category", "metric": "sales", "gap_top_bottom_pct": 14.0}
+text       :
+Highest revenue categorys: Technology ($836,154), Furniture ($742,000), Office Supplies ($719,047). Gap between highest and lowest: 14%.
+
+----------------------------------------
+
+chunk_id   : category_ranked_by_profit
+type       : dimension_rank
+tokens     : ~33
+metadata   : {"dimension": "category", "metric": "profit", "gap_top_bottom_pct": 87.3}
+text       :
+Most profitable categorys: Technology ($145,455), Office Supplies ($122,491), Furniture ($18,451). Gap between highest and lowest: 87%.
+
+----------------------------------------
+
+chunk_id   : top10_sub_category_profit
+type       : dimension_rank
+tokens     : ~78
+metadata   : {"dimension": "sub_category", "metric": "profit", "k": 10}
+text       :
+Most profitable sub categorys: Copiers ($55,618), Phones ($44,516), Accessories ($41,937), Paper ($34,054), Binders ($30,222), Chairs ($26,590), Storage ($21,279), Appliances ($18,138), Furnishings ($13,059), Envelopes ($6,964). Note: Bookcases, Supplies, Tables have negative profit (loss-making, not shown above).
+
+----------------------------------------
+
+chunk_id   : top10_sub_category_sales
+type       : dimension_rank
+tokens     : ~59
+metadata   : {"dimension": "sub_category", "metric": "sales", "k": 10}
+text       :
+Highest revenue sub categorys: Phones ($330,007), Chairs ($328,449), Storage ($223,844), Tables ($206,966), Binders ($203,413), Machines ($189,239), Accessories ($167,380), Copiers ($149,528), Bookcases ($114,880), Appliances ($107,532).
+
+----------------------------------------
+
+chunk_id   : anomaly_loss_subcat_summary
+type       : anomaly_fact
+tokens     : ~52
+metadata   : {"anomaly_type": "negative_profit", "dimension": "sub_category", "severity": "critical", "total_loss": 22387.1366}
+text       :
+Loss-making sub-categories: Tables (-$17,725), Bookcases (-$3,473), Supplies (-$1,189). These products are losing money and have negative profit despite generating revenue. Total loss: $22,387 across 718 orders.
+
+----------------------------------------
+
+chunk_id   : anomaly_low_margin_category_furniture
+type       : anomaly_fact
+tokens     : ~37
+metadata   : {"anomaly_type": "low_margin", "dimension": "category", "dimension_value": "Furniture", "metric": "profit_margin", "value": 2.4866951334588867, "severity": "moderate"}
+text       :
+Furniture category has the lowest profit margin at 2.5% — 10.0 percentage points below the overall average of 12.5%. Sales $742,000, Profit $18,451.
+
+----------------------------------------
+
+chunk_id   : anomaly_high_discount_loss
+type       : anomaly_fact
+tokens     : ~46
+metadata   : {"anomaly_type": "high_discount_loss", "dimension": "orders", "metric": "profit", "value": -97.1830983488873, "severity": "critical"}
+text       :
+Orders with discounts above 20% are on average unprofitable: average profit is $-97 (a loss). This affects 1,393 orders (14% of all orders). Heavy discounting is destroying profitability.
+
+----------------------------------------
+
+chunk_id   : discount_impact
+type       : insight
+tokens     : ~69
+metadata   : {"topic": "discount"}
+text       :
+Discount impact on profit: Discount 0–10%: avg profit=$67, avg sales=$233 (4892 orders); Discount 10–20%: avg profit=$25, avg sales=$214 (3709 orders); Discount 20–30%: avg profit=$-46, avg sales=$455 (227 orders); Discount >30%: avg profit=$-107, avg sales=$223 (1166 orders).
+
+----------------------------------------
+
+chunk_id   : cross_segment_category_profit
+type       : cross_fact
+tokens     : ~135
+metadata   : {"dimensions": ["segment", "category"]}
+text       :
+Top segment-category combinations by profit: Consumer/Technology: Profit=$70,798; Consumer/Office Supplies: Profit=$56,330; Corporate/Technology: Profit=$44,167; Corporate/Office Supplies: Profit=$40,227; Home Office/Technology: Profit=$30,490; Home Office/Office Supplies: Profit=$25,933; Corporate/Furniture: Profit=$7,585; Consumer/Furniture: Profit=$6,991; Home Office/Furniture: Profit=$3,875. Technology and Office Supplies dominate profit across all segments. Furniture is marginally profitable and drags down overall category margins.
+
+----------------------------------------
+

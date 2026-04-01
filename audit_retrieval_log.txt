@@ -1,0 +1,163 @@
+RETRIEVAL LOG — Test Queries
+================================================================================
+
+[KPI_VALUE   ] total sales this year
+  ⭐ 0.433  schema_metrics
+     0.151  schema_dimensions
+  ⭐ 0.718  trend_overview_sales_yearly
+  ⭐ 0.682  trend_year_sales_2016_2017
+  ⭐ 0.676  year_2016_sales_fact
+  ⭐ 0.664  trend_year_sales_2015_2016
+
+[KPI_VALUE   ] what is total profit and margin
+  ⭐ 0.606  schema_metrics
+  ❌ 0.132  schema_dimensions
+  ⭐ 0.707  kpi_profit_snapshot
+  ⭐ 0.669  kpi_margin_snapshot
+  ⭐ 0.595  year_2014_sales_fact
+  ⭐ 0.527  segment_corporate_fact
+
+[KPI_VALUE   ] how many orders
+     0.269  schema_metrics
+     0.207  schema_dimensions
+  ⭐ 0.596  kpi_orders_snapshot
+  ⭐ 0.473  kpi_sales_snapshot
+  ⭐ 0.411  anomaly_high_discount_loss
+     0.333  discount_impact
+
+[KPI_TREND   ] sales trend over years
+     0.305  schema_metrics
+     0.188  schema_dimensions
+  ⭐ 0.672  trend_overview_sales_yearly
+  ⭐ 0.670  trend_year_sales_2016_2017
+  ⭐ 0.659  year_2016_sales_fact
+  ⭐ 0.655  trend_year_sales_2015_2016
+
+[KPI_TREND   ] monthly profit trend
+     0.338  schema_metrics
+  ❌ 0.045  schema_dimensions
+  ⭐ 0.610  month_peak_sales
+  ⭐ 0.592  year_2016_sales_fact
+  ⭐ 0.579  trend_overview_sales_yearly
+  ⭐ 0.579  trend_year_sales_2015_2016
+
+[KPI_TREND   ] quarterly revenue growth
+     0.357  schema_metrics
+  ❌ 0.055  schema_dimensions
+  ⭐ 0.603  trend_overview_sales_yearly
+  ⭐ 0.570  year_2017_sales_fact
+  ⭐ 0.556  trend_year_sales_2015_2016
+  ⭐ 0.553  year_2016_sales_fact
+
+[KPI_RANK    ] top 5 regions by profit
+     0.367  schema_dimensions
+     0.366  schema_metrics
+  ⭐ 0.728  region_ranked_by_profit
+  ⭐ 0.670  region_ranked_by_sales
+  ⭐ 0.663  region_east_fact
+  ⭐ 0.628  region_west_fact
+
+[KPI_RANK    ] best sub-categories by sales
+  ⭐ 0.421  schema_dimensions
+     0.337  schema_metrics
+  ⭐ 0.572  cross_segment_category_profit
+  ⭐ 0.527  segment_corporate_fact
+  ⭐ 0.516  top10_sub_category_sales
+  ⭐ 0.486  category_furniture_fact
+
+[KPI_RANK    ] which segment has highest margin
+     0.334  schema_metrics
+     0.254  schema_dimensions
+  ⭐ 0.426  segment_corporate_fact
+  ⭐ 0.421  segment_ranked_by_profit
+  ⭐ 0.420  region_ranked_by_sales
+  ⭐ 0.403  segment_ranked_by_sales
+
+[KPI_COMPARE ] compare this year vs last year sales
+     0.306  schema_metrics
+  ❌ 0.105  schema_dimensions
+  ⭐ 0.587  year_2016_sales_fact
+  ⭐ 0.581  trend_year_sales_2016_2017
+  ⭐ 0.564  trend_year_sales_2015_2016
+  ⭐ 0.555  trend_overview_sales_yearly
+
+[KPI_COMPARE ] yoy profit growth
+     0.397  schema_metrics
+  ❌ 0.000  schema_dimensions
+  ⭐ 0.608  trend_year_sales_2016_2017
+  ⭐ 0.589  trend_year_sales_2015_2016
+  ⭐ 0.589  year_2016_sales_fact
+  ⭐ 0.556  trend_overview_sales_yearly
+
+[KPI_DETAIL  ] which products are losing money
+     0.171  schema_dimensions
+     0.167  schema_metrics
+  ⭐ 0.630  anomaly_loss_subcat_summary
+  ⭐ 0.498  trend_year_sales_2014_2015
+  ⭐ 0.490  year_2015_sales_fact
+  ⭐ 0.460  cross_segment_category_profit
+
+[KPI_DETAIL  ] loss-making sub-categories
+     0.292  schema_dimensions
+  ❌ 0.120  schema_metrics
+  ⭐ 0.535  anomaly_loss_subcat_summary
+     0.374  cross_segment_category_profit
+     0.285  top10_sub_category_profit
+     0.224  anomaly_low_margin_category_furniture
+
+[KPI_DETAIL  ] negative profit orders
+     0.368  schema_metrics
+  ❌ 0.075  schema_dimensions
+  ⭐ 0.600  month_worst_profit
+  ⭐ 0.596  anomaly_high_discount_loss
+  ⭐ 0.580  anomaly_loss_subcat_summary
+  ⭐ 0.561  discount_impact
+
+[SEMANTIC    ] revenue by area
+     0.350  schema_metrics
+     0.266  schema_dimensions
+  ⭐ 0.638  region_ranked_by_sales
+  ⭐ 0.603  region_east_fact
+  ⭐ 0.554  region_central_fact
+  ⭐ 0.550  region_west_fact
+
+[SEMANTIC    ] which region makes most money
+     0.254  schema_dimensions
+     0.247  schema_metrics
+  ⭐ 0.744  region_ranked_by_profit
+  ⭐ 0.677  region_ranked_by_sales
+  ⭐ 0.616  region_east_fact
+  ⭐ 0.543  region_south_fact
+
+[SEMANTIC    ] income trend over time
+     0.154  schema_metrics
+  ❌ 0.098  schema_dimensions
+  ⭐ 0.413  trend_year_sales_2015_2016
+  ⭐ 0.413  trend_year_sales_2016_2017
+  ⭐ 0.412  trend_overview_sales_yearly
+  ⭐ 0.408  year_2016_sales_fact
+
+[SEMANTIC    ] transactions per month
+     0.278  schema_metrics
+  ❌ 0.052  schema_dimensions
+  ⭐ 0.495  month_peak_sales
+     0.321  filter_active
+     0.303  trend_overview_sales_yearly
+     0.294  year_2016_sales_fact
+
+[SEMANTIC    ] which items are bleeding money
+  ❌ 0.096  schema_dimensions
+  ❌ 0.050  schema_metrics
+     0.349  top10_sub_category_profit
+     0.319  top10_sub_category_sales
+     0.315  category_ranked_by_profit
+     0.309  anomaly_loss_subcat_summary
+
+[SEMANTIC    ] discount impact on profitability
+     0.340  schema_metrics
+  ❌ 0.000  schema_dimensions
+  ⭐ 0.689  discount_impact
+  ⭐ 0.656  anomaly_high_discount_loss
+  ⭐ 0.557  kpi_profit_snapshot
+  ⭐ 0.540  trend_year_sales_2014_2015
+
