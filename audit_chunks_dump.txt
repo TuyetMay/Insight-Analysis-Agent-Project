@@ -42,7 +42,7 @@ Query types supported: aggregate totals (kpi_value), time series trends (kpi_tre
 ----------------------------------------
 
 
-DYNAMIC CHUNKS (46 total)
+DYNAMIC CHUNKS (42 total)
 ------------------------------------------------------------
 
 chunk_id   : filter_active
@@ -162,75 +162,39 @@ Over 3 years (2014 to 2017), total sales grew +51.4% from $484,247 to $733,215, 
 
 ----------------------------------------
 
-chunk_id   : quarter_2016q1_fact
+chunk_id   : quarter_2014_annual_summary
 type       : time_period_fact
-tokens     : ~12
-metadata   : {"grain": "quarter", "period": "2016Q1", "metric": "sales", "value": 93237.181}
+tokens     : ~45
+metadata   : {"grain": "quarter", "year": 2014, "metric": "sales", "value": 484247.4981}
 text       :
-2016Q1: sales $93,237 (baseline), profit $11,441.
+Quarterly breakdown for 2014: Q1 $74,448, Q2 $86,539, Q3 $143,633, Q4 $179,628. Annual total: $484,247. Q4 was the strongest quarter ($179,628) — typical Q4 year-end seasonal peak.
 
 ----------------------------------------
 
-chunk_id   : quarter_2016q2_fact
+chunk_id   : quarter_2015_annual_summary
 type       : time_period_fact
-tokens     : ~16
-metadata   : {"grain": "quarter", "period": "2016Q2", "metric": "sales", "value": 136082.301}
+tokens     : ~45
+metadata   : {"grain": "quarter", "year": 2015, "metric": "sales", "value": 470532.509}
 text       :
-2016Q2: sales $136,082 (+46.0% vs prior quarter), profit $16,390.
+Quarterly breakdown for 2015: Q1 $68,852, Q2 $89,124, Q3 $130,260, Q4 $182,297. Annual total: $470,533. Q4 was the strongest quarter ($182,297) — typical Q4 year-end seasonal peak.
 
 ----------------------------------------
 
-chunk_id   : quarter_2016q3_fact
+chunk_id   : quarter_2016_annual_summary
 type       : time_period_fact
-tokens     : ~16
-metadata   : {"grain": "quarter", "period": "2016Q3", "metric": "sales", "value": 143787.3622}
+tokens     : ~45
+metadata   : {"grain": "quarter", "year": 2016, "metric": "sales", "value": 609205.598}
 text       :
-2016Q3: sales $143,787 (+5.7% vs prior quarter), profit $15,824.
+Quarterly breakdown for 2016: Q1 $93,237, Q2 $136,082, Q3 $143,787, Q4 $236,099. Annual total: $609,206. Q4 was the strongest quarter ($236,099) — typical Q4 year-end seasonal peak.
 
 ----------------------------------------
 
-chunk_id   : quarter_2016q4_fact
+chunk_id   : quarter_2017_annual_summary
 type       : time_period_fact
-tokens     : ~16
-metadata   : {"grain": "quarter", "period": "2016Q4", "metric": "sales", "value": 236098.7538}
+tokens     : ~45
+metadata   : {"grain": "quarter", "year": 2017, "metric": "sales", "value": 733215.2552}
 text       :
-2016Q4: sales $236,099 (+64.2% vs prior quarter), profit $38,140.
-
-----------------------------------------
-
-chunk_id   : quarter_2017q1_fact
-type       : time_period_fact
-tokens     : ~16
-metadata   : {"grain": "quarter", "period": "2017Q1", "metric": "sales", "value": 123144.8602}
-text       :
-2017Q1: sales $123,145 (-47.8% vs prior quarter), profit $23,506.
-
-----------------------------------------
-
-chunk_id   : quarter_2017q2_fact
-type       : time_period_fact
-tokens     : ~16
-metadata   : {"grain": "quarter", "period": "2017Q2", "metric": "sales", "value": 133764.372}
-text       :
-2017Q2: sales $133,764 (+8.6% vs prior quarter), profit $15,499.
-
-----------------------------------------
-
-chunk_id   : quarter_2017q3_fact
-type       : time_period_fact
-tokens     : ~16
-metadata   : {"grain": "quarter", "period": "2017Q3", "metric": "sales", "value": 196251.956}
-text       :
-2017Q3: sales $196,252 (+46.7% vs prior quarter), profit $26,985.
-
-----------------------------------------
-
-chunk_id   : quarter_2017q4_fact
-type       : time_period_fact
-tokens     : ~16
-metadata   : {"grain": "quarter", "period": "2017Q4", "metric": "sales", "value": 280054.067}
-text       :
-2017Q4: sales $280,054 (+42.7% vs prior quarter), profit $27,449.
+Quarterly breakdown for 2017: Q1 $123,145, Q2 $133,764, Q3 $196,252, Q4 $280,054. Annual total: $733,215. Q4 was the strongest quarter ($280,054) — typical Q4 year-end seasonal peak.
 
 ----------------------------------------
 
@@ -290,10 +254,10 @@ South is the lowest region by sales: $391,722 (17% of total revenue). Profit: $4
 
 chunk_id   : segment_consumer_fact
 type       : dimension_value
-tokens     : ~31
+tokens     : ~52
 metadata   : {"dimension": "segment", "dimension_value": "Consumer", "metric": "sales", "value": 1161401.345, "rank": 1, "rank_of": 3, "is_highest": true, "is_lowest": false, "margin": 11.5, "pct_of_total": 50.6}
 text       :
-Consumer leads all segments by sales: $1,161,401 (51% of total revenue). Profit: $134,119 (47% of total profit, 11.5% margin).
+Consumer leads all segments by sales: $1,161,401 (51% of total revenue). Profit: $134,119 (47% of total profit, 11.5% margin). Consumer is the majority segment — it drives more than half (51%) of total revenue.
 
 ----------------------------------------
 
@@ -308,19 +272,19 @@ Corporate is the second highest segment by sales: $706,146 (31% of total revenue
 
 chunk_id   : segment_home_office_fact
 type       : dimension_value
-tokens     : ~32
+tokens     : ~65
 metadata   : {"dimension": "segment", "dimension_value": "Home Office", "metric": "sales", "value": 429653.1485, "rank": 3, "rank_of": 3, "is_highest": false, "is_lowest": true, "margin": 14.0, "pct_of_total": 18.7}
 text       :
-Home Office is the lowest segment by sales: $429,653 (19% of total revenue). Profit: $60,299 (21% of total profit, 14.0% margin).
+Home Office is the lowest segment by sales: $429,653 (19% of total revenue). Profit: $60,299 (21% of total profit, 14.0% margin). Despite being the smallest segment, Home Office has the highest profit margin at 14.0% — more efficient than Consumer or Corporate.
 
 ----------------------------------------
 
 chunk_id   : category_technology_fact
 type       : dimension_value
-tokens     : ~31
+tokens     : ~32
 metadata   : {"dimension": "category", "dimension_value": "Technology", "metric": "sales", "value": 836154.033, "rank": 1, "rank_of": 3, "is_highest": true, "is_lowest": false, "margin": 17.4, "pct_of_total": 36.4}
 text       :
-Technology leads all categorys by sales: $836,154 (36% of total revenue). Profit: $145,455 (51% of total profit, 17.4% margin).
+Technology leads all categories by sales: $836,154 (36% of total revenue). Profit: $145,455 (51% of total profit, 17.4% margin).
 
 ----------------------------------------
 
@@ -383,25 +347,25 @@ type       : dimension_rank
 tokens     : ~34
 metadata   : {"dimension": "category", "metric": "sales", "gap_top_bottom_pct": 14.0}
 text       :
-Highest revenue categorys: Technology ($836,154), Furniture ($742,000), Office Supplies ($719,047). Gap between highest and lowest: 14%.
+Highest revenue categories: Technology ($836,154), Furniture ($742,000), Office Supplies ($719,047). Gap between highest and lowest: 14%.
 
 ----------------------------------------
 
 chunk_id   : category_ranked_by_profit
 type       : dimension_rank
-tokens     : ~33
+tokens     : ~34
 metadata   : {"dimension": "category", "metric": "profit", "gap_top_bottom_pct": 87.3}
 text       :
-Most profitable categorys: Technology ($145,455), Office Supplies ($122,491), Furniture ($18,451). Gap between highest and lowest: 87%.
+Most profitable categories: Technology ($145,455), Office Supplies ($122,491), Furniture ($18,451). Gap between highest and lowest: 87%.
 
 ----------------------------------------
 
 chunk_id   : top10_sub_category_profit
 type       : dimension_rank
-tokens     : ~78
+tokens     : ~79
 metadata   : {"dimension": "sub_category", "metric": "profit", "k": 10}
 text       :
-Most profitable sub categorys: Copiers ($55,618), Phones ($44,516), Accessories ($41,937), Paper ($34,054), Binders ($30,222), Chairs ($26,590), Storage ($21,279), Appliances ($18,138), Furnishings ($13,059), Envelopes ($6,964). Note: Bookcases, Supplies, Tables have negative profit (loss-making, not shown above).
+Most profitable sub categories: Copiers ($55,618), Phones ($44,516), Accessories ($41,937), Paper ($34,054), Binders ($30,222), Chairs ($26,590), Storage ($21,279), Appliances ($18,138), Furnishings ($13,059), Envelopes ($6,964). Note: Bookcases, Supplies, Tables have negative profit (loss-making, not shown above).
 
 ----------------------------------------
 
@@ -410,16 +374,16 @@ type       : dimension_rank
 tokens     : ~59
 metadata   : {"dimension": "sub_category", "metric": "sales", "k": 10}
 text       :
-Highest revenue sub categorys: Phones ($330,007), Chairs ($328,449), Storage ($223,844), Tables ($206,966), Binders ($203,413), Machines ($189,239), Accessories ($167,380), Copiers ($149,528), Bookcases ($114,880), Appliances ($107,532).
+Highest revenue sub categories: Phones ($330,007), Chairs ($328,449), Storage ($223,844), Tables ($206,966), Binders ($203,413), Machines ($189,239), Accessories ($167,380), Copiers ($149,528), Bookcases ($114,880), Appliances ($107,532).
 
 ----------------------------------------
 
 chunk_id   : anomaly_loss_subcat_summary
 type       : anomaly_fact
-tokens     : ~52
+tokens     : ~72
 metadata   : {"anomaly_type": "negative_profit", "dimension": "sub_category", "severity": "critical", "total_loss": 22387.1366}
 text       :
-Loss-making sub-categories: Tables (-$17,725), Bookcases (-$3,473), Supplies (-$1,189). These products are losing money and have negative profit despite generating revenue. Total loss: $22,387 across 718 orders.
+Loss-making sub-categories: Tables (-$17,725), Bookcases (-$3,473), Supplies (-$1,189). These products are unprofitable — they are losing money and bleeding revenue. Negative profit despite positive sales means every order makes the situation worse. Total loss: $22,387 across 718 orders.
 
 ----------------------------------------
 

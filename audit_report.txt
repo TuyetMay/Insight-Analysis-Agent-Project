@@ -4,27 +4,27 @@ RAG CHUNK AUDIT REPORT — Step 1.1
 
 A. TỔNG QUAN
 ----------------------------------------
-  Total chunks     : 50
+  Total chunks     : 46
   Static chunks    : 4
-  Dynamic chunks   : 46
-  Total ~tokens    : 1,755
-  Avg tokens/chunk : 35
+  Dynamic chunks   : 42
+  Total ~tokens    : 1,888
+  Avg tokens/chunk : 41
   Max tokens/chunk : 135
-  Min tokens/chunk : 12
+  Min tokens/chunk : 19
 
 B. PHÂN BỐ THEO TYPE
 ----------------------------------------
-  time_period_fact     :  13 chunks  (26.0%)
-  dimension_value      :  10 chunks  (20.0%)
-  dimension_rank       :   8 chunks  (16.0%)
-  schema_fact          :   4 chunks  (8.0%)
-  kpi_snapshot         :   4 chunks  (8.0%)
-  anomaly_fact         :   4 chunks  (8.0%)
-  trend_transition     :   3 chunks  (6.0%)
-  filter_context       :   1 chunks  (2.0%)
-  trend_overview       :   1 chunks  (2.0%)
-  insight              :   1 chunks  (2.0%)
-  cross_fact           :   1 chunks  (2.0%)
+  dimension_value      :  10 chunks  (21.7%)
+  time_period_fact     :   9 chunks  (19.6%)
+  dimension_rank       :   8 chunks  (17.4%)
+  schema_fact          :   4 chunks  (8.7%)
+  kpi_snapshot         :   4 chunks  (8.7%)
+  anomaly_fact         :   4 chunks  (8.7%)
+  trend_transition     :   3 chunks  (6.5%)
+  filter_context       :   1 chunks  (2.2%)
+  trend_overview       :   1 chunks  (2.2%)
+  insight              :   1 chunks  (2.2%)
+  cross_fact           :   1 chunks  (2.2%)
 
 C. BẢNG TẤT CẢ CHUNKS — chunk_id | type | tokens | layer | issues
 --------------------------------------------------------------------------------
@@ -34,7 +34,7 @@ C. BẢNG TẤT CẢ CHUNKS — chunk_id | type | tokens | layer | issues
   schema_dimensions                   schema_fact          63 static   ok
   schema_compare                      schema_fact          31 static   NEVER_RETRIEVED
   schema_intents                      schema_fact          46 static   NEVER_RETRIEVED
-  filter_active                       filter_context       19 dynamic  ok
+  filter_active                       filter_context       19 dynamic  NEVER_RETRIEVED
   kpi_sales_snapshot                  kpi_snapshot         23 dynamic  ok
   kpi_profit_snapshot                 kpi_snapshot         35 dynamic  ok
   kpi_orders_snapshot                 kpi_snapshot         23 dynamic  ok
@@ -47,24 +47,20 @@ C. BẢNG TẤT CẢ CHUNKS — chunk_id | type | tokens | layer | issues
   trend_year_sales_2015_2016          trend_transition      32 dynamic  OVERLAP(trend_year_sales_201)
   trend_year_sales_2016_2017          trend_transition      32 dynamic  OVERLAP(trend_year_sales_201)
   trend_overview_sales_yearly         trend_overview       48 dynamic  ok
-  quarter_2016q1_fact                 time_period_fact      12 dynamic  NEVER_RETRIEVED
-  quarter_2016q2_fact                 time_period_fact      16 dynamic  NEVER_RETRIEVED, OVERLAP(quarter_2016q3_fact)
-  quarter_2016q3_fact                 time_period_fact      16 dynamic  NEVER_RETRIEVED, OVERLAP(quarter_2016q2_fact)
-  quarter_2016q4_fact                 time_period_fact      16 dynamic  NEVER_RETRIEVED, OVERLAP(quarter_2016q2_fact)
-  quarter_2017q1_fact                 time_period_fact      16 dynamic  NEVER_RETRIEVED
-  quarter_2017q2_fact                 time_period_fact      16 dynamic  NEVER_RETRIEVED, OVERLAP(quarter_2016q2_fact)
-  quarter_2017q3_fact                 time_period_fact      16 dynamic  NEVER_RETRIEVED, OVERLAP(quarter_2016q2_fact)
-  quarter_2017q4_fact                 time_period_fact      16 dynamic  NEVER_RETRIEVED, OVERLAP(quarter_2016q2_fact)
+  quarter_2014_annual_summary         time_period_fact      45 dynamic  OVERLAP(quarter_2015_annual_)
+  quarter_2015_annual_summary         time_period_fact      45 dynamic  NEVER_RETRIEVED, OVERLAP(quarter_2014_annual_)
+  quarter_2016_annual_summary         time_period_fact      45 dynamic  OVERLAP(quarter_2014_annual_)
+  quarter_2017_annual_summary         time_period_fact      45 dynamic  OVERLAP(quarter_2014_annual_)
   month_peak_sales                    time_period_fact      27 dynamic  ok
   month_worst_profit                  anomaly_fact         30 dynamic  ok
   region_west_fact                    dimension_value      29 dynamic  ok
   region_east_fact                    dimension_value      32 dynamic  ok
   region_central_fact                 dimension_value      32 dynamic  ok
   region_south_fact                   dimension_value      30 dynamic  ok
-  segment_consumer_fact               dimension_value      31 dynamic  NEVER_RETRIEVED
+  segment_consumer_fact               dimension_value      52 dynamic  NEVER_RETRIEVED
   segment_corporate_fact              dimension_value      33 dynamic  ok
-  segment_home_office_fact            dimension_value      32 dynamic  NEVER_RETRIEVED
-  category_technology_fact            dimension_value      31 dynamic  NEVER_RETRIEVED
+  segment_home_office_fact            dimension_value      65 dynamic  NEVER_RETRIEVED
+  category_technology_fact            dimension_value      32 dynamic  NEVER_RETRIEVED
   category_furniture_fact             dimension_value      33 dynamic  ok
   category_office_supplies_fact       dimension_value      33 dynamic  NEVER_RETRIEVED
   region_ranked_by_sales              dimension_rank       33 dynamic  ok
@@ -72,10 +68,10 @@ C. BẢNG TẤT CẢ CHUNKS — chunk_id | type | tokens | layer | issues
   segment_ranked_by_sales             dimension_rank       32 dynamic  ok
   segment_ranked_by_profit            dimension_rank       31 dynamic  ok
   category_ranked_by_sales            dimension_rank       34 dynamic  NEVER_RETRIEVED
-  category_ranked_by_profit           dimension_rank       33 dynamic  ok
-  top10_sub_category_profit           dimension_rank       78 dynamic  ok
+  category_ranked_by_profit           dimension_rank       34 dynamic  ok
+  top10_sub_category_profit           dimension_rank       79 dynamic  ok
   top10_sub_category_sales            dimension_rank       59 dynamic  ok
-  anomaly_loss_subcat_summary         anomaly_fact         52 dynamic  ok
+  anomaly_loss_subcat_summary         anomaly_fact         72 dynamic  ok
   anomaly_low_margin_category_furniture anomaly_fact         37 dynamic  ok
   anomaly_high_discount_loss          anomaly_fact         46 dynamic  ok
   discount_impact                     insight              69 dynamic  ok
@@ -92,45 +88,27 @@ E. DUPLICATE CHUNK IDs — cùng ID xuất hiện > 1 lần
 F. OVERLAPPING CHUNKS — nội dung gần giống nhau
 ------------------------------------------------------------
   Hash group [4445c023]: ['trend_year_sales_2015_2016', 'trend_year_sales_2016_2017']
-  Hash group [10f90264]: ['quarter_2016q2_fact', 'quarter_2016q3_fact', 'quarter_2016q4_fact', 'quarter_2017q2_fact', 'quarter_2017q3_fact', 'quarter_2017q4_fact']
+  Hash group [4fe1a2d7]: ['quarter_2014_annual_summary', 'quarter_2015_annual_summary', 'quarter_2016_annual_summary', 'quarter_2017_annual_summary']
 
 G. CHUNKS KHÔNG BAO GIỜ ĐƯỢC RETRIEVE (trong test queries)
 ------------------------------------------------------------
   Test queries: 20
-  Never retrieved: 15 / 50 chunks
+  Never retrieved: 9 / 46 chunks
 
   [dimension_value] category_office_supplies_fact
     33t | Office Supplies is the lowest category by sales: $719,047 (31% of total revenue). Profit: $122,491 (...
 
   [dimension_rank] category_ranked_by_sales
-    34t | Highest revenue categorys: Technology ($836,154), Furniture ($742,000), Office Supplies ($719,047). ...
+    34t | Highest revenue categories: Technology ($836,154), Furniture ($742,000), Office Supplies ($719,047)....
 
   [dimension_value] category_technology_fact
-    31t | Technology leads all categorys by sales: $836,154 (36% of total revenue). Profit: $145,455 (51% of t...
+    32t | Technology leads all categories by sales: $836,154 (36% of total revenue). Profit: $145,455 (51% of ...
 
-  [time_period_fact] quarter_2016q1_fact
-    12t | 2016Q1: sales $93,237 (baseline), profit $11,441....
+  [filter_context] filter_active
+    19t | Data covers 4 years from 2014 to 2017 (Jan 2014 to Dec 2017), 48 months total....
 
-  [time_period_fact] quarter_2016q2_fact
-    16t | 2016Q2: sales $136,082 (+46.0% vs prior quarter), profit $16,390....
-
-  [time_period_fact] quarter_2016q3_fact
-    16t | 2016Q3: sales $143,787 (+5.7% vs prior quarter), profit $15,824....
-
-  [time_period_fact] quarter_2016q4_fact
-    16t | 2016Q4: sales $236,099 (+64.2% vs prior quarter), profit $38,140....
-
-  [time_period_fact] quarter_2017q1_fact
-    16t | 2017Q1: sales $123,145 (-47.8% vs prior quarter), profit $23,506....
-
-  [time_period_fact] quarter_2017q2_fact
-    16t | 2017Q2: sales $133,764 (+8.6% vs prior quarter), profit $15,499....
-
-  [time_period_fact] quarter_2017q3_fact
-    16t | 2017Q3: sales $196,252 (+46.7% vs prior quarter), profit $26,985....
-
-  [time_period_fact] quarter_2017q4_fact
-    16t | 2017Q4: sales $280,054 (+42.7% vs prior quarter), profit $27,449....
+  [time_period_fact] quarter_2015_annual_summary
+    45t | Quarterly breakdown for 2015: Q1 $68,852, Q2 $89,124, Q3 $130,260, Q4 $182,297. Annual total: $470,5...
 
   [schema_fact ] schema_compare
     31t | Period comparison options: yoy (same period vs last year), mom (vs prior month), prev_period (vs pri...
@@ -139,18 +117,18 @@ G. CHUNKS KHÔNG BAO GIỜ ĐƯỢC RETRIEVE (trong test queries)
     46t | Query types supported: aggregate totals (kpi_value), time series trends (kpi_trend), top-k rankings ...
 
   [dimension_value] segment_consumer_fact
-    31t | Consumer leads all segments by sales: $1,161,401 (51% of total revenue). Profit: $134,119 (47% of to...
+    52t | Consumer leads all segments by sales: $1,161,401 (51% of total revenue). Profit: $134,119 (47% of to...
 
   [dimension_value] segment_home_office_fact
-    32t | Home Office is the lowest segment by sales: $429,653 (19% of total revenue). Profit: $60,299 (21% of...
+    65t | Home Office is the lowest segment by sales: $429,653 (19% of total revenue). Profit: $60,299 (21% of...
 
 H. RETRIEVAL FREQUENCY — chunk được retrieve nhiều nhất
 ------------------------------------------------------------
   20x  schema_metrics                           (schema_fact)
   20x  schema_dimensions                        (schema_fact)
-   8x  trend_overview_sales_yearly              (trend_overview)
-   8x  year_2016_sales_fact                     (time_period_fact)
+   7x  trend_overview_sales_yearly              (trend_overview)
    7x  trend_year_sales_2015_2016               (trend_transition)
+   6x  year_2016_sales_fact                     (time_period_fact)
    5x  trend_year_sales_2016_2017               (trend_transition)
    4x  region_ranked_by_sales                   (dimension_rank)
    4x  anomaly_loss_subcat_summary              (anomaly_fact)
@@ -161,11 +139,11 @@ H. RETRIEVAL FREQUENCY — chunk được retrieve nhiều nhất
    3x  cross_segment_category_profit            (cross_fact)
    2x  kpi_profit_snapshot                      (kpi_snapshot)
    2x  month_peak_sales                         (time_period_fact)
+   2x  quarter_2014_annual_summary              (time_period_fact)
    2x  region_ranked_by_profit                  (dimension_rank)
    2x  region_west_fact                         (dimension_value)
    2x  top10_sub_category_sales                 (dimension_rank)
    2x  trend_year_sales_2014_2015               (trend_transition)
-   2x  top10_sub_category_profit                (dimension_rank)
 
 I. CHUNKS CÓ METADATA THIẾU
 ------------------------------------------------------------
@@ -174,7 +152,7 @@ I. CHUNKS CÓ METADATA THIẾU
 J. TÓM TẮT VẤN ĐỀ PHÁT HIỆN
 ------------------------------------------------------------
   🟡 2 nhóm chunks overlap nội dung → redundancy, waste context window
-  🟡 15 chunks không bao giờ được retrieve → có thể chunk quá chung chung hoặc query coverage thiếu
+  🟡 9 chunks không bao giờ được retrieve → có thể chunk quá chung chung hoặc query coverage thiếu
 
 ================================================================================
 END OF REPORT
