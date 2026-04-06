@@ -5,6 +5,7 @@ from typing import Any, Dict, List, Optional, Set
 import pandas as pd
 from rag.hyde import HyDEExpander
 from rag.knowledge_builder import Chunk, KnowledgeBaseBuilder
+from rag.metadata_filter import MetadataPreFilter
 from rag.retriever import TFIDFRetriever
 logger = logging.getLogger(__name__)
 
@@ -113,6 +114,8 @@ class RAGEngine:
         self._built:    bool = False
         self._static_built: bool = False
         self._hyde = HyDEExpander()  
+        self._meta_filter = MetadataPreFilter()
+
 
     # ── Build ─────────────────────────────────────────────────
 
@@ -213,10 +216,10 @@ class RAGEngine:
         if metadata_filter:
             static_hits  = [c for c in static_hits
                             if all(c.metadata.get(fk) == fv
-                                   for fk, fv in metadata_filter.items())]
+                                for fk, fv in metadata_filter.items())]
             dynamic_hits = [c for c in dynamic_hits
                             if all(c.metadata.get(fk) == fv
-                                   for fk, fv in metadata_filter.items())]
+                                for fk, fv in metadata_filter.items())]
 
         # Deduplicate and filter by min_score
         seen: Set[str] = set()
@@ -230,6 +233,18 @@ class RAGEngine:
                     and c.chunk_id not in _blocked):
                 results.append(c)
                 seen.add(c.chunk_id)
+        
+        if intent:
+            pre_filtered = self._meta_filter.filter(
+                results,
+                intent=intent,
+                breakdown_by=breakdown_by,
+                grain=None,  # grain not yet in retrieve() signature — add if needed
+            )
+            logger.debug(
+                self._meta_filter.stats(results, pre_filtered, intent)
+            )
+            results = pre_filtered
 
         all_chunks    = self._static_chunks + self._dynamic_chunks
         all_chunk_map = {c.chunk_id: c for c in all_chunks}
