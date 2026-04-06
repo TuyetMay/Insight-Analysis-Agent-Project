@@ -63,6 +63,8 @@ _GRAIN_KEYWORDS: Dict[str, str] = {
     "yearly": "year", "annual": "year", "year": "year",
     "trend": "year", "over time": "year", "performance": "year",
     "growth": "year", "evolution": "year", "progress": "year",
+    "evolving": "year", "evolve": "year",   
+    "changing": "year", "shifted": "year",  
 }
 _COMPARE_KEYWORDS: Dict[str, str] = {
     "yoy": "yoy", "year over year": "yoy", "year-over-year": "yoy",
@@ -80,6 +82,8 @@ _DETAIL_NEGATIVE_RE = re.compile(
     r"|losing\s+money|unprofitable|loss\s+orders"
     r"|negative\s+margin|profit\s+<\s*0|profit\s+is\s+negative"
     r"|what.*generating.*loss|what.*causing.*loss"
+    r"|bleeding\s+(money|cash|revenue|profit)"
+    r"|burning\s+(money|cash)|draining\s+(money|cash|profit)"
     r")\b",
     re.IGNORECASE,
 )
@@ -857,7 +861,6 @@ class NLParser:
             "sub_category": all_sub_categories,
         }
 
-        # FIX-E: Dùng module-level _ALL_DIMS_RE (không tạo local duplicate)
         force_all_dims = set()
         m_all = _ALL_DIMS_RE.search(q)
         if m_all:
@@ -871,7 +874,6 @@ class NLParser:
             elif "category" in raw:
                 force_all_dims.add("category")
 
-        # kpi_rank không mention cụ thể → luôn clear filter của breakdown dim
         if plan.get("intent") == "kpi_rank" and plan.get("breakdown_by"):
             force_all_dims.add(plan["breakdown_by"])
 

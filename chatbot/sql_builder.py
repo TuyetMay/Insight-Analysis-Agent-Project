@@ -202,7 +202,7 @@ class SQLBuilder:
                 COUNT(DISTINCT order_id)                          AS orders,
                 ROUND(CAST(SUM(sales)   AS DECIMAL), 2)          AS sales,
                 ROUND(CAST(SUM(profit)  AS DECIMAL), 2)          AS profit,
-                ROUND(CAST(AVG(discount) * 100 AS DECIMAL), 1)   AS avg_discount_pct,
+                ROUND(CAST(AVG(CAST(discount AS numeric)) * 100 AS DECIMAL), 1)   AS avg_discount_pct,
                 CASE WHEN SUM(sales) = 0 THEN 0
                      ELSE ROUND(CAST(SUM(profit)/SUM(sales)*100 AS DECIMAL), 2)
                 END                                               AS profit_margin

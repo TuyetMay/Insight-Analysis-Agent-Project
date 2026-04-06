@@ -55,6 +55,8 @@ class InsightGenerator:
     # ── LLM insight ───────────────────────────────────────────
 
     def _llm_insight(self, plan: Dict[str, Any], df: pd.DataFrame) -> str:
+        if plan.get("intent") == "kpi_rank" and len(df) == 1:
+            return ""
         summary   = self._data_summary(plan, df)
         intent    = plan.get("intent", "kpi_value")
         metrics   = plan.get("metrics", ["sales"])
