@@ -1,6 +1,13 @@
 """
 chatbot/orchestrator.py
 DashboardChatbot — the single public entry point for the chatbot feature.
+
+Step 2.4 changes:
+  - Tier-3 Gemini path: self._rag.retrieve(q, k=7, tier=3)
+    → schema chunks injected (needed for Gemini JSON plan prompt)
+  - get_insights(): tier=2 (schema not needed for bullet-point insights)
+  - retrieve_for_suggestions(): already tier=2 (no change needed)
+  - _execute_plan(): passes intent + breakdown_by to retrieve for better must-haves
 """
 
 from __future__ import annotations
@@ -38,16 +45,16 @@ _QUICK_TOKEN_DISPLAY = {
     "__quick_margin__":  "Profit margin — trends & category breakdown",
 }
 
-# Keys to harvest from QuickInsightHandler after generate() for analyst suggestions
 _HANDLER_META_KEYS = (
     "best_period", "top_region", "top_product",
     "overall_change_pct", "is_decelerating",
     "last_transition_pct", "prev_transition_pct",
     "first_label", "last_label", "first_value", "last_value",
-    "worst_period",          # FIX-9/11: period with worst transition (for decline context)
-    "worst_transition_pct",  # FIX-9/11: magnitude of worst transition
-    "has_partial_period",    # FIX-12: True if any period has partial data
+    "worst_period",
+    "worst_transition_pct",
+    "has_partial_period",
 )
+
 
 class DashboardChatbot:
     def __init__(self, df: pd.DataFrame, kpis: Dict[str, Any], filters: Dict[str, Any]) -> None:
@@ -74,7 +81,7 @@ class DashboardChatbot:
         self._insights  = InsightGenerator(self._gemini_client, self._model)
 
         self._rag = RAGEngine()
-        self._rag.build_static(self.df) 
+        self._rag.build_static(self.df)
         self._rag.build(self.df, self.kpis, self.filters)
 
         self._rule_suggestions = RuleBasedSuggestionEngine(
@@ -115,7 +122,6 @@ class DashboardChatbot:
             self._last_question = _QUICK_TOKEN_DISPLAY[q]
             self._last_answer   = answer
 
-            # Build synthetic plan so suggestion engine has intent context
             s0, e0 = self._date_range()
             self._last_plan = {
                 "intent":              "kpi_trend",
@@ -136,7 +142,6 @@ class DashboardChatbot:
                 "show_extremes": False,
             }
 
-            # ── Harvest handler metadata → analyst-level suggestions ──
             quick_ctx: Dict[str, Any] = {"kpi": kpi_name}
             for attr in _HANDLER_META_KEYS:
                 if hasattr(handler, attr):
@@ -165,7 +170,8 @@ class DashboardChatbot:
                 return result
 
         # ── Tier 3: Gemini plan ───────────────────────────────
-        rag_ctx = self._rag.retrieve(q, k=7)
+        # Step 2.4: tier=3 → schema chunks injected for Gemini prompt grounding
+        rag_ctx = self._rag.retrieve(q, k=7, tier=3)
         try:
             raw_plan  = self._parser.gemini_plan(q, rag_ctx)
             plan      = self._validator.validate(raw_plan)
@@ -188,6 +194,7 @@ class DashboardChatbot:
             suggs = self._rule_suggestions.suggest(self._last_plan or {}, defaults)
             return self._serialise(suggs)
 
+        # Step 2.4: retrieve_for_suggestions already uses tier=2 internally
         rag_ctx = self._rag.retrieve_for_suggestions(
             self._last_question, self._last_answer, k=8
         )
@@ -225,7 +232,11 @@ class DashboardChatbot:
         if self.df.empty:
             return "No data available."
 
-        rag_ctx = self._rag.retrieve("insights overview summary performance", k=6)
+        # Step 2.4: insights don't need schema chunks → tier=2
+        # The prompt uses data facts, not schema definitions
+        rag_ctx = self._rag.retrieve(
+            "insights overview summary performance", k=6, tier=2
+        )
         prompt = f"""You are a business analyst. Using ONLY the verified data facts below, write exactly 3 bullet-point insights.
 
 === VERIFIED FACTS ===
@@ -260,6 +271,12 @@ Output:""".strip()
     # ── Private helpers ───────────────────────────────────────
 
     def _execute_plan(self, rule_plan: Optional[Dict[str, Any]], q: str) -> Optional[str]:
+        """
+        Execute a rule-based plan (Tier 2).
+
+        Step 2.4: No RAG retrieval needed here — Tier-2 path uses
+        pre-parsed intent + SQL directly. Schema chunks not injected.
+        """
         if not rule_plan:
             return None
         try:
@@ -269,7 +286,6 @@ Output:""".strip()
             answer    = self._formatter.format(plan, result_df, insight)
             self._last_plan = plan
 
-            # ── Lưu plan history ──────────────────────────────
             self._plan_history.append(plan)
             if len(self._plan_history) > 5:
                 self._plan_history = self._plan_history[-5:]

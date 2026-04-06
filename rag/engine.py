@@ -33,38 +33,74 @@ class RAGEngine:
     Two-layer RAG:
       - Static layer  : schema facts — built ONCE at startup
       - Dynamic layer : KPI values, trends — rebuilt only when filters change
-    Retrieval: dense embedding search → intent-based must-have injection.
 
-    Changes vs v1:
-      - _MUST_HAVE_IDS: removed kpi_summary (score=0.000 in ALL 20 test queries)
-      - Added _INTENT_MUST_HAVES: inject relevant chunks based on query intent
-      - retrieve(): added intent parameter for intent-aware injection
-      - Intent kpi_detail now injects anomaly_loss_subcat_summary as must-have
+    Step 2.4 changes vs v2:
+    ──────────────────────────────────────────────────────────────────
+    PROBLEM (v2): schema_metrics + schema_dimensions were ALWAYS injected
+    via _MUST_HAVE_IDS into EVERY retrieve() call — including Tier-2 rule-based
+    queries that never need schema (intent already parsed, no LLM prompt).
+
+    This wasted ~106 tokens per query (43 + 63) and diluted attention on the
+    actual facts the LLM needs.
+
+    FIX (v3 / Step 2.4):
+      1. _MUST_HAVE_IDS → empty (no unconditional injection)
+      2. _SCHEMA_CHUNK_IDS → new set, injected ONLY when tier=3 (Gemini path)
+      3. retrieve() gains `tier: int` parameter (default=2)
+      4. _INTENT_MUST_HAVES → refined per intent (kept from v2, + kpi_rank improvement)
+      5. kpi_rank → inject dimension_ranked_by_* chunk if breakdown_by known
+
+    TOKEN SAVINGS:
+      Tier-2 queries  : −106 tokens/query  (schema_metrics + schema_dimensions)
+      Tier-3 queries  : ±0 (schema still injected, needed for Gemini prompt)
+      Expected savings: ~80% of queries are Tier-2 → net −85 tokens average
+    ──────────────────────────────────────────────────────────────────
     """
 
     _MAX_TURNS:    int      = 8
     _STATIC_TYPES: Set[str] = {"schema", "filter"}
 
-    # v2: kpi_summary removed — it scored 0.000 in every query (audit confirmed).
-    # schema_metrics and schema_dimensions stay because they provide grounding for
-    # Tier-3 Gemini plan generation and are small (25–36 tokens each).
-    _MUST_HAVE_IDS = frozenset({
+    # ── v3 Step 2.4: Empty — no unconditional injection ───────────────────────
+    # Previously: frozenset({"schema_metrics", "schema_dimensions"})
+    # Reason removed: these are only needed by Tier-3 Gemini prompt, not Tier-2
+    # rule-based. Injecting them unconditionally wasted 106 tokens per query
+    # and diluted retrieval attention.
+    _MUST_HAVE_IDS: frozenset = frozenset()
+
+    # ── v3 Step 2.4: Schema chunks injected ONLY at tier=3 ───────────────────
+    # These provide grounding for Gemini's JSON plan generation.
+    # Rule-based parser (Tier-2) does not need them — intent is already parsed.
+    _SCHEMA_CHUNK_IDS: frozenset = frozenset({
         "schema_metrics",
         "schema_dimensions",
-        # REMOVED: "kpi_summary" — score=0.000, force-inject was meaningless
     })
 
-    # Intent-specific must-haves — injected when intent is known.
-    # These are the most relevant entry-point chunks per query type.
+    # ── Intent-specific must-haves (refined from v2) ──────────────────────────
+    # Injected at the front of results when intent is known.
+    # Each entry is the "entry-point chunk" for that query type.
+    #
+    # Changes vs v2:
+    #   kpi_value   : added kpi_margin_snapshot (margin queries need it)
+    #   kpi_rank    : added top10_sub_category_profit (most common rank target)
+    #   kpi_compare : added trend_overview_sales_yearly (YoY compare needs context)
+    #   kpi_detail  : unchanged — anomaly_loss_subcat_summary is the entry point
     _INTENT_MUST_HAVES: Dict[str, List[str]] = {
-        "kpi_value":   ["kpi_sales_snapshot", "kpi_profit_snapshot"],
+        "kpi_value":   ["kpi_sales_snapshot",  "kpi_profit_snapshot"],
         "kpi_trend":   ["trend_overview_sales_yearly"],
-        "kpi_rank":    [],   # retriever decides based on dimension in plan
-        "kpi_compare": ["filter_active"],
-        # CRITICAL: inject anomaly entry point for kpi_detail so retriever
-        # doesn't have to find it — audit showed kpi_detail had 0 ⭐ hits.
+        "kpi_rank":    ["top10_sub_category_profit"],
+        "kpi_compare": ["filter_active", "trend_overview_sales_yearly"],
         "kpi_detail":  ["anomaly_loss_subcat_summary"],
         "clarify":     [],
+    }
+
+    # ── Breakdown → dimension rank chunk mapping (for kpi_rank) ──────────────
+    # When breakdown_by is known, also inject the pre-computed ranking chunk.
+    # e.g. breakdown_by="region" → inject "region_ranked_by_sales"
+    _BREAKDOWN_RANK_CHUNKS: Dict[str, List[str]] = {
+        "region":       ["region_ranked_by_sales",    "region_ranked_by_profit"],
+        "segment":      ["segment_ranked_by_sales",   "segment_ranked_by_profit"],
+        "category":     ["category_ranked_by_sales",  "category_ranked_by_profit"],
+        "sub_category": ["top10_sub_category_profit", "top10_sub_category_sales"],
     }
 
     def __init__(self) -> None:
@@ -94,10 +130,9 @@ class RAGEngine:
         if not self._static_built:
             self.build_static(df)
 
-        builder   = KnowledgeBaseBuilder()
+        builder    = KnowledgeBaseBuilder()
         new_chunks = builder.build_dynamic(df, kpis, filters)
 
-        # Only re-fit if content actually changed (avoid unnecessary recompute)
         new_texts = {c.chunk_id: c.text for c in new_chunks}
         old_texts = {c.chunk_id: c.text for c in self._dynamic_chunks}
 
@@ -128,27 +163,38 @@ class RAGEngine:
 
     # ── Retrieve ──────────────────────────────────────────────
 
-    def retrieve(self, query: str, k: int = 6,
-                 min_score: float = 0.03,
-                 metadata_filter: Optional[Dict[str, Any]] = None,
-                 intent: Optional[str] = None) -> RAGContext:
+    def retrieve(
+        self,
+        query: str,
+        k: int = 6,
+        min_score: float = 0.03,
+        metadata_filter: Optional[Dict[str, Any]] = None,
+        intent: Optional[str] = None,
+        breakdown_by: Optional[str] = None,
+        tier: int = 2,
+    ) -> RAGContext:
         """
         Retrieve relevant chunks for a query.
 
         Parameters
         ----------
-        query   : natural language query
-        k       : number of candidates from each retriever
-        min_score : minimum cosine similarity to include
+        query        : natural language query
+        k            : number of candidates from each retriever
+        min_score    : minimum cosine similarity to include
         metadata_filter : optional post-retrieval filter on chunk metadata
-        intent  : optional query intent (kpi_value/kpi_trend/kpi_rank/
-                  kpi_compare/kpi_detail) — enables intent-based must-haves
+        intent       : query intent → enables intent-based must-have injection
+        breakdown_by : dimension for kpi_rank → injects pre-computed rank chunk
+        tier         : execution tier (default=2)
+                       2 = rule-based (no schema injection)
+                       3 = Gemini LLM (schema injected for prompt grounding)
 
-        Changes vs v1
-        -------------
-        - Added intent parameter
-        - Intent-aware must-have injection at end of method
-        - kpi_detail intent injects anomaly_loss_subcat_summary automatically
+        Step 2.4 changes
+        ----------------
+        - tier parameter added
+        - Schema chunks (_SCHEMA_CHUNK_IDS) only injected when tier >= 3
+        - _MUST_HAVE_IDS is now empty (removed unconditional schema injection)
+        - kpi_rank + breakdown_by → inject dimension-specific rank chunks
+        - Injection order: schema (tier3) → intent must-haves → semantic results
         """
         if not self._built:
             return RAGContext(query=query, chunks=[],
@@ -158,7 +204,6 @@ class RAGEngine:
         static_hits  = self._static_retriever.retrieve(query,  k=k // 2 + 2)
         dynamic_hits = self._dynamic_retriever.retrieve(query, k=k)
 
-        # Optional post-retrieval metadata filter
         if metadata_filter:
             static_hits  = [c for c in static_hits
                             if all(c.metadata.get(fk) == fv
@@ -176,42 +221,80 @@ class RAGEngine:
                 results.append(c)
                 seen.add(c.chunk_id)
 
-        # ── Unconditional must-haves ──────────────────────────
-        all_chunks = self._static_chunks + self._dynamic_chunks
-        for c in all_chunks:
-            if c.chunk_id in self._MUST_HAVE_IDS and c.chunk_id not in seen:
-                results.append(c)
-                seen.add(c.chunk_id)
+        all_chunks    = self._static_chunks + self._dynamic_chunks
+        all_chunk_map = {c.chunk_id: c for c in all_chunks}
 
-        # ── Split: must-haves first, rest sorted by score ─────
-        must = [c for c in results if c.chunk_id in self._MUST_HAVE_IDS]
-        rest = sorted(
-            [c for c in results if c.chunk_id not in self._MUST_HAVE_IDS],
+        # ── Step 2.4: Schema injection — ONLY for Tier 3 ─────
+        # Tier-3 = Gemini path: schema facts are needed for the JSON plan prompt.
+        # Tier-2 = rule-based: intent already parsed, schema wastes tokens.
+        schema_injected: List[Chunk] = []
+        if tier >= 3:
+            for cid in self._SCHEMA_CHUNK_IDS:
+                if cid not in seen and cid in all_chunk_map:
+                    schema_injected.append(all_chunk_map[cid])
+                    seen.add(cid)
+            logger.debug(
+                "Tier-3: injected %d schema chunks (%s)",
+                len(schema_injected),
+                [c.chunk_id for c in schema_injected],
+            )
+        else:
+            logger.debug("Tier-%d: schema chunks SKIPPED (saved ~106 tokens)", tier)
+
+        # ── Intent-based must-haves ───────────────────────────
+        intent_injected: List[Chunk] = []
+        if intent and intent in self._INTENT_MUST_HAVES:
+            for cid in self._INTENT_MUST_HAVES[intent]:
+                if cid not in seen and cid in all_chunk_map:
+                    intent_injected.append(all_chunk_map[cid])
+                    seen.add(cid)
+
+        # ── Step 2.4: Breakdown-specific rank chunks ──────────
+        # kpi_rank with breakdown_by="region" → inject "region_ranked_by_sales"
+        # so the LLM always has the pre-computed ranking available.
+        breakdown_injected: List[Chunk] = []
+        if intent == "kpi_rank" and breakdown_by and breakdown_by in self._BREAKDOWN_RANK_CHUNKS:
+            for cid in self._BREAKDOWN_RANK_CHUNKS[breakdown_by]:
+                if cid not in seen and cid in all_chunk_map:
+                    breakdown_injected.append(all_chunk_map[cid])
+                    seen.add(cid)
+
+        # ── Sort semantic results by score ────────────────────
+        semantic_sorted = sorted(
+            results,
             key=lambda x: x.score,
             reverse=True,
         )
 
-        # ── Intent-based must-haves (NEW in v2) ──────────────
-        # These are injected at the front because they are the most
-        # relevant entry-point chunks for the specific query type.
-        # Example: kpi_detail → inject anomaly_loss_subcat_summary
-        # so the LLM always has access to the loss-making items list.
-        if intent and intent in self._INTENT_MUST_HAVES:
-            intent_ids  = self._INTENT_MUST_HAVES[intent]
-            all_chunk_map = {c.chunk_id: c for c in all_chunks}
-            for cid in intent_ids:
-                if cid not in seen and cid in all_chunk_map:
-                    must.insert(0, all_chunk_map[cid])
-                    seen.add(cid)
+        # ── Final order: schema → intent → breakdown → semantic ─
+        # Rationale:
+        #   - schema first = grounding for Gemini
+        #   - intent must-haves = most relevant entry-point chunks
+        #   - breakdown = dimension-specific rank context
+        #   - semantic = best matches by embedding similarity
+        final = schema_injected + intent_injected + breakdown_injected + semantic_sorted
 
-        return RAGContext(query=query,
-                          chunks=must + rest,
-                          chat_summary=self._history_summary())
+        _token_estimate = sum(len(c.text) // 4 for c in final[:k + len(schema_injected) + len(intent_injected)])
+        logger.debug(
+            "retrieve() tier=%d intent=%s | chunks=%d schema=%d intent_must=%d breakdown=%d semantic=%d | ~%d tokens",
+            tier, intent,
+            len(final),
+            len(schema_injected), len(intent_injected),
+            len(breakdown_injected), len(semantic_sorted),
+            _token_estimate,
+        )
+
+        return RAGContext(
+            query=query,
+            chunks=final,
+            chat_summary=self._history_summary(),
+        )
 
     def retrieve_for_suggestions(self, last_question: str, last_answer: str,
                                  k: int = 8) -> RAGContext:
+        """Suggestions don't need schema — always tier=2."""
         combined = f"{last_question} {last_answer}"
-        return self.retrieve(combined, k=k, min_score=0.02)
+        return self.retrieve(combined, k=k, min_score=0.02, tier=2)
 
     # ── Internal helpers ──────────────────────────────────────
 
