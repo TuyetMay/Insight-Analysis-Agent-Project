@@ -3,6 +3,7 @@ from dataclasses import dataclass, field
 import logging
 from typing import Any, Dict, List, Optional, Set
 import pandas as pd
+from rag.hyde import HyDEExpander
 from rag.knowledge_builder import Chunk, KnowledgeBaseBuilder
 from rag.retriever import TFIDFRetriever
 logger = logging.getLogger(__name__)
@@ -111,6 +112,7 @@ class RAGEngine:
         self._history:  List[Dict[str, str]] = []
         self._built:    bool = False
         self._static_built: bool = False
+        self._hyde = HyDEExpander()  
 
     # ── Build ─────────────────────────────────────────────────
 
@@ -199,10 +201,14 @@ class RAGEngine:
         if not self._built:
             return RAGContext(query=query, chunks=[],
                               chat_summary=self._history_summary())
+        
+        expanded_query = self._hyde.expand(query, intent=intent)
+        if expanded_query != query:
+            logger.debug("HyDE expanded: %r → %r", query[:50], expanded_query[:80])
 
         # ── Semantic retrieval from both layers ───────────────
-        static_hits  = self._static_retriever.retrieve(query,  k=k // 2 + 2)
-        dynamic_hits = self._dynamic_retriever.retrieve(query, k=k)
+        static_hits  = self._static_retriever.retrieve(expanded_query,  k=k // 2 + 2)
+        dynamic_hits = self._dynamic_retriever.retrieve(expanded_query, k=k)
 
         if metadata_filter:
             static_hits  = [c for c in static_hits
@@ -216,8 +222,12 @@ class RAGEngine:
         seen: Set[str] = set()
         results: List[Chunk] = []
 
+        _blocked = self._SCHEMA_CHUNK_IDS if tier < 3 else frozenset()
+
         for c in dynamic_hits + static_hits:
-            if c.score >= min_score and c.chunk_id not in seen:
+            if (c.score >= min_score
+                    and c.chunk_id not in seen
+                    and c.chunk_id not in _blocked):
                 results.append(c)
                 seen.add(c.chunk_id)
 
