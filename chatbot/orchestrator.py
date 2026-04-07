@@ -13,7 +13,7 @@ Step 2.4 changes:
 from __future__ import annotations
 
 from datetime import date, datetime
-from turtle import st
+import streamlit as st
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
@@ -274,6 +274,27 @@ Output:""".strip()
             return (getattr(resp, "text", "") or "").strip()
         except Exception as exc:
             return f"Could not generate insights. ({type(exc).__name__}: {exc})"
+        
+    # ── Stop request helpers ──────────────────────────────────────
+
+    def _is_stop_requested(self) -> bool:
+        """Check nếu user đã bấm Stop."""
+        try:
+            import streamlit as st
+            return bool(st.session_state.get("stop_requested", False))
+        except Exception:
+            return False
+
+    def _clear_stop(self) -> None:
+        try:
+            import streamlit as st
+            st.session_state["stop_requested"] = False
+            st.session_state["is_generating"]  = False
+        except Exception:
+            pass
+
+    def rebuild_rag(self) -> None:
+        self._rag.build(df=self.df, kpis=self.kpis, filters=self.filters)
 
     def rebuild_rag(self) -> None:
         self._rag.build(df=self.df, kpis=self.kpis, filters=self.filters)
@@ -284,22 +305,21 @@ Output:""".strip()
 
     # ── Private helpers ───────────────────────────────────────
 
-    def _execute_plan(self, rule_plan: Optional[Dict[str, Any]], q: str) -> Optional[str]:
-        """
-        Execute a rule-based plan (Tier 2).
-
-        Step 2.4: No RAG retrieval needed here — Tier-2 path uses
-        pre-parsed intent + SQL directly. Schema chunks not injected.
-        """
+    def _execute_plan(self, rule_plan, q: str) -> Optional[str]:
         if not rule_plan:
             return None
         try:
             plan      = self._validator.validate(rule_plan)
             result_df = self._sql.run(plan)
-            insight   = self._insights.generate(plan, result_df)
-            answer    = self._formatter.format(plan, result_df, insight)
-            self._last_plan = plan
 
+            # Format answer FIRST — no LLM wait
+            answer_no_insight = self._formatter.format(plan, result_df, "")
+
+            # Then generate insight (LLM)
+            insight = self._insights.generate(plan, result_df)
+            answer  = self._formatter.format(plan, result_df, insight)
+
+            self._last_plan = plan
             self._plan_history.append(plan)
             if len(self._plan_history) > 5:
                 self._plan_history = self._plan_history[-5:]

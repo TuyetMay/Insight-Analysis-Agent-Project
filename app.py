@@ -4,6 +4,8 @@ Streamlit entry point — UI orchestration only.
 No business logic here: all data, AI, and chart concerns live in their own packages.
 """
 
+import hashlib
+
 import streamlit as st
 
 from charts.breakdown import create_profit_by_region, create_profit_by_segment, create_profit_heatmap
@@ -82,7 +84,24 @@ if df.empty:
     st.stop()
 
 kpis    = calculate_kpis(df)
-chatbot = DashboardChatbot(df, kpis, filters)
+def _filters_hash(filters):
+    f = {
+        "dr": [str(filters["date_range"][0]), str(filters["date_range"][1])],
+        "r":  sorted(filters.get("region",   []) or []),
+        "s":  sorted(filters.get("segment",  []) or []),
+        "c":  sorted(filters.get("category", []) or []),
+    }
+    return hashlib.md5(st.json.dumps(f, sort_keys=True).encode()).hexdigest()[:8]
+
+current_hash = _filters_hash(filters)
+
+if ("chatbot" not in st.session_state
+        or st.session_state.get("_filter_hash") != current_hash):
+    with st.spinner("🔧 Building AI knowledge base…"):
+        st.session_state["chatbot"]      = DashboardChatbot(df, kpis, filters)
+        st.session_state["_filter_hash"] = current_hash
+
+chatbot = st.session_state["chatbot"]
 _QUICK_TOKEN_LABELS = {
     "__quick_sales__":   "📊 Sales overview — trends, top products & regions",
     "__quick_profit__":  "💹 Profit overview — trends, margin & top regions",

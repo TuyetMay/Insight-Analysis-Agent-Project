@@ -16,7 +16,6 @@ Improvements vs v2:
 from __future__ import annotations
 import logging
 import re as _re
-import statistics
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
