@@ -18,6 +18,8 @@ from typing import Any, Dict, List, Optional
 import pandas as pd
 from google import genai
 
+from chatbot.agent.orchestrator import AgentOrchestrator
+from chatbot.query_router import QueryRouter
 from chatbot.quick_insight import QuickInsightHandler
 from config import Config
 from chatbot.nl_parser import NLParser
@@ -98,6 +100,13 @@ class DashboardChatbot:
         self._last_plan:     Optional[Dict[str, Any]] = None
         self._last_question: str = ""
         self._last_answer:   str = ""
+        self._router = QueryRouter()
+        self._agent  = AgentOrchestrator(
+            gemini_client  = self._gemini_client,
+            model_name     = self._model,
+            default_start  = s0,
+            default_end    = e0,
+        ) if self._gemini_ready else None
 
     # ── Public: get_response ──────────────────────────────────
 
@@ -150,6 +159,11 @@ class DashboardChatbot:
 
             self._rag.add_turn("user",      self._last_question)
             self._rag.add_turn("assistant", answer)
+            return answer
+        
+        if self._gemini_ready and self._router.route(q) == "agent":
+            answer = self._agent.run(q)
+            self._record(q, answer)
             return answer
 
         # ── Tier 1: instant KPI answer ────────────────────────
