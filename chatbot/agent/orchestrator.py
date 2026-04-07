@@ -14,6 +14,7 @@ Max 5 tool calls để tránh infinite loop.
 from __future__ import annotations
 import json
 import logging
+import streamlit as st
 from typing import Any, Dict, List, Optional
 
 from google import genai
@@ -210,3 +211,16 @@ class AgentOrchestrator:
             pass
 
         return f"🔍 **Data collected but synthesis failed.**\n\n" + "\n\n".join(tool_log[:2])
+
+    def _is_stop_requested(self) -> bool:
+        try:
+            return bool(st.session_state.get("stop_requested", False))
+        except Exception:
+            return False
+
+    def _clear_stop(self) -> None:
+        try:
+            st.session_state["stop_requested"] = False
+            st.session_state["is_generating"]  = False
+        except Exception:
+            pass

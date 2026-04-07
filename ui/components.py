@@ -184,6 +184,10 @@ def render_chat_sidebar(chatbot: Any) -> None:
     st.sidebar.markdown("## 💬 AI Assistant")
     st.sidebar.markdown(_chat_header(), unsafe_allow_html=True)
 
+    # Init session state
+    st.session_state.setdefault("stop_requested", False)
+    st.session_state.setdefault("is_generating",  False)
+
     history: List[Dict[str, str]] = st.session_state.get("chat_history", [])
 
     if not history:
@@ -196,14 +200,14 @@ def render_chat_sidebar(chatbot: Any) -> None:
                 st.sidebar.markdown(_bot_bubble(msg["content"]), unsafe_allow_html=True)
 
     thinking_placeholder = st.sidebar.empty()
+    stop_placeholder     = st.sidebar.empty()   # ← mới
+
     if not history:
         st.sidebar.markdown('<div class="chip-label">⚡ Quick questions</div>', unsafe_allow_html=True)
         _quick_buttons(chatbot, thinking_placeholder)
 
     st.sidebar.markdown('<div class="input-area"></div>', unsafe_allow_html=True)
-    _chat_form(chatbot, thinking_placeholder)
-
-
+    _chat_form(chatbot, thinking_placeholder, stop_placeholder)  
 # ─────────────────────────────────────────────────────────────
 # Internal helpers
 # ─────────────────────────────────────────────────────────────
@@ -222,8 +226,8 @@ def _quick_buttons(chatbot: Any, thinking_placeholder: Any) -> None:
                 _process_question(chatbot, token, thinking_placeholder)
                 st.rerun()
 
-
-def _chat_form(chatbot: Any, thinking_placeholder: Any) -> None:
+def _chat_form(chatbot: Any, thinking_placeholder: Any,
+               stop_placeholder: Any) -> None:
     with st.sidebar.form("chat_form", clear_on_submit=True):
         user_input = st.text_input(
             "Ask a question…",
@@ -238,34 +242,63 @@ def _chat_form(chatbot: Any, thinking_placeholder: Any) -> None:
             clear = st.form_submit_button("🗑️", use_container_width=True)
 
         if submit and user_input.strip():
-            _process_question(chatbot, user_input.strip(), thinking_placeholder)
+            _process_question(
+                chatbot, user_input.strip(),
+                thinking_placeholder, stop_placeholder
+            )
             st.rerun()
 
         if clear:
-            st.session_state.chat_history = []
-            st.session_state.suggestions  = []
+            st.session_state.chat_history   = []
+            st.session_state.suggestions    = []
+            st.session_state.stop_requested = False
+            st.session_state.is_generating  = False
             st.rerun()
 
-
-def _process_question(chatbot: Any, question: str, thinking_placeholder: Any,
+def _process_question(chatbot: Any, question: str,
+                      thinking_placeholder: Any,
+                      stop_placeholder: Any = None,
                       display_text: str = None) -> None:
     history = st.session_state.setdefault("chat_history", [])
+    label   = display_text or _QUICK_TOKEN_LABELS.get(question, question)
 
-    label = display_text or _QUICK_TOKEN_LABELS.get(question, question)
+    # Reset stop flag
+    st.session_state["stop_requested"] = False
+    st.session_state["is_generating"]  = True
 
-    history.append({"role": "user", "content": label})          # label, không phải token
+    history.append({"role": "user", "content": label})
+
+    # Show thinking bubble + Stop button
     thinking_placeholder.markdown(
-        _user_bubble(label) + _thinking_bubble(),                # label, không phải token
+        _user_bubble(label) + _thinking_bubble(),
         unsafe_allow_html=True
     )
 
-    response = chatbot.get_response(question)   # vẫn gửi token gốc để trigger QuickInsight
+    if stop_placeholder:
+        stop_clicked = stop_placeholder.button(
+            "⏹️ Stop",
+            key=f"stop_{len(history)}",
+            type="secondary",
+            use_container_width=True,
+        )
+        if stop_clicked:
+            st.session_state["stop_requested"] = True
+
+    # Run chatbot
+    response = chatbot.get_response(question)
     suggs    = chatbot.get_suggestions()
-    if suggs:
+    if suggs and not response.startswith("⏹️"):
         response += "\n\n**Suggested follow-ups:**\n" + "\n".join(
             f"- {s['text']}" for s in suggs
         )
 
+    # Clear UI
     thinking_placeholder.empty()
+    if stop_placeholder:
+        stop_placeholder.empty()
+
+    st.session_state["is_generating"]  = False
+    st.session_state["stop_requested"] = False
+
     history.append({"role": "assistant", "content": response})
     st.session_state.suggestions = suggs

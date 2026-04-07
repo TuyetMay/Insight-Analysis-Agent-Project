@@ -218,7 +218,19 @@ section[data-testid="stSidebar"] {
     padding-top: 10px;
     margin-top: 8px;
 }
-
+/* ── Stop button ──────────────────────────────────────────── */
+div[data-testid="stSidebar"] button[kind="secondary"] {
+    background: #fee2e2 !important;
+    color: #dc2626 !important;
+    border: 1px solid #fca5a5 !important;
+    border-radius: 8px !important;
+    font-weight: 600 !important;
+    transition: all 0.2s ease !important;
+}
+div[data-testid="stSidebar"] button[kind="secondary"]:hover {
+    background: #fca5a5 !important;
+    border-color: #dc2626 !important;
+}
 /* ── Slide animations ─────────────────────────────────────── */
 @keyframes fadeSlideIn {
     from { opacity: 0; transform: translateY(8px); }

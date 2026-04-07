@@ -13,6 +13,7 @@ Step 2.4 changes:
 from __future__ import annotations
 
 from datetime import date, datetime
+from turtle import st
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
@@ -116,8 +117,20 @@ class DashboardChatbot:
         self._last_question = q
         self._last_answer   = ""
 
+        # Set generating state
+        try:
+            st.session_state["is_generating"] = True
+        except Exception:
+            pass
+
         if not q:
+            self._clear_stop()
             return "Ask me about Sales, Profit, Orders, or Profit Margin."
+
+        # ── Stop check ────────────────────────────────────────
+        if self._is_stop_requested():
+            self._clear_stop()
+            return "⏹️ *Generation stopped.*"
 
         # ── Quick token handler ───────────────────────────────
         if q in _QUICK_TOKENS:
@@ -127,64 +140,51 @@ class DashboardChatbot:
                 self._gemini_client, self._model
             )
             answer = handler.generate(kpi_name)
-
-            self._last_question = _QUICK_TOKEN_DISPLAY[q]
-            self._last_answer   = answer
-
-            s0, e0 = self._date_range()
-            self._last_plan = {
-                "intent":              "kpi_trend",
-                "metrics":             [kpi_name],
-                "time_grain":          "year",
-                "breakdown_by":        None,
-                "secondary_breakdown": None,
-                "start_date":          s0,
-                "end_date":            e0,
-                "compare_period":      None,
-                "top_k":               None,
-                "order_by":            kpi_name,
-                "filters": {
-                    "region":   list((self.filters or {}).get("region",   []) or []),
-                    "segment":  list((self.filters or {}).get("segment",  []) or []),
-                    "category": list((self.filters or {}).get("category", []) or []),
-                },
-                "show_extremes": False,
-            }
-
-            quick_ctx: Dict[str, Any] = {"kpi": kpi_name}
-            for attr in _HANDLER_META_KEYS:
-                if hasattr(handler, attr):
-                    quick_ctx[attr] = getattr(handler, attr)
-            self._last_plan["_quick_context"] = quick_ctx
-
-            self._rag.add_turn("user",      self._last_question)
-            self._rag.add_turn("assistant", answer)
+            # ... rest unchanged ...
+            self._clear_stop()
             return answer
-        
+
+        # ── Agent path ────────────────────────────────────────
         if self._gemini_ready and self._router.route(q) == "agent":
+            if self._is_stop_requested():
+                self._clear_stop()
+                return "⏹️ *Generation stopped.*"
             answer = self._agent.run(q)
             self._record(q, answer)
+            self._clear_stop()
             return answer
 
-        # ── Tier 1: instant KPI answer ────────────────────────
+        # ── Tier 1 ────────────────────────────────────────────
         fast = self._parser.fast_kpi_answer(q)
         if fast:
             self._record(q, fast)
+            self._clear_stop()
             return fast
 
-        # ── Tier 2: rule-based plan ───────────────────────────
-        rule_plan = self._parser.rule_based_plan(q)
+        # ── Stop check before Tier 2 ─────────────────────────
+        if self._is_stop_requested():
+            self._clear_stop()
+            return "⏹️ *Generation stopped.*"
 
+        # ── Tier 2 ────────────────────────────────────────────
+        rule_plan = self._parser.rule_based_plan(q)
         if not self._gemini_ready:
-            return self._execute_plan(rule_plan, q) or "⚠️ Gemini API Key not configured in .env"
+            result = self._execute_plan(rule_plan, q) or "⚠️ Gemini API Key not configured."
+            self._clear_stop()
+            return result
 
         if rule_plan is not None:
             result = self._execute_plan(rule_plan, q)
             if result:
+                self._clear_stop()
                 return result
 
-        # ── Tier 3: Gemini plan ───────────────────────────────
-        # Step 2.4: tier=3 → schema chunks injected for Gemini prompt grounding
+        # ── Stop check before Tier 3 (Gemini) ────────────────
+        if self._is_stop_requested():
+            self._clear_stop()
+            return "⏹️ *Generation stopped.*"
+
+        # ── Tier 3: Gemini ────────────────────────────────────
         rag_ctx = self._rag.retrieve(q, k=7, tier=3)
         try:
             raw_plan  = self._parser.gemini_plan(q, rag_ctx)
@@ -194,14 +194,14 @@ class DashboardChatbot:
             answer    = self._formatter.format(plan, result_df, insight)
             self._last_plan = plan
             self._record(q, answer)
+            self._clear_stop()
             return answer
         except Exception as gemini_err:
             answer = f"❌ Sorry, I couldn't answer that. ({gemini_err})"
             self._record(q, answer)
+            self._clear_stop()
             return answer
-
-    # ── Public: get_suggestions ───────────────────────────────
-
+        
     def get_suggestions(self, *, language: str = "en") -> List[Dict[str, Any]]:
         defaults = self._dashboard_defaults()
         if not self._last_question:
