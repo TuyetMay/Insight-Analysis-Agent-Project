@@ -5,6 +5,7 @@ No business logic here: all data, AI, and chart concerns live in their own packa
 """
 
 import hashlib
+import json
 
 import streamlit as st
 
@@ -87,11 +88,14 @@ kpis    = calculate_kpis(df)
 def _filters_hash(filters):
     f = {
         "dr": [str(filters["date_range"][0]), str(filters["date_range"][1])],
-        "r":  sorted(filters.get("region",   []) or []),
-        "s":  sorted(filters.get("segment",  []) or []),
-        "c":  sorted(filters.get("category", []) or []),
+        "r": sorted(filters.get("region", []) or []),
+        "s": sorted(filters.get("segment", []) or []),
+        "c": sorted(filters.get("category", []) or []),
     }
-    return hashlib.md5(st.json.dumps(f, sort_keys=True).encode()).hexdigest()[:8]
+
+    return hashlib.md5(
+        json.dumps(f, sort_keys=True).encode()
+    ).hexdigest()[:8]
 
 current_hash = _filters_hash(filters)
 

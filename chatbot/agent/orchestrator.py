@@ -181,7 +181,6 @@ class AgentOrchestrator:
         return header + answer + sources
 
     def _fallback_synthesis(self, question: str, tool_log: List[str]) -> str:
-        """Nếu agent loop kết thúc không answer được — synthesize từ tool results."""
         if not tool_log:
             return "❌ Could not gather enough data to answer this question."
 
