@@ -1,9 +1,10 @@
 """
-chatbot/query_router.py
-Phân loại query → "structured" hoặc "agent"
-
-Structured: what/how → intent-based (giữ nguyên)
-Agent:      why/should/what-if → AI agent layer
+chatbot/query_router.py  — PATCHED v2
+FIXES:
+  FIX-1: Date-range diagnostic queries (e.g. "why did sales drop from Oct to Nov 2016")
+          were routing to "structured" because they contain "from" → _STRUCTURED_OVERRIDE matched.
+          Now: date + why → agent (diagnostic trumps structured keywords)
+  FIX-2: "why did X increase/decrease" pattern added explicitly
 """
 
 from __future__ import annotations
@@ -12,7 +13,7 @@ from typing import Literal
 
 QueryMode = Literal["structured", "agent"]
 
-# Patterns chỉ ra "why/diagnostic" queries
+# Core diagnostic patterns
 _AGENT_PATTERNS = re.compile(
     r"\b("
     r"why\s+is|why\s+are|why\s+did|why\s+does|why\s+do"
@@ -23,13 +24,18 @@ _AGENT_PATTERNS = re.compile(
     r"|is\s+it\s+worth|is\s+this\s+normal"
     r"|underperform|root\s+cause|diagnosis|diagnose"
     r"|why\s+\w+"
-    r"|\w+\s+(decrease|drop|fall|decline)\s+(from|in|during)" 
     r")\b",
-
     re.IGNORECASE,
 )
 
-# Patterns chỉ ra "structured" queries — override agent nếu match
+# FIX-2: Explicit "X increase but Y decrease" / "X up Y down" pattern
+_DIVERGENCE_PATTERN = re.compile(
+    r"\b(increase|up|rise|grew|higher).{1,40}(decrease|down|fall|drop|lower|decline)"
+    r"|\b(decrease|down|fall|drop|lower|decline).{1,40}(increase|up|rise|grew|higher)\b",
+    re.IGNORECASE,
+)
+
+# Structured override — but NOT when combined with agent intent
 _STRUCTURED_OVERRIDE = re.compile(
     r"\b("
     r"total|sum|count|average|trend|top|rank|compare|breakdown"
@@ -41,23 +47,30 @@ _STRUCTURED_OVERRIDE = re.compile(
 
 
 class QueryRouter:
-    """Stateless — gọi route() mỗi query."""
+    """Stateless — call route() per query."""
 
     def route(self, query: str) -> QueryMode:
-        """
-        Returns "agent" hoặc "structured".
-
-        Logic:
-          1. Nếu có agent pattern → agent
-          2. Nếu có structured override → structured
-          3. Default → structured (safe fallback)
-        """
         if not query or not query.strip():
             return "structured"
 
         has_agent      = bool(_AGENT_PATTERNS.search(query))
+        has_divergence = bool(_DIVERGENCE_PATTERN.search(query))
         has_structured = bool(_STRUCTURED_OVERRIDE.search(query))
 
+        # FIX-1: Divergence queries ("sales increase but profit decrease") → always agent
+        # even if they contain structured keywords like "from"
+        if has_divergence:
+            return "agent"
+
+        # Agent pattern without structured override → agent
         if has_agent and not has_structured:
             return "agent"
+
+        # Agent pattern WITH structured override: agent wins if "why" is present
+        # (e.g. "why did sales increase from Oct to Nov" — "from" triggers structured
+        #  but "why did" is clearly diagnostic)
+        if has_agent and has_structured:
+            if re.search(r"\bwhy\b", query, re.IGNORECASE):
+                return "agent"
+
         return "structured"

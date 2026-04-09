@@ -18,6 +18,7 @@ import logging
 import re as _re
 from typing import Any, Dict, List, Optional
 
+from langchain_core import messages
 import pandas as pd
 from google.genai import types as genai_types
 
@@ -169,14 +170,8 @@ Using ONLY the numbers in the DATA section, write the insight requested.
 Write the complete insight now:"""
 
         try:
-            resp = self.client.models.generate_content(
-                model=self.model_name,
-                contents=prompt,
-                config=genai_types.GenerateContentConfig(
-                    temperature=0.05,
-                    max_output_tokens=max_tokens,
-                ),
-            )
+            resp = self._call_gemini(messages, tools)
+
             text = (getattr(resp, "text", "") or "").strip()
 
             if len(text) > 30:

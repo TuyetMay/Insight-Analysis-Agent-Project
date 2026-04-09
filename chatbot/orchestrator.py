@@ -1,13 +1,8 @@
 """
-chatbot/orchestrator.py
-DashboardChatbot — the single public entry point for the chatbot feature.
-
-Step 2.4 changes:
-  - Tier-3 Gemini path: self._rag.retrieve(q, k=7, tier=3)
-    → schema chunks injected (needed for Gemini JSON plan prompt)
-  - get_insights(): tier=2 (schema not needed for bullet-point insights)
-  - retrieve_for_suggestions(): already tier=2 (no change needed)
-  - _execute_plan(): passes intent + breakdown_by to retrieve for better must-haves
+chatbot/orchestrator.py  — PATCHED v2
+CHANGES vs v1:
+  FIX-1: Agent path sử dụng get_diagnostic_suggestions() thay vì generic rule suggestions
+  FIX-2: _record() nhận question gốc để suggestions có context
 """
 
 from __future__ import annotations
@@ -20,6 +15,7 @@ import pandas as pd
 from google import genai
 
 from chatbot.agent.orchestrator import AgentOrchestrator
+from chatbot.agent.suggestions import get_diagnostic_suggestions  # FIX-1: NEW IMPORT
 from chatbot.query_router import QueryRouter
 from chatbot.quick_insight import QuickInsightHandler
 from config import Config
@@ -48,16 +44,6 @@ _QUICK_TOKEN_DISPLAY = {
     "__quick_margin__":  "Profit margin — trends & category breakdown",
 }
 
-_HANDLER_META_KEYS = (
-    "best_period", "top_region", "top_product",
-    "overall_change_pct", "is_decelerating",
-    "last_transition_pct", "prev_transition_pct",
-    "first_label", "last_label", "first_value", "last_value",
-    "worst_period",
-    "worst_transition_pct",
-    "has_partial_period",
-)
-
 
 class DashboardChatbot:
     def __init__(self, df: pd.DataFrame, kpis: Dict[str, Any], filters: Dict[str, Any]) -> None:
@@ -65,6 +51,9 @@ class DashboardChatbot:
         self.kpis    = kpis
         self.filters = filters
         self._plan_history: List[Dict[str, Any]] = []
+
+        # FIX-1: Track last question for diagnostic suggestions
+        self._last_was_agent = False
 
         if "order_date" in self.df.columns and not pd.api.types.is_datetime64_any_dtype(self.df["order_date"]):
             self.df["order_date"] = pd.to_datetime(self.df["order_date"], errors="coerce")
@@ -113,11 +102,11 @@ class DashboardChatbot:
 
     def get_response(self, user_question: str) -> str:
         q = (user_question or "").strip()
-        self._last_plan     = None
-        self._last_question = q
-        self._last_answer   = ""
+        self._last_plan      = None
+        self._last_question  = q
+        self._last_answer    = ""
+        self._last_was_agent = False
 
-        # Set generating state
         try:
             st.session_state["is_generating"] = True
         except Exception:
@@ -127,7 +116,6 @@ class DashboardChatbot:
             self._clear_stop()
             return "Ask me about Sales, Profit, Orders, or Profit Margin."
 
-        # ── Stop check ────────────────────────────────────────
         if self._is_stop_requested():
             self._clear_stop()
             return "⏹️ *Generation stopped.*"
@@ -140,7 +128,6 @@ class DashboardChatbot:
                 self._gemini_client, self._model
             )
             answer = handler.generate(kpi_name)
-            # ... rest unchanged ...
             self._clear_stop()
             return answer
 
@@ -150,23 +137,23 @@ class DashboardChatbot:
                 self._clear_stop()
                 return "⏹️ *Generation stopped.*"
             answer = self._agent.run(q)
+            self._last_was_agent = True   # FIX-1: flag for suggestion routing
             self._record(q, answer)
             self._clear_stop()
             return answer
 
-        # ── Tier 1 ────────────────────────────────────────────
+        # ── Tier 1: Fast KPI ──────────────────────────────────
         fast = self._parser.fast_kpi_answer(q)
         if fast:
             self._record(q, fast)
             self._clear_stop()
             return fast
 
-        # ── Stop check before Tier 2 ─────────────────────────
         if self._is_stop_requested():
             self._clear_stop()
             return "⏹️ *Generation stopped.*"
 
-        # ── Tier 2 ────────────────────────────────────────────
+        # ── Tier 2: Rule-based ────────────────────────────────
         rule_plan = self._parser.rule_based_plan(q)
         if not self._gemini_ready:
             result = self._execute_plan(rule_plan, q) or "⚠️ Gemini API Key not configured."
@@ -179,7 +166,6 @@ class DashboardChatbot:
                 self._clear_stop()
                 return result
 
-        # ── Stop check before Tier 3 (Gemini) ────────────────
         if self._is_stop_requested():
             self._clear_stop()
             return "⏹️ *Generation stopped.*"
@@ -201,14 +187,23 @@ class DashboardChatbot:
             self._record(q, answer)
             self._clear_stop()
             return answer
-        
+
     def get_suggestions(self, *, language: str = "en") -> List[Dict[str, Any]]:
+        # FIX-1: Agent responses get diagnostic-context suggestions
+        if self._last_was_agent and self._last_question:
+            diag_suggs = get_diagnostic_suggestions(
+                question=self._last_question,
+                agent_response=self._last_answer,
+                plan_defaults=self._dashboard_defaults(),
+            )
+            if diag_suggs:
+                return diag_suggs
+
         defaults = self._dashboard_defaults()
         if not self._last_question:
             suggs = self._rule_suggestions.suggest(self._last_plan or {}, defaults)
             return self._serialise(suggs)
 
-        # Step 2.4: retrieve_for_suggestions already uses tier=2 internally
         rag_ctx = self._rag.retrieve_for_suggestions(
             self._last_question, self._last_answer, k=8
         )
@@ -232,13 +227,12 @@ class DashboardChatbot:
             answer    = self._formatter.format(plan, result_df, insight)
             self._last_plan   = plan
             self._last_answer = answer
+            self._last_was_agent = False
             self._rag.add_turn("assistant", answer)
             return answer
         except Exception as exc:
             self._last_plan = None
             return f"❌ Could not run that suggestion. ({exc})"
-
-    # ── Public: auto-insights summary ────────────────────────
 
     def get_insights(self) -> str:
         if not self._gemini_ready:
@@ -246,8 +240,6 @@ class DashboardChatbot:
         if self.df.empty:
             return "No data available."
 
-        # Step 2.4: insights don't need schema chunks → tier=2
-        # The prompt uses data facts, not schema definitions
         rag_ctx = self._rag.retrieve(
             "insights overview summary performance", k=6, tier=2
         )
@@ -274,11 +266,10 @@ Output:""".strip()
             return (getattr(resp, "text", "") or "").strip()
         except Exception as exc:
             return f"Could not generate insights. ({type(exc).__name__}: {exc})"
-        
-    # ── Stop request helpers ──────────────────────────────────────
+
+    # ── Stop request helpers ───────────────────────────────────
 
     def _is_stop_requested(self) -> bool:
-        """Check nếu user đã bấm Stop."""
         try:
             import streamlit as st
             return bool(st.session_state.get("stop_requested", False))
@@ -296,9 +287,6 @@ Output:""".strip()
     def rebuild_rag(self) -> None:
         self._rag.build(df=self.df, kpis=self.kpis, filters=self.filters)
 
-    def rebuild_rag(self) -> None:
-        self._rag.build(df=self.df, kpis=self.kpis, filters=self.filters)
-
     @property
     def rag_total_chunks(self) -> int:
         return self._rag.total_chunks
@@ -311,19 +299,13 @@ Output:""".strip()
         try:
             plan      = self._validator.validate(rule_plan)
             result_df = self._sql.run(plan)
-
-            # Format answer FIRST — no LLM wait
             answer_no_insight = self._formatter.format(plan, result_df, "")
-
-            # Then generate insight (LLM)
             insight = self._insights.generate(plan, result_df)
             answer  = self._formatter.format(plan, result_df, insight)
-
             self._last_plan = plan
             self._plan_history.append(plan)
             if len(self._plan_history) > 5:
                 self._plan_history = self._plan_history[-5:]
-
             self._record(q, answer)
             return answer
         except Exception as exc:
