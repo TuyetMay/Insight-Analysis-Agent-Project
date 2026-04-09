@@ -1,6 +1,3 @@
-"""
-core/data_loader.py
-"""
 from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Tuple
@@ -28,7 +25,7 @@ def _build_where(filters: Dict[str, Any]) -> Tuple[str, str, Dict[str, Any]]:
 
     for col, key in [("region", "region"), ("segment", "segment"), ("category", "category")]:
         values = filters.get(key)
-        if values:  # non-empty list = user filtered
+        if values:  
             sorted_vals = sorted(str(v) for v in values)
             # Build explicit IN clause — most compatible with psycopg2
             placeholders = ", ".join(f"%({key}_{i})s" for i in range(len(sorted_vals)))

@@ -1,7 +1,4 @@
 """
-rag/metadata_filter.py
-Step 2.1 — Metadata Pre-filtering
-
 Reduces the candidate chunk pool BEFORE semantic search by keeping only
 chunk types relevant to the query intent.
 
@@ -27,7 +24,7 @@ from typing import Any, Dict, List, Optional, Set
 from rag.knowledge_builder import Chunk
 
 
-# ── Intent → allowed chunk type allowlists ─────────────────────────────────
+#  Intent → allowed chunk type allowlists 
 # Types NOT in the allowlist are excluded from the candidate pool.
 # filter_context is always implicitly included (added in filter()).
 
@@ -69,11 +66,9 @@ _INTENT_ALLOWLIST: Dict[str, Set[str]] = {
         "kpi_snapshot",
         "filter_context",
     },
-    "clarify": set(),  # no filter — pass everything
+    "clarify": set(),  
 }
 
-# Minimum candidate pool after filtering.
-# If fewer chunks survive, skip the filter (safety fallback).
 _MIN_POOL = 2
 
 
@@ -114,7 +109,7 @@ class MetadataPreFilter:
         if not allowlist:
             return chunks
 
-        # ── Pass 1: type allowlist ────────────────────────────
+        #  Pass 1: type allowlist 
         filtered = [
             c for c in chunks
             if c.metadata.get("type", "") in allowlist
@@ -124,7 +119,7 @@ class MetadataPreFilter:
         if len(filtered) < _MIN_POOL:
             return chunks
 
-        # ── Pass 2: dimension sub-filter ──────────────────────
+        #  Pass 2: dimension sub-filter 
         # When breakdown_by is known, prefer chunks for that dimension.
         # Does NOT hard-exclude other dimensions — just boosts recall
         # by keeping dimension-matched chunks + non-dimension chunks.

@@ -1,5 +1,4 @@
 """
-chatbot/sql_builder.py
 Converts a validated plan dict into parameterised SQL and executes it.
 Pure data logic — no LLM, no UI.
 """
@@ -59,7 +58,6 @@ class SQLBuilder:
             return self._run_compare(plan)
         if plan["intent"] == "kpi_detail":
             return self._run_detail(plan)
-        # Cross-breakdown: GROUP BY primary × secondary
         if plan.get("secondary_breakdown"):
             return self._run_cross(plan)
         sql, params = self.build_sql(plan)
@@ -70,7 +68,7 @@ class SQLBuilder:
         metrics             = plan["metrics"]
         time_grain          = plan["time_grain"]
         breakdown_by        = plan.get("breakdown_by")
-        secondary_breakdown = plan.get("secondary_breakdown")  # may be None
+        secondary_breakdown = plan.get("secondary_breakdown")  
         f                   = plan["filters"]
         top_k               = plan.get("top_k")
         order_by            = plan.get("order_by") or metrics[0]
@@ -167,7 +165,6 @@ class SQLBuilder:
         condition = plan.get("condition", "profit_negative")
         breakdown = plan.get("breakdown_by") or "sub_category"
  
-        # ── THÊM: whitelist check ─────────────────────────────
         if breakdown not in _ALLOWED_BREAKDOWN_COLS:
             logger.warning("Blocked unsafe breakdown column: %r", breakdown)
             breakdown = "sub_category"
@@ -193,8 +190,6 @@ class SQLBuilder:
         base_where = " AND ".join(base_parts)
         params_g = {**params, "top_k": top_k}
  
-        # ── Dùng f-string CHỈ cho whitelisted column name ────
-        # breakdown đã được validate ở trên → safe
         group_sql = f"""
             SELECT
                 {breakdown}        AS breakdown,
@@ -215,7 +210,6 @@ class SQLBuilder:
         """
         grouped_df = execute_query(group_sql, params_g)
  
-        # Sample orders — giữ nguyên logic cũ, chỉ dùng f-string cho breakdown
         row_where  = base_where + " AND profit < 0"
         params_s   = {**params, "sample_k": 10}
         sample_df  = pd.DataFrame()

@@ -1,8 +1,3 @@
-"""
-charts/_utils.py
-Shared helpers used across all chart modules.
-"""
-
 from __future__ import annotations
 
 from typing import List

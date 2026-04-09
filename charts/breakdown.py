@@ -1,8 +1,3 @@
-"""
-charts/breakdown.py
-Dimensional breakdown charts: region, segment, region×segment heatmap.
-"""
-
 from __future__ import annotations
 
 import pandas as pd

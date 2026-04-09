@@ -61,17 +61,8 @@ class RAGEngine:
 
     _MAX_TURNS:    int      = 8
     _STATIC_TYPES: Set[str] = {"schema", "filter"}
-
-    # ── v3 Step 2.4: Empty — no unconditional injection ───────────────────────
-    # Previously: frozenset({"schema_metrics", "schema_dimensions"})
-    # Reason removed: these are only needed by Tier-3 Gemini prompt, not Tier-2
-    # rule-based. Injecting them unconditionally wasted 106 tokens per query
-    # and diluted retrieval attention.
     _MUST_HAVE_IDS: frozenset = frozenset()
 
-    # ── v3 Step 2.4: Schema chunks injected ONLY at tier=3 ───────────────────
-    # These provide grounding for Gemini's JSON plan generation.
-    # Rule-based parser (Tier-2) does not need them — intent is already parsed.
     _SCHEMA_CHUNK_IDS: frozenset = frozenset({
         "schema_metrics",
         "schema_dimensions",
@@ -80,12 +71,7 @@ class RAGEngine:
     # ── Intent-specific must-haves (refined from v2) ──────────────────────────
     # Injected at the front of results when intent is known.
     # Each entry is the "entry-point chunk" for that query type.
-    #
-    # Changes vs v2:
-    #   kpi_value   : added kpi_margin_snapshot (margin queries need it)
-    #   kpi_rank    : added top10_sub_category_profit (most common rank target)
-    #   kpi_compare : added trend_overview_sales_yearly (YoY compare needs context)
-    #   kpi_detail  : unchanged — anomaly_loss_subcat_summary is the entry point
+
     _INTENT_MUST_HAVES: Dict[str, List[str]] = {
         "kpi_value":   ["kpi_sales_snapshot",  "kpi_profit_snapshot"],
         "kpi_trend":   ["trend_overview_sales_yearly"],
@@ -239,7 +225,7 @@ class RAGEngine:
                 results,
                 intent=intent,
                 breakdown_by=breakdown_by,
-                grain=None,  # grain not yet in retrieve() signature — add if needed
+                grain=None, 
             )
             logger.debug(
                 self._meta_filter.stats(results, pre_filtered, intent)
@@ -249,9 +235,6 @@ class RAGEngine:
         all_chunks    = self._static_chunks + self._dynamic_chunks
         all_chunk_map = {c.chunk_id: c for c in all_chunks}
 
-        # ── Step 2.4: Schema injection — ONLY for Tier 3 ─────
-        # Tier-3 = Gemini path: schema facts are needed for the JSON plan prompt.
-        # Tier-2 = rule-based: intent already parsed, schema wastes tokens.
         schema_injected: List[Chunk] = []
         if tier >= 3:
             for cid in self._SCHEMA_CHUNK_IDS:
@@ -292,11 +275,7 @@ class RAGEngine:
         )
 
         # ── Final order: schema → intent → breakdown → semantic ─
-        # Rationale:
-        #   - schema first = grounding for Gemini
-        #   - intent must-haves = most relevant entry-point chunks
-        #   - breakdown = dimension-specific rank context
-        #   - semantic = best matches by embedding similarity
+     
         final = schema_injected + intent_injected + breakdown_injected + semantic_sorted
 
         _token_estimate = sum(len(c.text) // 4 for c in final[:k + len(schema_injected) + len(intent_injected)])

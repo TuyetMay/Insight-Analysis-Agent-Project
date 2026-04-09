@@ -1,5 +1,4 @@
 """
-ui/components.py
 Reusable Streamlit UI components: sidebar filters and AI chat sidebar.
 """
 
@@ -10,11 +9,6 @@ from typing import Any, Dict, List
 
 import pandas as pd
 import streamlit as st
-
-
-# ─────────────────────────────────────────────────────────────
-# Token → readable label mapping
-# ─────────────────────────────────────────────────────────────
 
 _QUICK_TOKEN_LABELS = {
     "__quick_sales__":   "📊 Sales overview — trends, top products & regions",
@@ -74,11 +68,6 @@ def render_filters(filter_options: Dict[str, Any]) -> Dict[str, Any]:
         "category":   selected_categories,
     }
 
-
-# ─────────────────────────────────────────────────────────────
-# Markdown → HTML converter
-# ─────────────────────────────────────────────────────────────
-
 def _md_to_html(text: str) -> str:
     text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
     text = text.replace("\\$", "$")
@@ -116,11 +105,6 @@ def _md_to_html(text: str) -> str:
         text
     )
     return text
-
-
-# ─────────────────────────────────────────────────────────────
-# HTML bubble builders
-# ─────────────────────────────────────────────────────────────
 
 def _user_bubble(text: str) -> str:
     escaped = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
@@ -174,11 +158,6 @@ def _chat_header() -> str:
   </div>
 </div>"""
 
-
-# ─────────────────────────────────────────────────────────────
-# Main chat sidebar
-# ─────────────────────────────────────────────────────────────
-
 def render_chat_sidebar(chatbot: Any) -> None:
     st.sidebar.markdown("---")
     st.sidebar.markdown("## 💬 AI Assistant")
@@ -208,9 +187,6 @@ def render_chat_sidebar(chatbot: Any) -> None:
 
     st.sidebar.markdown('<div class="input-area"></div>', unsafe_allow_html=True)
     _chat_form(chatbot, thinking_placeholder, stop_placeholder)  
-# ─────────────────────────────────────────────────────────────
-# Internal helpers
-# ─────────────────────────────────────────────────────────────
 
 def _quick_buttons(chatbot: Any, thinking_placeholder: Any) -> None:
     quick_qs = [

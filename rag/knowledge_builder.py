@@ -1,26 +1,3 @@
-"""
-rag/knowledge_builder.py  — v2  (proposition-based chunk redesign)
-
-Thay đổi so với v1:
-  - Xóa _dimension_chunks()         → dim_region/segment/category NEVER_RETRIEVED
-  - Xóa _dimension_value_chunk()    → dim_values_state (164t noise), dim_values_region (superseded)
-  - Xóa _kpi_chunks()               → kpi_summary score=0.000, thay = _kpi_snapshot_chunks()
-  - Xóa _time_range_chunks()        → merged vào filter_context
-  - Thêm _kpi_snapshot_chunks()     → 4 atomic KPI chunks (1 per metric)
-  - Thêm _yearly_transition_chunks()→ 1 chunk per YoY transition (thay yoy_comparison)
-  - Thêm _trend_overview_chunk()    → CAGR + overall trend (thay yearly_growth)
-  - Thêm _dimension_value_chunks()  → 1 atomic chunk per dim value (thay dim_region/segment/category)
-  - Thêm _dimension_rank_chunks()   → ranking summary (thay top4_region_*)
-  - Thêm _anomaly_chunks()          → CRITICAL NEW: loss-making + low-margin facts
-  - Rewrite _yearly_trend_chunks()  → unique context per year (fix overlap bug)
-  - Rewrite _quarterly_chunks()     → 1 chunk per quarter (thay 83-token monolith)
-  - Rewrite _monthly_chunks()       → _monthly_peak_chunks() natural language
-  - Rewrite _filter_context_chunks()→ natural language (fix NEVER_RETRIEVED)
-  - Rewrite _schema_chunks()        → thêm inject_tier metadata
-  - Rewrite _segment_category_cross_chunks() → thêm concentration note
-  - Rewrite _top_k_chunks()         → thêm loss mention cho metric=profit
-"""
-
 from __future__ import annotations
 
 import calendar as _cal
@@ -28,12 +5,6 @@ from dataclasses import dataclass, field
 from typing import Any, Dict, List
 
 import pandas as pd
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Data class
-# ─────────────────────────────────────────────────────────────────────────────
-
 @dataclass
 class Chunk:
     """A single unit of retrievable knowledge."""
@@ -41,12 +12,6 @@ class Chunk:
     text: str
     metadata: Dict[str, Any] = field(default_factory=dict)
     score: float = 0.0
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# Builder
-# ─────────────────────────────────────────────────────────────────────────────
-
 class KnowledgeBaseBuilder:
     """
     Builds proposition-based Chunks from Superstore DataFrame.
@@ -182,14 +147,7 @@ class KnowledgeBaseBuilder:
     # ── KPI snapshots (dynamic) ───────────────────────────────────────────────
 
     def _kpi_snapshot_chunks(self, kpis: Dict[str, Any]) -> List[Chunk]:
-        """
-        4 atomic KPI chunks — one per metric.
-
-        v1 bug: kpi_summary packed all metrics into 1 chunk that scored 0.000 in EVERY
-                query because dense embeddings poorly handle number-heavy strings like
-                "Total Sales=$2,297,201, Total Profit=$286,397...".
-        v2 fix: 1 natural-language sentence per metric — each retrievable independently.
-        """
+        
         ts  = float(kpis.get("total_sales",   0) or 0)
         tp  = float(kpis.get("total_profit",  0) or 0)
         to_ = int(kpis.get("total_orders",    0) or 0)
@@ -231,15 +189,6 @@ class KnowledgeBaseBuilder:
     def _yearly_trend_chunks(self, df: pd.DataFrame) -> List[Chunk]:
         """
         1 chunk per year — with UNIQUE comparative context per year.
-
-        v1 bug: all 4 yearly chunks had identical structure (Year XXXX: Sales=..., Profit=...,
-                Orders=..., Margin=...) → dense embedding treated them as near-duplicates
-                (audit: yearly_2015/2016/2017 flagged as OVERLAP group).
-        v2 fix: each year gets a unique sentence based on what makes it distinctive:
-          2014 → "baseline year, lowest margin"
-          2015 → "only year with sales decline"
-          2016 → "strongest single-year growth"
-          2017 → "peak revenue year"
         """
         if "order_date" not in df.columns or "sales" not in df.columns:
             return []
@@ -356,10 +305,6 @@ class KnowledgeBaseBuilder:
     def _yearly_transition_chunks(self, df: pd.DataFrame) -> List[Chunk]:
         """
         1 chunk per YoY transition — replaces single yoy_comparison chunk (35 tokens).
-
-        v1 bug: yoy_comparison crammed all 3 transitions into 1 chunk → query "2016 vs 2015"
-                retrieved the chunk but got noise from 2014→2015 and 2016→2017 too.
-        v2 fix: query "2016 vs 2015" → retrieves only trend_year_sales_2015_2016.
         """
         if "order_date" not in df.columns or "sales" not in df.columns:
             return []
@@ -427,10 +372,6 @@ class KnowledgeBaseBuilder:
     def _trend_overview_chunk(self, df: pd.DataFrame) -> List[Chunk]:
         """
         Overall multi-year trend with CAGR — replaces yearly_growth chunk.
-
-        v1: "Revenue growth 2014→2017: +51.4% ($484,247 → $733,215)."
-            → missing grain metadata, no CAGR, bare numbers.
-        v2: Natural language + CAGR + profit growth context.
         """
         if "order_date" not in df.columns or "sales" not in df.columns:
             return []
@@ -491,10 +432,6 @@ class KnowledgeBaseBuilder:
     def _quarterly_chunks(self, df: pd.DataFrame) -> List[Chunk]:
         """
         1 chunk per quarter — replaces 83-token quarterly_summary monolith.
-
-        v1 bug: all 8 quarters in 1 chunk → query "Q4 2017" retrieved Q1 2016 too.
-        v2 fix (original): 1 chunk per quarter — but 8/8 NEVER_RETRIEVED (too short, structure identical).
-        v3 fix: merge into 2 annual summaries (1 per year) with seasonal context.
         """
         if "order_date" not in df.columns or "sales" not in df.columns:
             return []
@@ -563,10 +500,6 @@ class KnowledgeBaseBuilder:
     def _monthly_peak_chunks(self, df: pd.DataFrame) -> List[Chunk]:
         """
         Peak month + worst profit month — natural language with seasonal context.
-
-        Renamed from _monthly_chunks().
-        v1: "Peak month by sales: 2017-11 — $118,448, profit $9,690."
-        v2: "November 2017 was the highest revenue month: $118,448 in sales..."
         """
         if "order_date" not in df.columns or "sales" not in df.columns:
             return []
@@ -652,16 +585,6 @@ class KnowledgeBaseBuilder:
     def _dimension_value_chunks(self, df: pd.DataFrame) -> List[Chunk]:
         """
         1 atomic chunk per dimension value.
-
-        Replaces dim_region, dim_segment, dim_category (all NEVER_RETRIEVED in audit).
-
-        v1 problem: prefix "Dimension 'region' values:" prevented semantic matching.
-                    Model embedded the prefix instead of the region name/data.
-        v2 fix: no prefix — start directly with the value name + natural comparison.
-          OLD: "Dimension 'region' values: ['Central', 'East', 'South', 'West'].
-                Detail: West: Sales=$725,458..."
-          NEW: "West leads all regions by sales: $725,458 (32% of total).
-                Profit: $108,418 (38% of total, 15.0% margin)."
         """
         chunks: List[Chunk] = []
         if "sales" not in df.columns or "profit" not in df.columns:
@@ -796,24 +719,9 @@ class KnowledgeBaseBuilder:
 
         return chunks
 
-    # ── Anomaly chunks (dynamic) — CRITICAL NEW ───────────────────────────────
 
     def _anomaly_chunks(self, df: pd.DataFrame,
                         kpis: Dict[str, Any]) -> List[Chunk]:
-        """
-        CRITICAL — completely new chunk type, no equivalent existed in v1.
-
-        Audit finding: ALL kpi_detail queries scored < 0.4 with no ⭐ hits because
-        the knowledge base contained zero chunks about loss-making items.
-        "which items are bleeding money" → retriever returned profitable items (!).
-
-        These chunks fix the kpi_detail intent failure:
-          1. anomaly_loss_subcat_summary → entry point, injected as must-have for kpi_detail
-          2. anomaly_loss_{item}         → per-item detail for top 3 worst
-          3. anomaly_low_margin_{dim}    → lowest margin entity per dimension
-          4. anomaly_high_discount_loss  → discount > 20% → average loss
-          5. month_worst_profit          → built in _monthly_peak_chunks()
-        """
         if df.empty or "profit" not in df.columns:
             return []
 
@@ -973,7 +881,7 @@ class KnowledgeBaseBuilder:
 
         return chunks
 
-    # ── Top-k sub-category chunks (dynamic) ───────────────────────────────────
+    #  Top-k sub-category chunks (dynamic) 
 
     def _top_k_chunks(self, df: pd.DataFrame, dim: str,
                       k: int = 10) -> List[Chunk]:
@@ -1022,7 +930,7 @@ class KnowledgeBaseBuilder:
         except Exception:
             return []
 
-    # ── Discount impact (dynamic) ─────────────────────────────────────────────
+    #  Discount impact (dynamic) 
 
     def _discount_impact_chunks(self, df: pd.DataFrame) -> List[Chunk]:
         """Discount bucket analysis — kept from v1, text unchanged."""
@@ -1063,7 +971,7 @@ class KnowledgeBaseBuilder:
         except Exception:
             return []
 
-    # ── Segment × Category cross chunks (dynamic) ─────────────────────────────
+    #  Segment × Category cross chunks (dynamic) 
 
     def _segment_category_cross_chunks(self, df: pd.DataFrame) -> List[Chunk]:
         """

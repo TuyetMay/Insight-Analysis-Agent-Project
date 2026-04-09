@@ -1,8 +1,3 @@
-"""
-charts/products.py
-Product-level insight charts: discount impact, sub-category ranking, category distribution.
-"""
-
 from __future__ import annotations
 
 import pandas as pd

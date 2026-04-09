@@ -1,10 +1,3 @@
-"""
-chatbot/orchestrator.py  — PATCHED v2
-CHANGES vs v1:
-  FIX-1: Agent path sử dụng get_diagnostic_suggestions() thay vì generic rule suggestions
-  FIX-2: _record() nhận question gốc để suggestions có context
-"""
-
 from __future__ import annotations
 
 from datetime import date, datetime
@@ -15,7 +8,7 @@ import pandas as pd
 from google import genai
 
 from chatbot.agent.orchestrator import AgentOrchestrator
-from chatbot.agent.suggestions import get_diagnostic_suggestions  # FIX-1: NEW IMPORT
+from chatbot.agent.suggestions import get_diagnostic_suggestions 
 from chatbot.query_router import QueryRouter
 from chatbot.quick_insight import QuickInsightHandler
 from config import Config
@@ -52,7 +45,6 @@ class DashboardChatbot:
         self.filters = filters
         self._plan_history: List[Dict[str, Any]] = []
 
-        # FIX-1: Track last question for diagnostic suggestions
         self._last_was_agent = False
 
         if "order_date" in self.df.columns and not pd.api.types.is_datetime64_any_dtype(self.df["order_date"]):
@@ -189,7 +181,6 @@ class DashboardChatbot:
             return answer
 
     def get_suggestions(self, *, language: str = "en") -> List[Dict[str, Any]]:
-        # FIX-1: Agent responses get diagnostic-context suggestions
         if self._last_was_agent and self._last_question:
             diag_suggs = get_diagnostic_suggestions(
                 question=self._last_question,

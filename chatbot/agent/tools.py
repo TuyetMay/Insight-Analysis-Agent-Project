@@ -1,5 +1,4 @@
 """
-chatbot/agent/tools.py
 Tool wrappers cho AI Agent.
 Mỗi tool = 1 SQL call hoặc 1 RAG lookup.
 Agent tự quyết định gọi tool nào.
@@ -12,8 +11,6 @@ from chatbot.sql_builder import SQLBuilder
 
 sql = SQLBuilder()
 
-# ── Tool schema cho Gemini ────────────────────────────────────
-# Gemini function calling cần schema dạng dict
 
 TOOL_SCHEMAS = [
     {

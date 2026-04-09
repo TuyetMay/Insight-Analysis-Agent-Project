@@ -1,18 +1,3 @@
-"""
-chatbot/agent/orchestrator.py  — PATCHED v4
-FIXES vs v3:
-  FIX-HALL-1: System prompt now explicitly forbids invented numbers and requires
-               tool calls with exact date ranges from the question.
-  FIX-HALL-2: _extract_date_range_from_question() pre-extracts dates and injects
-               a forced compare_periods call BEFORE the main agentic loop if
-               the question contains month/year references.
-  FIX-HALL-3: _verify_answer_has_real_data() detects when the final answer
-               contains round "example" numbers ($100,000 / 1,000 orders) and
-               falls back to _fallback_synthesis instead of returning hallucination.
-  FIX-HALL-4: Fallback synthesis prompt now says "ONLY use numbers from DATA above"
-               and explicitly states the period being compared.
-"""
-
 from __future__ import annotations
 import logging
 import re
@@ -84,23 +69,11 @@ def _extract_date_pairs(question: str) -> List[Tuple[str, str]]:
 def _sort_current_previous(
     pairs: List[Tuple[str, str]]
 ) -> Tuple[Tuple[str, str], Tuple[str, str]]:
-    """
-    FIX-BUG-A: Given two (start, end) pairs in mention order, return
-    (current_pair, previous_pair) where current is CHRONOLOGICALLY LATER.
-
-    "from August 2016 to September 2016" → mentions: [Aug, Sep]
-      Aug start = 2016-08-01, Sep start = 2016-09-01
-      Sep > Aug → current=Sep, previous=Aug  ✓
-
-    "Why did sales grow in 2017 vs 2016" → mentions: [2017, 2016]
-      2017 > 2016 → current=2017, previous=2016  ✓
-    """
     a, b = pairs[0], pairs[1]
-    # Compare by start date string (YYYY-MM-DD sorts lexicographically)
     if a[0] >= b[0]:
-        return a, b   # a is later → current=a, previous=b
+        return a, b   
     else:
-        return b, a   # b is later → current=b, previous=a
+        return b, a  
 
 def _is_hallucinated_round_number(text: str) -> bool:
     """
@@ -148,7 +121,7 @@ def _scrub_forbidden_fields(text: str) -> str:
     return text
 
 
-_SYSTEM_PROMPT = """You are a senior business analyst with access to a LIVE Superstore database.
+_SYSTEM_PROMPT = """You are a senior business analyst and data analyst with access to a LIVE Superstore database.
 
 CRITICAL RULES — violation = your answer is discarded:
 1. NEVER invent, estimate, or approximate any number. Every $ and % MUST come from a tool call.
@@ -222,7 +195,6 @@ class AgentOrchestrator:
             )
         ]
 
-        # FIX-HALL-2: Pre-execute forced tool calls based on dates in question
         forced_tool_results = self._run_forced_queries(question)
         
         # Build initial message with forced results injected as context
@@ -270,7 +242,6 @@ class AgentOrchestrator:
                 final_answer = "\n".join(text_parts).strip()
 
                 if final_answer:
-                    # FIX-HALL-3: Reject hallucinated round numbers
                     if _is_hallucinated_round_number(final_answer):
                         logger.warning("Detected hallucinated round numbers — falling back to synthesis")
                         return self._fallback_synthesis(question, tool_results_log)
@@ -314,7 +285,7 @@ class AgentOrchestrator:
 
     def _run_forced_queries(self, question: str) -> List[str]:
         """
-        FIX-HALL-2 + FIX-BUG-A: Pre-execute compare_periods with CORRECTLY ORDERED dates.
+         Pre-execute compare_periods with CORRECTLY ORDERED dates.
         current = chronologically LATER period, previous = EARLIER period.
         Preserves the user's "from A to B" intent regardless of mention order.
         """
@@ -325,7 +296,6 @@ class AgentOrchestrator:
             return results
 
         if len(date_pairs) >= 2:
-            # FIX-BUG-A: sort so current = later, previous = earlier
             current_pair, previous_pair = _sort_current_previous(date_pairs)
             for metric in ("sales", "profit", "orders"):
                 args = {
@@ -368,7 +338,7 @@ class AgentOrchestrator:
         if not tool_log:
             return "❌ Could not gather enough data to answer this question."
 
-        # FIX-HALL-4: Explicit instruction to use only data from tool results
+        # Explicit instruction to use only data from tool results
         date_pairs = _extract_date_pairs(question)
         period_hint = ""
         if date_pairs:
@@ -405,11 +375,9 @@ RULES:
                 config=genai_types.GenerateContentConfig(temperature=0.0, max_output_tokens=1500),
             )
             text = (getattr(resp, "text", "") or "").strip()
-            # FIX-HALL-3: Also check fallback synthesis for hallucinated numbers
             if text and not _is_hallucinated_round_number(text):
                 return f"🔍 **Diagnostic Analysis:**\n\n{_scrub_forbidden_fields(text)}"
             elif text:
-                # Has hallucinated numbers but it's all we have — add warning
                 return (
                     "⚠️ *Note: Some numbers below may not match database exactly — "
                     "verify by asking a specific date-range question.*\n\n"

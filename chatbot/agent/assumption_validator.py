@@ -1,6 +1,4 @@
 """
-chatbot/agent/assumption_validator.py  — PATCHED v2
-
 FIXES vs v1:
   FIX-AV-1: _extract_actuals() now parses compare_periods tool output format directly
              ("Current: $X / Previous: $Y / Change: +Z%") instead of relying on
@@ -66,14 +64,6 @@ def _extract_claims(question: str) -> Dict[str, str]:
             claims["orders"] = direction
     return claims
 
-
-# FIX-AV-1: Parse the actual compare_periods output format
-# Tool output looks like:
-#   sales comparison:
-#     Current  (2016-10-01 → 2016-12-31): $236,099
-#     Previous (2015-10-01 → 2015-12-31): $182,297
-#     Change: +29.5% ($53,802)
-
 _COMPARE_BLOCK_RE = re.compile(
     r'(sales|profit|orders)\s+comparison:.*?Change:\s*([+-]?\d+\.?\d*)%',
     re.IGNORECASE | re.DOTALL,
@@ -82,10 +72,6 @@ _CURRENT_VALUE_RE  = re.compile(r'Current\s*\([^)]+\):\s*\$?([\d,]+)', re.IGNORE
 _PREVIOUS_VALUE_RE = re.compile(r'Previous\s*\([^)]+\):\s*\$?([\d,]+)', re.IGNORECASE)
 _CHANGE_PCT_RE     = re.compile(r'Change:\s*([+-]?\d+\.?\d*)%', re.IGNORECASE)
 _TOOL_ERROR_RE     = re.compile(r'Tool error|No data found|error', re.IGNORECASE)
-
-# FIX-BUG-A: detect the direction note injected by _run_forced_queries
-# "NOTE: current=LATER period (2016-12-01..2016-12-31), previous=EARLIER period (...)"
-# When this note is present we trust the Change: sign directly (positive = later > earlier).
 _DIRECTION_NOTE_RE = re.compile(r'NOTE: current=LATER period', re.IGNORECASE)
 
 
@@ -94,14 +80,6 @@ def _parse_dollar(s: str) -> float:
 
 
 def _extract_actuals(tool_results: List[str]) -> Dict[str, float]:
-    """
-    FIX-AV-1 + FIX-BUG-A: Parse compare_periods output directly.
-    Returns {metric: pct_change} for metrics found in tool results.
-
-    The Change: sign is always "current vs previous".
-    _run_forced_queries guarantees current=LATER, previous=EARLIER, so a positive
-    Change: means the metric went UP from the earlier to the later period.
-    """
     actuals: Dict[str, float] = {}
     sales_vals: Dict[str, float] = {}
     profit_vals: Dict[str, float] = {}
@@ -114,7 +92,6 @@ def _extract_actuals(tool_results: List[str]) -> Dict[str, float]:
         pct    = float(m.group(2))
         actuals[metric] = pct
 
-    # FIX-AV-2: Extract raw values for margin computation
     # Find the sales and profit blocks independently
     for metric_name, val_dict in [("sales", sales_vals), ("profit", profit_vals)]:
         # Look for block header
@@ -146,10 +123,6 @@ def _extract_actuals(tool_results: List[str]) -> Dict[str, float]:
 
 
 def _is_unverifiable(tool_results: List[str], metric: str) -> bool:
-    """
-    FIX-AV-3: Returns True if the tool result for this metric contains an error
-    or "No data found" — meaning the premise cannot be confirmed.
-    """
     for result in tool_results:
         if metric in result.lower() and _TOOL_ERROR_RE.search(result):
             return True
@@ -165,12 +138,7 @@ def _direction_matches(claimed: str, actual_pct: float) -> bool:
 
 
 def validate_assumptions(question: str, tool_results: List[str]) -> Optional[str]:
-    """
-    Returns a corrective message when:
-      (a) user's claimed direction contradicts actual % change, OR
-      (b) user's claimed metric is unverifiable (tool error / missing data)
-    Returns None if everything is consistent.
-    """
+   
     claims  = _extract_claims(question)
     actuals = _extract_actuals(tool_results)
 
@@ -261,7 +229,6 @@ def validate_assumptions(question: str, tool_results: List[str]) -> Optional[str
                 f"— consistent with your assumption."
             )
 
-    # FIX-AV-4: Show correct margin if available (prevents inversion display bug)
     margin_cur  = actuals.get("_margin_cur")
     margin_prev = actuals.get("_margin_prev")
     margin_pp   = actuals.get("margin_change_pp")
@@ -273,7 +240,6 @@ def validate_assumptions(question: str, tool_results: List[str]) -> Optional[str
             f"({margin_word} by {abs(margin_pp or 0):.1f}pp)",
         ]
 
-    # What actually happened — the real story
     lines += ["", "**📊 What actually happened:**"]
 
     if len(contradictions) == 1 and confirmations:

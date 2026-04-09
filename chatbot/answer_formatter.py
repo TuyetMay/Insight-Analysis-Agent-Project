@@ -1,10 +1,7 @@
 """
-chatbot/answer_formatter.py
 Converts a validated plan + result DataFrame into a nicely formatted Markdown string.
 Pure presentation logic — no LLM, no DB calls.
 
-FIX: _format_trend with breakdown now groups by segment and calculates
-     YoY within the same segment (not across consecutive rows).
 """
 
 from __future__ import annotations
@@ -376,10 +373,6 @@ class AnswerFormatter:
 
         return "\n".join(lines)
 
-    # ──────────────────────────────────────────────────────────
-    # FIX: _format_trend — properly handles breakdown dimension
-    # ──────────────────────────────────────────────────────────
-
     def _format_trend(self, plan: Dict[str, Any], df: pd.DataFrame,
                       metrics: List[str], grain: str, breakdown: Any, ctx_line: str) -> str:
         grain_label = {
@@ -388,19 +381,12 @@ class AnswerFormatter:
         }.get(grain, grain)
         metric_str  = " & ".join(_METRIC_LABELS.get(m, m) for m in metrics)
 
-        # ──────────────────────────────────────────────────────
-        # FIXED: When breakdown exists, group by breakdown and
-        # calculate YoY WITHIN the same breakdown value.
-        # OLD BUG: compared consecutive rows regardless of segment,
-        # e.g. Consumer 2014 vs Corporate 2014 → wrong % change.
-        # ──────────────────────────────────────────────────────
         if breakdown and "breakdown" in df.columns:
             return self._format_trend_grouped(
                 plan, df, metrics, grain, breakdown, ctx_line,
                 metric_str, grain_label
             )
 
-        # ── Original logic: no breakdown ──────────────────────
         lines = [f"Here's the **{metric_str}** trend by {grain_label}:{ctx_line}", ""]
 
         def fmt_period(raw_period: Any, grain: str) -> str:
@@ -442,9 +428,7 @@ class AnswerFormatter:
 
         return "\n".join(lines)
 
-    # ──────────────────────────────────────────────────────────
-    # NEW: Grouped trend formatter (segment-first layout)
-    # ──────────────────────────────────────────────────────────
+    # Grouped trend formatter (segment-first layout)
 
     def _format_trend_grouped(self, plan: Dict[str, Any], df: pd.DataFrame,
                               metrics: List[str], grain: str, breakdown: str,
@@ -536,7 +520,7 @@ class AnswerFormatter:
                     )
             lines.append("")
 
-        # ── Summary: total across all segments per period ─────
+        # total across all segments per period ─────
         if "period" in df.columns and len(group_totals) > 1:
             period_totals = (
                 df.groupby("period")[m0].sum()

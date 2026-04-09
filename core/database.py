@@ -1,9 +1,3 @@
-"""
-core/database.py  — fixed version
-Key change: _get_pool() no longer uses @st.cache_resource
-because caching None permanently breaks all subsequent connections.
-Instead, pool is stored in st.session_state with retry logic.
-"""
 from __future__ import annotations
 
 import logging
@@ -44,13 +38,13 @@ def _get_pool() -> Optional[psycopg2.pool.ThreadedConnectionPool]:
         return _shared_pool
  
     with _pool_lock:
-        if _shared_pool is not None:          # double-check sau khi acquire lock
+        if _shared_pool is not None:          
             return _shared_pool
         host = _resolve_ipv4(Config.DB_HOST) or Config.DB_HOST
         try:
             _shared_pool = psycopg2.pool.ThreadedConnectionPool(
                 minconn=2,
-                maxconn=15,                   # tổng connections dùng chung
+                maxconn=15,                   
                 host=host,
                 port=int(Config.DB_PORT),
                 dbname=Config.DB_NAME,
@@ -102,7 +96,7 @@ def get_connection() -> Generator:
         if db_pool and conn:
             try:
                 if not conn.closed:
-                    conn.rollback()   # reset transaction state
+                    conn.rollback()   
                 db_pool.putconn(conn)
             except Exception:
                 pass

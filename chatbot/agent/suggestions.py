@@ -1,5 +1,4 @@
 """
-chatbot/agent/suggestions.py  — NEW FILE
 Context-aware suggested follow-ups for diagnostic (agent) responses.
 
 WHY:

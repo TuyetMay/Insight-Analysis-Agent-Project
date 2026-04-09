@@ -1,15 +1,3 @@
-"""
-rag_audit.py — Step 1.1: Audit toàn bộ RAG chunks hiện tại
-
-Chạy từ root project:
-    python rag_audit.py
-
-Output:
-    audit_chunks_dump.txt      — toàn bộ chunk text để đọc thủ công
-    audit_report.txt           — bảng tổng hợp vấn đề
-    audit_retrieval_log.txt    — log chunks được/không được retrieve
-"""
-
 from __future__ import annotations
 
 import os
@@ -22,7 +10,6 @@ from typing import Any, Dict, List, Tuple
 
 from core.database import execute_query
 
-# ── Đảm bảo import được từ project root ──────────────────────
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from dotenv import load_dotenv
@@ -30,9 +17,7 @@ load_dotenv()
 
 import pandas as pd
 
-# ─────────────────────────────────────────────────────────────
 # 1. LOAD DATA & BUILD CHUNKS
-# ─────────────────────────────────────────────────────────────
 
 print("=" * 60)
 print("RAG AUDIT — Step 1.1")
@@ -54,7 +39,6 @@ kpis = {
     "profit_margin": float(df["profit"].sum() / df["sales"].sum() * 100),
 }
 
-# Lấy date range từ data
 min_date = str(pd.to_datetime(df["order_date"]).min().date())
 max_date = str(pd.to_datetime(df["order_date"]).max().date())
 
@@ -78,21 +62,12 @@ print(f"      Dynamic chunks: {len(dynamic_chunks)}")
 print(f"      TOTAL   chunks: {len(all_chunks)}")
 
 
-# ─────────────────────────────────────────────────────────────
-# 2. HELPER: ĐẾM TOKEN (approximate — 1 token ≈ 4 chars)
-# ─────────────────────────────────────────────────────────────
-
 def count_tokens(text: str) -> int:
     """Approximate token count: len / 4"""
     return max(1, len(text) // 4)
 
 
-# ─────────────────────────────────────────────────────────────
-# 3. DUMP ALL CHUNKS TO FILE
-# ─────────────────────────────────────────────────────────────
-
-print("\n[3/5] Dumping all chunks to audit_chunks_dump.txt...")
-
+# DUMP ALL CHUNKS TO FILE
 with open("audit_chunks_dump.txt", "w", encoding="utf-8") as f:
     f.write("=" * 80 + "\n")
     f.write("FULL CHUNK DUMP — RAG Audit Step 1.1\n")
@@ -121,21 +96,13 @@ with open("audit_chunks_dump.txt", "w", encoding="utf-8") as f:
         f.write("\n" + "-" * 40 + "\n\n")
 
 print("      Done → audit_chunks_dump.txt")
-
-
-# ─────────────────────────────────────────────────────────────
-# 4. ANALYSIS
-# ─────────────────────────────────────────────────────────────
-
 print("\n[4/5] Analysing chunks...")
 
-# 4a. Phân bố theo type
 type_counter: Counter = Counter()
 layer_counter: Counter = Counter({"static": len(static_chunks), "dynamic": len(dynamic_chunks)})
 for c in all_chunks:
     type_counter[c.metadata.get("type", "unknown")] += 1
 
-# 4b. Tìm chunks quá dài (> 500 tokens)
 TOKEN_THRESHOLD = 500
 long_chunks = []
 for c in all_chunks:
@@ -143,21 +110,17 @@ for c in all_chunks:
     if t > TOKEN_THRESHOLD:
         long_chunks.append((c.chunk_id, c.metadata.get("type", "?"), t, c.text[:120]))
 
-# 4c. Tìm duplicate chunk_id
 id_counts: Counter = Counter(c.chunk_id for c in all_chunks)
 duplicate_ids = [(cid, cnt) for cid, cnt in id_counts.items() if cnt > 1]
 
-# 4d. Tìm chunks overlap (text quá giống nhau) — hash first 200 chars
 content_hashes: Dict[str, List[str]] = defaultdict(list)
 for c in all_chunks:
-    # Hash đầu 200 chars của text (bỏ số)
     normalized = re.sub(r'\d+', 'N', c.text[:200].lower().strip())
     h = hashlib.md5(normalized.encode()).hexdigest()[:8]
     content_hashes[h].append(c.chunk_id)
 
 overlapping = {h: ids for h, ids in content_hashes.items() if len(ids) > 1}
 
-# 4e. Kiểm tra chunk nào không có metadata quan trọng
 missing_metadata = []
 for c in all_chunks:
     issues = []
@@ -168,14 +131,8 @@ for c in all_chunks:
     if issues:
         missing_metadata.append((c.chunk_id, issues))
 
-# 4f. Tổng token budget
 total_tokens = sum(count_tokens(c.text) for c in all_chunks)
 avg_tokens   = total_tokens // len(all_chunks) if all_chunks else 0
-
-
-# ─────────────────────────────────────────────────────────────
-# 5. RETRIEVAL TEST
-# ─────────────────────────────────────────────────────────────
 
 print("\n[5/5] Running retrieval tests (test queries)...")
 
@@ -229,15 +186,9 @@ for intent, query in TEST_QUERIES:
         "top_chunks": list(zip(top_ids, scores)),
     })
 
-# Chunks chưa bao giờ được retrieve
 all_ids     = set(c.chunk_id for c in all_chunks)
 retrieved   = set(retrieved_chunk_ids.keys())
 never_retrieved = all_ids - retrieved
-
-
-# ─────────────────────────────────────────────────────────────
-# 6. WRITE RETRIEVAL LOG
-# ─────────────────────────────────────────────────────────────
 
 with open("audit_retrieval_log.txt", "w", encoding="utf-8") as f:
     f.write("RETRIEVAL LOG — Test Queries\n")
@@ -251,11 +202,6 @@ with open("audit_retrieval_log.txt", "w", encoding="utf-8") as f:
 
 print("      Done → audit_retrieval_log.txt")
 
-
-# ─────────────────────────────────────────────────────────────
-# 7. WRITE MAIN REPORT
-# ─────────────────────────────────────────────────────────────
-
 print("\nWriting audit_report.txt...")
 
 SEP = "=" * 80
@@ -266,7 +212,6 @@ with open("audit_report.txt", "w", encoding="utf-8") as f:
     f.write("RAG CHUNK AUDIT REPORT — Step 1.1\n")
     f.write(SEP + "\n\n")
 
-    # ── A. Tổng quan ─────────────────────────────────────────
     f.write("A. TỔNG QUAN\n")
     f.write("-" * 40 + "\n")
     f.write(f"  Total chunks     : {len(all_chunks)}\n")
@@ -277,7 +222,6 @@ with open("audit_report.txt", "w", encoding="utf-8") as f:
     f.write(f"  Max tokens/chunk : {max(count_tokens(c.text) for c in all_chunks)}\n")
     f.write(f"  Min tokens/chunk : {min(count_tokens(c.text) for c in all_chunks)}\n\n")
 
-    # ── B. Phân bố theo type ─────────────────────────────────
     f.write("B. PHÂN BỐ THEO TYPE\n")
     f.write("-" * 40 + "\n")
     for t, cnt in sorted(type_counter.items(), key=lambda x: -x[1]):
@@ -285,7 +229,6 @@ with open("audit_report.txt", "w", encoding="utf-8") as f:
         f.write(f"  {t:20s} : {cnt:3d} chunks  ({pct:.1f}%)\n")
     f.write("\n")
 
-    # ── C. Bảng tất cả chunks ─────────────────────────────────
     f.write("C. BẢNG TẤT CẢ CHUNKS — chunk_id | type | tokens | layer | issues\n")
     f.write("-" * 80 + "\n")
     f.write(f"  {'chunk_id':<35} {'type':<15} {'~tokens':>7} {'layer':<8} issues\n")
@@ -302,7 +245,6 @@ with open("audit_report.txt", "w", encoding="utf-8") as f:
             issues.append("DUPLICATE_ID")
         if c.chunk_id in never_retrieved:
             issues.append("NEVER_RETRIEVED")
-        # check overlap
         normalized = re.sub(r'\d+', 'N', c.text[:200].lower().strip())
         h = hashlib.md5(normalized.encode()).hexdigest()[:8]
         if len(content_hashes[h]) > 1:
@@ -313,7 +255,6 @@ with open("audit_report.txt", "w", encoding="utf-8") as f:
         f.write(f"  {c.chunk_id:<35} {ctype:<15} {tokens:>7} {layer:<8} {issue_str}\n")
     f.write("\n")
 
-    # ── D. Chunks quá dài ─────────────────────────────────────
     f.write("D. CHUNKS QUÁ DÀI (> 500 tokens) — cần split hoặc rút gọn\n")
     f.write("-" * 60 + "\n")
     if long_chunks:
@@ -323,7 +264,6 @@ with open("audit_report.txt", "w", encoding="utf-8") as f:
     else:
         f.write("  Không có chunk nào vượt ngưỡng 500 tokens.\n\n")
 
-    # ── E. Duplicate chunk IDs ────────────────────────────────
     f.write("E. DUPLICATE CHUNK IDs — cùng ID xuất hiện > 1 lần\n")
     f.write("-" * 60 + "\n")
     if duplicate_ids:
@@ -333,7 +273,6 @@ with open("audit_report.txt", "w", encoding="utf-8") as f:
     else:
         f.write("  Không có duplicate chunk ID.\n\n")
 
-    # ── F. Overlapping chunks ─────────────────────────────────
     f.write("F. OVERLAPPING CHUNKS — nội dung gần giống nhau\n")
     f.write("-" * 60 + "\n")
     if overlapping:
@@ -343,7 +282,6 @@ with open("audit_report.txt", "w", encoding="utf-8") as f:
     else:
         f.write("  Không phát hiện overlap đáng kể.\n\n")
 
-    # ── G. Never retrieved ────────────────────────────────────
     f.write("G. CHUNKS KHÔNG BAO GIỜ ĐƯỢC RETRIEVE (trong test queries)\n")
     f.write("-" * 60 + "\n")
     f.write(f"  Test queries: {len(TEST_QUERIES)}\n")

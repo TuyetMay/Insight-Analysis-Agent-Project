@@ -1,9 +1,3 @@
-"""
-app.py
-Streamlit entry point — UI orchestration only.
-No business logic here: all data, AI, and chart concerns live in their own packages.
-"""
-
 import hashlib
 import json
 
@@ -19,9 +13,7 @@ from core.database import reset_pool
 from ui import inject_styles, render_filters, render_chat_sidebar
 from ui.components import _KPI_QUICK_QUESTIONS
 
-# ─────────────────────────────────────────────────────────────
 # Page config & styles
-# ─────────────────────────────────────────────────────────────
 
 st.set_page_config(
     page_title=Config.APP_TITLE,
@@ -31,16 +23,12 @@ st.set_page_config(
 )
 inject_styles()
 
-# ─────────────────────────────────────────────────────────────
 # Session state initialisation
-# ─────────────────────────────────────────────────────────────
 
 st.session_state.setdefault("chat_history", [])
 st.session_state.setdefault("suggestions", [])
 
-# ─────────────────────────────────────────────────────────────
 # Bootstrap: filter options
-# ─────────────────────────────────────────────────────────────
 
 with st.spinner("⏳ Connecting to database…"):
     filter_options = get_filter_options()
@@ -66,15 +54,11 @@ GOOGLE_KEY  = {"(set)" if Config.GOOGLE_API_KEY else "(EMPTY)"}
 """)
     st.stop()
 
-# ─────────────────────────────────────────────────────────────
 # Sidebar: filters
-# ─────────────────────────────────────────────────────────────
 
 filters = render_filters(filter_options)
 
-# ─────────────────────────────────────────────────────────────
 # Load data
-# ─────────────────────────────────────────────────────────────
 
 with st.spinner("🚀 Loading data…"):
     df = load_filtered_data_safe(filters)
@@ -117,7 +101,6 @@ if st.session_state.get("pending_question"):
     _q = st.session_state.pop("pending_question")
     _history = st.session_state.setdefault("chat_history", [])
     
-    # Dùng label readable, không phải raw token
     _label = _QUICK_TOKEN_LABELS.get(_q, _q)
     _history.append({"role": "user", "content": _label})
     
@@ -134,9 +117,7 @@ if st.session_state.get("pending_question"):
     _history.append({"role": "assistant", "content": _response})
     st.session_state.chat_history = _history
     st.rerun() 
-# ─────────────────────────────────────────────────────────────
 # Main dashboard
-# ─────────────────────────────────────────────────────────────
 
 st.markdown(f"<div class='main-header'>{Config.APP_ICON} {Config.APP_TITLE}</div>",
             unsafe_allow_html=True)
@@ -187,8 +168,6 @@ with st.expander("📊 View Raw Data (first 100 rows)"):
 st.markdown("---")
 st.caption("Superstore BI Dashboard · Streamlit · Plotly · Gemini AI")
 
-# ─────────────────────────────────────────────────────────────
 # Sidebar: AI chat assistant
-# ─────────────────────────────────────────────────────────────
 
 render_chat_sidebar(chatbot)

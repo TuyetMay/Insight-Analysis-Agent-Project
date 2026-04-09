@@ -1,8 +1,3 @@
-"""
-charts/trends.py
-Time-series chart generators: sales/profit trend, orders per month.
-"""
-
 from __future__ import annotations
 
 import pandas as pd

@@ -1,5 +1,4 @@
 """
-ui/styles.py
 All custom CSS injected into the Streamlit app via st.markdown.
 """
 

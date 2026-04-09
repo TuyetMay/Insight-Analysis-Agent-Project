@@ -1,17 +1,8 @@
 """
-chatbot/nl_parser.py
-Natural-language → plan-dict parsing.
 Three tiers (fastest to slowest):
   1. Fast KPI path   — regex, no LLM, for simple total/margin questions
   2. Rule-based path — keyword matching, no LLM
   3. Gemini path     — full LLM with RAG-grounded prompt
-
-FIXES APPLIED:
-  - FIX-A: kpi_detail không inject sidebar filters (chỉ filter khi user mention cụ thể)
-  - FIX-B: "compare 2017 and 2016" → kpi_compare với đúng date range
-  - FIX-C: "compare X vs last year" → kpi_compare, không phải kpi_trend
-  - FIX-D: _BREAKDOWN_RE bổ sung "area", "zone", "market"
-  - FIX-E: Dùng module-level _ALL_DIMS_RE thống nhất (không có local duplicate)
 """
 
 from __future__ import annotations
@@ -95,7 +86,6 @@ _EXTREMES_RE = re.compile(
     re.IGNORECASE,
 )
 
-# FIX-E: Duy nhất một regex cho "all X / across all X / every X"
 _ALL_DIMS_RE = re.compile(
     r'\b(across\s+all|all|every|each|any)\s+'
     r'(region|area|segment|category|sub.?category|zone|market)s?\b',
@@ -112,7 +102,6 @@ _GENERAL_YOY_RE = re.compile(
     re.IGNORECASE,
 )
 
-# FIX-C: Regex detect "compare/vs/versus" → force kpi_compare
 _COMPARE_VS_RE = re.compile(r'\b(compare|vs\.?|versus)\b', re.IGNORECASE)
 
 _MONTH_MAP: Dict[str, int] = {
@@ -130,7 +119,6 @@ _MONTH_MAP: Dict[str, int] = {
     "december": 12, "dec": 12,
 }
 
-# FIX-D: Bổ sung "area", "zone", "market" vào _BREAKDOWN_RE
 _BREAKDOWN_RE = re.compile(
     r"\b(by|per|across|for each|breakdown|group by|split by)\s+"
     r"(region|area|zone|market|segment|category|sub.?category|"
@@ -298,9 +286,6 @@ class NLParser:
         ql = (q or "").lower().strip()
         s0, e0 = self._date_range()
 
-        # ── FIX-A: Detect negative-profit drill-down ─────────
-        # kpi_detail KHÔNG inherit sidebar filters — chỉ filter khi
-        # user mention cụ thể (VD: "in West region")
         if _DETAIL_NEGATIVE_RE.search(q):
             explicit_dates = self._extract_date_range(ql)
             if explicit_dates:
@@ -322,11 +307,9 @@ class NLParser:
                 "compare_period":      None,
                 "top_k":               15,
                 "order_by":            "profit",
-                # Bắt đầu với empty filters
                 "filters": {"region": [], "segment": [], "category": [], "sub_category": []},
             }
-            # FIX-A: Chỉ inject filter nếu user mention cụ thể dimension value
-            # KHÔNG gọi _inject_mentioned_filters (vì nó sẽ inherit toàn bộ sidebar)
+        
             ql_lower = q.lower()
             f = self.filters or {}
             for dim, all_vals in [
@@ -340,7 +323,6 @@ class NLParser:
                     v for v in all_vals
                     if re.search(r"\b" + re.escape(v.lower()) + r"\b", ql_lower)
                 ]
-                # Chỉ filter nếu user nói rõ: "losing money in West"
                 if mentioned:
                     plan["filters"][dim] = mentioned
             return plan
@@ -457,7 +439,6 @@ class NLParser:
                     detected_compare = cp
                     break
 
-        # ── FIX-B: 2-year comparison "compare 2017 and 2016" ─
         year_matches_in_q = _TIME_YEAR.findall(ql)
         if (len(year_matches_in_q) == 2
                 and _COMPARE_RE.search(ql)
@@ -515,7 +496,6 @@ class NLParser:
                 plan["secondary_breakdown"] = None
                 return self._inject_mentioned_filters(plan, q)
 
-        # ── FIX-C: YoY shortcuts với compare/vs → kpi_compare ─
         if detected_compare == "yoy" and _GENERAL_YOY_RE.search(q):
             if not explicit_dates:
                 if _COMPARE_VS_RE.search(q):
@@ -536,7 +516,6 @@ class NLParser:
                 plan["secondary_breakdown"] = secondary_breakdown
                 return self._inject_mentioned_filters(plan, q)
 
-        # FIX-C: Block thứ 2 — cũng cần check _COMPARE_VS_RE
         if detected_compare == "yoy" and not explicit_dates:
             if _COMPARE_VS_RE.search(q):
                 # "compare X vs last year" → kpi_compare
@@ -689,7 +668,6 @@ class NLParser:
             return f"{year}-{sm:02d}-{sd:02d}", f"{year}-{em:02d}-{ed:02d}"
 
         year_matches = _TIME_YEAR.findall(ql)
-        # FIX-B: 2 năm riêng lẻ được xử lý trong rule_based_plan, không ở đây
         if len(year_matches) == 1:
             year = int(year_matches[0])
             return f"{year}-01-01", f"{year}-12-31"

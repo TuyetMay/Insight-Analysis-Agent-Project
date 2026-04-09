@@ -1,5 +1,4 @@
 """
-chatbot/plan_validator.py
 Validates and normalises a raw plan dict from any NL parser tier.
 Raises ValueError with a descriptive message on any schema violation.
 """

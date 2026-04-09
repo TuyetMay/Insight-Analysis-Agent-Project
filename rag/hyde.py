@@ -1,5 +1,4 @@
 """
-rag/hyde.py
 Template-based HyDE (Hypothetical Document Embedding) expander.
 
 No LLM required — uses regex pattern matching to detect paraphrases
@@ -28,11 +27,8 @@ class HyDEExpander:
     Appends canonical business vocabulary to paraphrase queries.
     """
 
-    # ── Paraphrase → canonical expansion ─────────────────────
-    # Each pattern maps to terms that appear verbatim in chunk text.
-    # Order matters: more specific patterns first.
+   
     _PARAPHRASE_PATTERNS: list = [
-        # Loss / negative profit metaphors
         (
             r'\b(bleeding|burning|wasting|draining)\s+(money|cash|revenue|profit)\b',
             "loss-making unprofitable negative profit sub-category losing money"

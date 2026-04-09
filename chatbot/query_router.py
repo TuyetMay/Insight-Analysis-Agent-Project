@@ -1,12 +1,3 @@
-"""
-chatbot/query_router.py  — PATCHED v2
-FIXES:
-  FIX-1: Date-range diagnostic queries (e.g. "why did sales drop from Oct to Nov 2016")
-          were routing to "structured" because they contain "from" → _STRUCTURED_OVERRIDE matched.
-          Now: date + why → agent (diagnostic trumps structured keywords)
-  FIX-2: "why did X increase/decrease" pattern added explicitly
-"""
-
 from __future__ import annotations
 import re
 from typing import Literal
@@ -28,14 +19,12 @@ _AGENT_PATTERNS = re.compile(
     re.IGNORECASE,
 )
 
-# FIX-2: Explicit "X increase but Y decrease" / "X up Y down" pattern
 _DIVERGENCE_PATTERN = re.compile(
     r"\b(increase|up|rise|grew|higher).{1,40}(decrease|down|fall|drop|lower|decline)"
     r"|\b(decrease|down|fall|drop|lower|decline).{1,40}(increase|up|rise|grew|higher)\b",
     re.IGNORECASE,
 )
 
-# Structured override — but NOT when combined with agent intent
 _STRUCTURED_OVERRIDE = re.compile(
     r"\b("
     r"total|sum|count|average|trend|top|rank|compare|breakdown"
@@ -57,8 +46,6 @@ class QueryRouter:
         has_divergence = bool(_DIVERGENCE_PATTERN.search(query))
         has_structured = bool(_STRUCTURED_OVERRIDE.search(query))
 
-        # FIX-1: Divergence queries ("sales increase but profit decrease") → always agent
-        # even if they contain structured keywords like "from"
         if has_divergence:
             return "agent"
 

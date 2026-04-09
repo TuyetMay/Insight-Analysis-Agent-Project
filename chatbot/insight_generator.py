@@ -1,18 +1,3 @@
-"""
-chatbot/insight_generator.py  — v3
-Improvements vs v2:
-  - _data_summary(): richer context per intent
-    * kpi_detail: loss_ratio, discount vs profitable benchmark
-    * kpi_rank: margin per entity, HHI concentration
-    * kpi_trend: acceleration, CAGR significance
-    * kpi_compare: volume vs price decomposition context
-    * kpi_value: margin per breakdown, revenue concentration
-  - _llm_insight(): per-intent prompt templates
-    * Each intent has specific analysis tasks
-    * Forbidden phrases list to avoid generic output
-    * Output format enforced per intent
-"""
-
 from __future__ import annotations
 import logging
 import re as _re
@@ -218,7 +203,6 @@ Write the complete insight now:"""
         except Exception:
             return 0.0
 
-    # ── Data summary — v3: richer context per intent ──────────
 
     def _data_summary(self, plan: Dict[str, Any], df: pd.DataFrame) -> str:
         intent    = plan.get("intent")
@@ -475,7 +459,7 @@ Write the complete insight now:"""
 
         return "\n".join(lines)
 
-    # ── Rule-based insight (giữ nguyên logic, improve text) ───
+    # ── Rule-based insight ───
 
     def _rule_insight(self, plan: Dict[str, Any], df: pd.DataFrame) -> List[str]:
         intent    = plan.get("intent")

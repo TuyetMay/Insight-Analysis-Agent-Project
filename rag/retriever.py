@@ -1,21 +1,3 @@
-"""
-rag/retriever.py
-Dense-embedding retriever using sentence-transformers (all-MiniLM-L6-v2).
-
-Upgrade từ TF-IDF:
-  - TF-IDF chỉ match exact token → "revenue" KHÔNG match "sales"
-  - Dense embeddings match nghĩa → "revenue", "income", "turnover" đều match "sales"
-  - Model all-MiniLM-L6-v2: ~80MB, chạy nhanh trên CPU, embedding 384 chiều
-
-Interface giữ NGUYÊN với TFIDFRetriever cũ:
-  - fit(chunks)  → DenseRetriever
-  - retrieve(query, k)  → List[Chunk]
-Không cần thay đổi rag/engine.py.
-
-Lazy loading: model chỉ load lần đầu khi gọi fit() hoặc retrieve(),
-dùng module-level singleton để tránh load lại giữa các request.
-"""
-
 from __future__ import annotations
 
 import logging
@@ -35,9 +17,8 @@ import pathlib
 _CACHE_DIR = pathlib.Path(".embedding_cache")
 _CACHE_DIR.mkdir(exist_ok=True)
 
-# ── Singleton model (load một lần duy nhất) ───────────────────
 _model_lock  = threading.Lock()
-_shared_model = None   # SentenceTransformer instance
+_shared_model = None   
 
 
 def _get_model():
@@ -50,14 +31,14 @@ def _get_model():
         return _shared_model
 
     with _model_lock:
-        if _shared_model is not None:   # double-check sau khi lock
+        if _shared_model is not None:   
             return _shared_model
         try:
             from sentence_transformers import SentenceTransformer
             logger.info("Loading sentence-transformers model all-MiniLM-L6-v2 ...")
             _shared_model = SentenceTransformer(
                 "all-MiniLM-L6-v2",
-                device="cpu",          # CPU-only, không cần GPU
+                device="cpu",         
             )
             logger.info("Dense embedding model loaded successfully.")
         except ImportError:
@@ -70,21 +51,18 @@ def _get_model():
     return _shared_model
 
 
-# ── Dense Retriever ───────────────────────────────────────────
+#  Dense Retriever 
 
 class DenseRetriever:
     """
     Cosine-similarity retriever over dense sentence embeddings.
-
-    Encoding batch size = 64 (đủ nhanh trên CPU cho ~100 chunks).
-    Embeddings được L2-normalize → dot product = cosine similarity.
     """
 
     def __init__(self) -> None:
         self._chunks:     List[Chunk]   = []
         self._embeddings: Optional[np.ndarray] = None   # shape (N, 384)
 
-    # ── Public API (same as TFIDFRetriever) ───────────────────
+    #  Public API (same as TFIDFRetriever) 
 
     def fit(self, chunks: List[Chunk]) -> "DenseRetriever":
         self._chunks = chunks
@@ -109,7 +87,6 @@ class DenseRetriever:
             self._embeddings = pickle.loads(cache_path.read_bytes())
             return self
 
-        # ── Encode + save ─────────────────────────────────────
         raw = model.encode(
             texts, batch_size=64, show_progress_bar=False,
             convert_to_numpy=True, normalize_embeddings=True,
@@ -124,7 +101,6 @@ class DenseRetriever:
         if not self._chunks:
             return []
 
-        # Fallback path (model failed to load)
         if self._embeddings is None:
             if hasattr(self, "_tfidf_fallback"):
                 return self._tfidf_fallback.retrieve(query, k)
@@ -157,7 +133,6 @@ class DenseRetriever:
         ]
 
 
-# ── TF-IDF Fallback (giữ lại khi sentence-transformers chưa install) ──
 
 class TFIDFFallback:
     """
