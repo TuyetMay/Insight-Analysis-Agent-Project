@@ -1,13 +1,23 @@
 """
-chatbot/agent/orchestrator.py  — PATCHED v3
-NEW: Assumption Validator — detects premise vs data contradiction
-NEW: Clean emergency format (no internal error messages shown to user)
+chatbot/agent/orchestrator.py  — PATCHED v4
+FIXES vs v3:
+  FIX-HALL-1: System prompt now explicitly forbids invented numbers and requires
+               tool calls with exact date ranges from the question.
+  FIX-HALL-2: _extract_date_range_from_question() pre-extracts dates and injects
+               a forced compare_periods call BEFORE the main agentic loop if
+               the question contains month/year references.
+  FIX-HALL-3: _verify_answer_has_real_data() detects when the final answer
+               contains round "example" numbers ($100,000 / 1,000 orders) and
+               falls back to _fallback_synthesis instead of returning hallucination.
+  FIX-HALL-4: Fallback synthesis prompt now says "ONLY use numbers from DATA above"
+               and explicitly states the period being compared.
 """
 
 from __future__ import annotations
 import logging
+import re
 import streamlit as st
-from typing import Any, List
+from typing import Any, List, Optional, Tuple
 
 from google.genai import types as genai_types
 
@@ -16,34 +26,158 @@ from chatbot.agent.assumption_validator import validate_assumptions
 
 logger = logging.getLogger(__name__)
 
-_MAX_TOOL_CALLS = 5
+_MAX_TOOL_CALLS = 8   # raised from 5 to allow pre-query + diagnostic queries
 
-_SYSTEM_PROMPT = """You are a senior business analyst for a Superstore retail company.
-You have access to tools that query real sales data.
+# ── Date extraction regex ──────────────────────────────────────────────────────
+_MONTH_MAP = {
+    "january": 1, "jan": 1, "february": 2, "feb": 2, "march": 3, "mar": 3,
+    "april": 4, "apr": 4, "may": 5, "june": 6, "jun": 6, "july": 7, "jul": 7,
+    "august": 8, "aug": 8, "september": 9, "sep": 9, "sept": 9,
+    "october": 10, "oct": 10, "november": 11, "nov": 11, "december": 12, "dec": 12,
+}
+_MONTH_LAST_DAY = {1:31,2:28,3:31,4:30,5:31,6:30,7:31,8:31,9:30,10:31,11:30,12:31}
 
-Your job: answer WHY questions by gathering data, finding root causes, and giving recommendations.
+_MONTH_YEAR_RE = re.compile(
+    r'\b(january|february|march|april|may|june|july|august|september|october|november|december'
+    r'|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec)\s+(20\d{2})\b',
+    re.IGNORECASE
+)
+_YEAR_ONLY_RE = re.compile(r'\b(20\d{2})\b')
+_FROM_TO_RE   = re.compile(
+    r'\bfrom\s+(\w+\s+20\d{2})\s+to\s+(\w+\s+20\d{2})\b', re.IGNORECASE
+)
 
-Rules:
-- Always use at least 2 tools before answering
-- Every claim must include exact $ or % numbers from tool data
-- NEVER write an incomplete sentence — always finish what you start
+def _parse_month_year(text: str) -> Optional[Tuple[str, str]]:
+    """Return (start_date, end_date) YYYY-MM-DD for a 'Month YYYY' string."""
+    m = _MONTH_YEAR_RE.search(text)
+    if m:
+        month = _MONTH_MAP[m.group(1).lower()]
+        year  = int(m.group(2))
+        last  = _MONTH_LAST_DAY.get(month, 30)
+        return f"{year}-{month:02d}-01", f"{year}-{month:02d}-{last:02d}"
+    return None
 
-REQUIRED OUTPUT FORMAT — always use ALL four sections:
+def _extract_date_pairs(question: str) -> List[Tuple[str, str]]:
+    """
+    Extract up to 2 date ranges from a question.
+    Returns list of (start, end) YYYY-MM-DD pairs, IN MENTION ORDER
+    (caller is responsible for sorting into current/previous correctly).
+    """
+    ql = question.lower()
+    pairs: List[Tuple[str, str]] = []
+
+    # Find all month+year mentions, preserving order of appearance
+    for m in _MONTH_YEAR_RE.finditer(ql):
+        month = _MONTH_MAP[m.group(1).lower()]
+        year  = int(m.group(2))
+        last  = _MONTH_LAST_DAY.get(month, 30)
+        pairs.append((f"{year}-{month:02d}-01", f"{year}-{month:02d}-{last:02d}"))
+
+    if not pairs:
+        for m in _YEAR_ONLY_RE.finditer(ql):
+            yr = int(m.group(1))
+            pairs.append((f"{yr}-01-01", f"{yr}-12-31"))
+
+    return pairs[:2]
+
+
+def _sort_current_previous(
+    pairs: List[Tuple[str, str]]
+) -> Tuple[Tuple[str, str], Tuple[str, str]]:
+    """
+    FIX-BUG-A: Given two (start, end) pairs in mention order, return
+    (current_pair, previous_pair) where current is CHRONOLOGICALLY LATER.
+
+    "from August 2016 to September 2016" → mentions: [Aug, Sep]
+      Aug start = 2016-08-01, Sep start = 2016-09-01
+      Sep > Aug → current=Sep, previous=Aug  ✓
+
+    "Why did sales grow in 2017 vs 2016" → mentions: [2017, 2016]
+      2017 > 2016 → current=2017, previous=2016  ✓
+    """
+    a, b = pairs[0], pairs[1]
+    # Compare by start date string (YYYY-MM-DD sorts lexicographically)
+    if a[0] >= b[0]:
+        return a, b   # a is later → current=a, previous=b
+    else:
+        return b, a   # b is later → current=b, previous=a
+
+def _is_hallucinated_round_number(text: str) -> bool:
+    """
+    Detect suspiciously round numbers that indicate Gemini invented data.
+    Patterns: $100,000 / $95,000 / 1,000 orders / $1.0M — exact round numbers
+    that never appear in real Superstore data.
+    """
+    # Round millions
+    if re.search(r'\$\d+\.0[MB]\b', text):
+        return True
+    # Exact round thousands like $100,000 or $95,000 (multiples of 5000)
+    round_thousands = re.findall(r'\$(\d+),000\b', text)
+    for n in round_thousands:
+        if int(n) % 5 == 0 and int(n) >= 95:
+            return True
+    # Round order counts like "1,000 orders" or "1100 orders"
+    if re.search(r'\b(1[,.]?000|1[,.]?100)\s+orders\b', text, re.IGNORECASE):
+        return True
+    return False
+
+
+# Fields that don't exist in Superstore — scrub them from final answers
+_FORBIDDEN_FIELD_RE = re.compile(
+    r'\b(cogs|cost of goods sold|inventory|headcount|employees?|'
+    r'operating expenses?|capex|depreciation|tax rate|overhead)\b',
+    re.IGNORECASE,
+)
+
+def _scrub_forbidden_fields(text: str) -> str:
+    """Replace references to non-existent fields with an honest disclaimer."""
+    if _FORBIDDEN_FIELD_RE.search(text):
+        disclaimer = (
+            "\n\n> ⚠️ *Note: The Superstore dataset does not contain COGS, inventory, "
+            "operating expenses, or tax data. Root-cause analysis is based only on "
+            "sales, profit, discount, and order volume.*"
+        )
+        # Remove the offending sentences
+        cleaned = re.sub(
+            r'[^.!?]*\b(cogs|cost of goods sold|inventory|operating expenses?)\b[^.!?]*[.!?]',
+            '',
+            text,
+            flags=re.IGNORECASE,
+        )
+        return cleaned.strip() + disclaimer
+    return text
+
+
+_SYSTEM_PROMPT = """You are a senior business analyst with access to a LIVE Superstore database.
+
+CRITICAL RULES — violation = your answer is discarded:
+1. NEVER invent, estimate, or approximate any number. Every $ and % MUST come from a tool call.
+2. ALWAYS call compare_periods or get_trend FIRST using the EXACT dates from the question.
+3. Date mapping: "October to December 2016" → current_start="2016-10-01", current_end="2016-12-31", previous_start="2015-10-01", previous_end="2015-12-31".
+4. PREMISE CHECK FIRST: Before explaining WHY, confirm the premise is true from tool results.
+   - If profit grew FASTER than sales → premise "profit grew slower" is FALSE. State the correction.
+   - If orders DECREASED → premise "orders increased" is FALSE. State the correction.
+   - Do NOT produce a root-cause analysis for a false premise.
+5. Do NOT use placeholder numbers like $100,000 or 1,000 orders. These are not in the database.
+6. FORBIDDEN FIELDS — these do NOT exist in Superstore. NEVER mention them:
+   COGS, cost of goods sold, inventory, operating expenses, overhead, headcount, employees, tax, depreciation.
+7. MARGIN MATH: profit_margin = profit / sales x 100. Never invert.
+8. Use AT LEAST 3 tool calls before writing your final answer.
+
+REQUIRED OUTPUT FORMAT — use ALL four sections with REAL numbers from tools:
 
 **📊 Key Metrics:**
-- [metric 1 with before/after values and % change]
-- [metric 2 with before/after values and % change]
+- [exact metric] before: $X → after: $Y (Z% change, from tool result)
 
 **🔍 Root Cause:**
-[2-3 complete sentences explaining exactly WHY with specific numbers.]
+[2-3 sentences with the actual numbers from tool results explaining WHY]
 
 **📉 Supporting Evidence:**
-- [Specific finding 1: exact numbers]
-- [Specific finding 2: exact numbers]
+- [Specific finding with exact numbers from tool calls]
 
 **✅ Recommended Actions:**
-1. [Action with specific target metric and number]
-2. [Action with specific target metric and number]
+1. [Action with specific target]
+2. [Action with specific target]
 """
 
 
@@ -87,21 +221,36 @@ class AgentOrchestrator:
                 ]
             )
         ]
+
+        # FIX-HALL-2: Pre-execute forced tool calls based on dates in question
+        forced_tool_results = self._run_forced_queries(question)
+        
+        # Build initial message with forced results injected as context
+        forced_context = ""
+        if forced_tool_results:
+            forced_context = (
+                "\n\n=== PRE-QUERIED DATA (use ONLY these numbers) ===\n"
+                + "\n".join(forced_tool_results)
+                + "\n=== END PRE-QUERIED DATA ===\n\n"
+                "The numbers above are from the live database. "
+                "Use them directly. Do not invent alternative numbers.\n\n"
+            )
+
         messages = [
             genai_types.Content(
                 role="user",
-                parts=[genai_types.Part(text=f"{_SYSTEM_PROMPT}\n\nQuestion: {question}")]
+                parts=[genai_types.Part(text=f"{_SYSTEM_PROMPT}\n\n{forced_context}Question: {question}")]
             )
         ]
-        tool_results_log: List[str] = []
-        call_count = 0
+        tool_results_log: List[str] = list(forced_tool_results)
+        call_count = len(forced_tool_results)  # count forced calls toward limit
 
         while call_count < _MAX_TOOL_CALLS:
             resp = self.client.models.generate_content(
                 model=self.model_name,
                 contents=messages,
                 config=genai_types.GenerateContentConfig(
-                    tools=tools, temperature=0.1, max_output_tokens=3000,
+                    tools=tools, temperature=0.0, max_output_tokens=3000,
                 ),
             )
             candidate = resp.candidates[0] if resp.candidates else None
@@ -121,7 +270,11 @@ class AgentOrchestrator:
                 final_answer = "\n".join(text_parts).strip()
 
                 if final_answer:
-                    # Validate assumptions BEFORE returning
+                    # FIX-HALL-3: Reject hallucinated round numbers
+                    if _is_hallucinated_round_number(final_answer):
+                        logger.warning("Detected hallucinated round numbers — falling back to synthesis")
+                        return self._fallback_synthesis(question, tool_results_log)
+
                     contradiction = validate_assumptions(question, tool_results_log)
                     if contradiction:
                         return contradiction
@@ -152,13 +305,55 @@ class AgentOrchestrator:
 
             messages.append(genai_types.Content(role="user", parts=tool_response_parts))
 
-        # Also check on fallback path
         if tool_results_log:
             contradiction = validate_assumptions(question, tool_results_log)
             if contradiction:
                 return contradiction
 
         return self._fallback_synthesis(question, tool_results_log)
+
+    def _run_forced_queries(self, question: str) -> List[str]:
+        """
+        FIX-HALL-2 + FIX-BUG-A: Pre-execute compare_periods with CORRECTLY ORDERED dates.
+        current = chronologically LATER period, previous = EARLIER period.
+        Preserves the user's "from A to B" intent regardless of mention order.
+        """
+        results: List[str] = []
+        date_pairs = _extract_date_pairs(question)
+
+        if not date_pairs:
+            return results
+
+        if len(date_pairs) >= 2:
+            # FIX-BUG-A: sort so current = later, previous = earlier
+            current_pair, previous_pair = _sort_current_previous(date_pairs)
+            for metric in ("sales", "profit", "orders"):
+                args = {
+                    "metric":         metric,
+                    "current_start":  current_pair[0],
+                    "current_end":    current_pair[1],
+                    "previous_start": previous_pair[0],
+                    "previous_end":   previous_pair[1],
+                }
+                result = execute_tool("compare_periods", args, self.default_start, self.default_end)
+                results.append(
+                    f"[compare_periods / {metric}]\n"
+                    f"NOTE: current=LATER period ({current_pair[0]}..{current_pair[1]}), "
+                    f"previous=EARLIER period ({previous_pair[0]}..{previous_pair[1]})\n"
+                    f"{result}"
+                )
+        else:
+            # Single period: compare vs prior window of same length
+            for metric in ("sales", "profit", "orders"):
+                args = {
+                    "metric":        metric,
+                    "current_start": date_pairs[0][0],
+                    "current_end":   date_pairs[0][1],
+                }
+                result = execute_tool("compare_periods", args, self.default_start, self.default_end)
+                results.append(f"[compare_periods / {metric}]\n{result}")
+
+        return results
 
     @staticmethod
     def _is_complete(text: str) -> bool:
@@ -167,27 +362,37 @@ class AgentOrchestrator:
     def _format_agent_answer(self, answer: str, tool_log: List[str]) -> str:
         header  = "🔍 **Diagnostic Analysis:**\n\n"
         sources = f"\n\n*Based on {len(tool_log)} data {'query' if len(tool_log)==1 else 'queries'}*" if tool_log else ""
-        return header + answer + sources
+        return header + _scrub_forbidden_fields(answer) + sources
 
     def _fallback_synthesis(self, question: str, tool_log: List[str]) -> str:
         if not tool_log:
             return "❌ Could not gather enough data to answer this question."
 
+        # FIX-HALL-4: Explicit instruction to use only data from tool results
+        date_pairs = _extract_date_pairs(question)
+        period_hint = ""
+        if date_pairs:
+            period_hint = f"\nThe question asks about the period(s): {date_pairs}\n"
+
         prompt = f"""You are a senior business analyst. Answer: "{question}"
-
-DATA:
+{period_hint}
+=== REAL DATA FROM DATABASE (USE ONLY THESE NUMBERS) ===
 {chr(10).join(tool_log)}
+=== END DATA ===
 
-Output ALL 4 sections — complete sentences only:
+RULES:
+- Use ONLY the numbers shown above. Do NOT invent any figures.
+- If the user's premise contradicts the data (e.g. they say "orders increased" but data shows a decrease), state the correction clearly at the top.
+- Output ALL 4 sections using only real numbers from the data above:
 
 **📊 Key Metrics:**
-- [before/after values with % change]
+- [before/after values with % change — from data above]
 
 **🔍 Root Cause:**
-[WHY — 2-3 sentences with numbers]
+[WHY — 2-3 sentences with exact numbers from data]
 
 **📉 Supporting Evidence:**
-- [finding with numbers]
+- [finding with numbers from data]
 
 **✅ Recommended Actions:**
 1. [action with number]
@@ -197,18 +402,25 @@ Output ALL 4 sections — complete sentences only:
             resp = self.client.models.generate_content(
                 model=self.model_name,
                 contents=prompt,
-                config=genai_types.GenerateContentConfig(temperature=0.1, max_output_tokens=1500),
+                config=genai_types.GenerateContentConfig(temperature=0.0, max_output_tokens=1500),
             )
             text = (getattr(resp, "text", "") or "").strip()
-            if text:
-                return f"🔍 **Diagnostic Analysis:**\n\n{text}"
+            # FIX-HALL-3: Also check fallback synthesis for hallucinated numbers
+            if text and not _is_hallucinated_round_number(text):
+                return f"🔍 **Diagnostic Analysis:**\n\n{_scrub_forbidden_fields(text)}"
+            elif text:
+                # Has hallucinated numbers but it's all we have — add warning
+                return (
+                    "⚠️ *Note: Some numbers below may not match database exactly — "
+                    "verify by asking a specific date-range question.*\n\n"
+                    f"🔍 **Diagnostic Analysis:**\n\n{text}"
+                )
         except Exception as e:
             logger.error("Fallback synthesis failed: %s", e)
 
         return self._emergency_format(tool_log)
 
     def _emergency_format(self, tool_log: List[str]) -> str:
-        """Clean data display — no internal error messages."""
         lines = ["🔍 **Data retrieved for your question:**", ""]
         for entry in tool_log[:4]:
             entry_lines = entry.strip().split("\n")
