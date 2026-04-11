@@ -54,8 +54,7 @@ class QueryRouter:
             return "agent"
 
         # Agent pattern WITH structured override: agent wins if "why" is present
-        # (e.g. "why did sales increase from Oct to Nov" — "from" triggers structured
-        #  but "why did" is clearly diagnostic)
+       
         if has_agent and has_structured:
             if re.search(r"\bwhy\b", query, re.IGNORECASE):
                 return "agent"

@@ -9,6 +9,7 @@ from google import genai
 
 from chatbot.agent.orchestrator import AgentOrchestrator
 from chatbot.agent.suggestions import get_diagnostic_suggestions 
+from chatbot.llm_plan_auditor import LLMPlanAuditor
 from chatbot.query_router import QueryRouter
 from chatbot.quick_insight import QuickInsightHandler
 from config import Config
@@ -83,6 +84,9 @@ class DashboardChatbot:
             default_end    = e0,
         ) if self._gemini_ready else None
 
+        self._plan_auditor = LLMPlanAuditor(self._gemini_client, self._model)
+
+
     # ── Public: get_response ──────────────────────────────────
 
     def get_response(self, user_question: str) -> str:
@@ -140,6 +144,9 @@ class DashboardChatbot:
 
         # ── Tier 2: Rule-based ────────────────────────────────
         rule_plan = self._parser.rule_based_plan(q)
+        if rule_plan:
+            rule_plan = self._plan_auditor.audit(q, rule_plan)
+            
         if not self._gemini_ready:
             result = self._execute_plan(rule_plan, q) or "⚠️ Gemini API Key not configured."
             self._clear_stop()
