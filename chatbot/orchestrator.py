@@ -30,13 +30,6 @@ _QUICK_TOKENS = {
     "__quick_margin__":  "profit_margin",
 }
 
-_QUICK_TOKEN_DISPLAY = {
-    "__quick_sales__":   "Sales overview — trends, top products & regions",
-    "__quick_profit__":  "Profit overview — trends, margin & top regions",
-    "__quick_orders__":  "Orders overview — volume trends & AOV",
-    "__quick_margin__":  "Profit margin — trends & category breakdown",
-}
-
 
 class DashboardChatbot:
     def __init__(self, df: pd.DataFrame, kpis: Dict[str, Any], filters: Dict[str, Any]) -> None:
@@ -129,7 +122,7 @@ class DashboardChatbot:
                 self._clear_stop()
                 return "⏹️ *Generation stopped.*"
             answer = self._agent.run(q)
-            self._last_was_agent = True   # FIX-1: flag for suggestion routing
+            self._last_was_agent = True   
             self._record(q, answer)
             self._clear_stop()
             return answer
@@ -284,64 +277,83 @@ Output:""".strip()
 
     # ── Private helpers ───────────────────────────────────────
 
-    def _execute_plan(self, rule_plan, q: str) -> Optional[str]:
+    def _execute_plan(self, rule_plan, q: str, _retry: int = 0) -> Optional[str]:
         if not rule_plan:
             return None
         try:
             plan      = self._validator.validate(rule_plan)
             result_df = self._sql.run(plan)
-            answer_no_insight = self._formatter.format(plan, result_df, "")
+
+            # Su et al. repair strategy: widen date if empty
+            if result_df.empty and _retry < 2:
+                repaired = self._repair_plan(plan)
+                if repaired:
+                    return self._execute_plan(repaired, q, _retry + 1)
+
             insight = self._insights.generate(plan, result_df)
             answer  = self._formatter.format(plan, result_df, insight)
             self._last_plan = plan
-            self._plan_history.append(plan)
-            if len(self._plan_history) > 5:
-                self._plan_history = self._plan_history[-5:]
             self._record(q, answer)
             return answer
         except Exception as exc:
-            answer = f"❌ Sorry, I couldn't answer that. ({exc})"
-            self._record(q, answer)
-            return answer
+            return f"❌ {exc}"
+
+    def _repair_plan(self, plan: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Widen date range by 1 year when result is empty."""
+        from datetime import datetime, timedelta
+        try:
+            sd = datetime.strptime(plan["start_date"], "%Y-%m-%d")
+            ed = datetime.strptime(plan["end_date"],   "%Y-%m-%d")
+            span = (ed - sd).days
+            if span < 365:  
+                return {**plan,
+                        "start_date": (sd - timedelta(days=365)).strftime("%Y-%m-%d"),
+                        "end_date":   (ed + timedelta(days=365)).strftime("%Y-%m-%d")}
+        except Exception:
+            pass
+        return None
 
     def _record(self, question: str, answer: str) -> None:
-        self._last_answer = answer
-        self._rag.add_turn("user",      question)
-        self._rag.add_turn("assistant", answer)
+            self._last_answer = answer
+            self._rag.add_turn("user",      question)
+            self._rag.add_turn("assistant", answer)
 
     def _filter_lists(self):
-        f = self.filters or {}
-        return (
-            list(f.get("region",   []) or []),
-            list(f.get("segment",  []) or []),
-            list(f.get("category", []) or []),
-        )
+            f = self.filters or {}
+            return (
+                list(f.get("region",   []) or []),
+                list(f.get("segment",  []) or []),
+                list(f.get("category", []) or []),
+            )
 
     def _date_range(self):
-        f  = self.filters or {}
-        dr = f.get("date_range")
-        if dr and isinstance(dr, (tuple, list)) and len(dr) == 2:
-            s, e = dr
-            fmt  = lambda d: d.strftime("%Y-%m-%d") if isinstance(d, (date, datetime)) else str(d)
-            return fmt(s), fmt(e)
-        if "order_date" in self.df.columns and not self.df.empty:
-            s = pd.to_datetime(self.df["order_date"].min()).date().strftime("%Y-%m-%d")
-            e = pd.to_datetime(self.df["order_date"].max()).date().strftime("%Y-%m-%d")
-            return s, e
-        return "1900-01-01", "2100-01-01"
+            f  = self.filters or {}
+            dr = f.get("date_range")
+            if dr and isinstance(dr, (tuple, list)) and len(dr) == 2:
+                s, e = dr
+                fmt  = lambda d: d.strftime("%Y-%m-%d") if isinstance(d, (date, datetime)) else str(d)
+                return fmt(s), fmt(e)
+            if "order_date" in self.df.columns and not self.df.empty:
+                s = pd.to_datetime(self.df["order_date"].min()).date().strftime("%Y-%m-%d")
+                e = pd.to_datetime(self.df["order_date"].max()).date().strftime("%Y-%m-%d")
+                return s, e
+            return "1900-01-01", "2100-01-01"
 
     def _dashboard_defaults(self) -> Dict[str, Any]:
-        s0, e0 = self._date_range()
+            s0, e0 = self._date_range()
+            f = self.filters or {}
+            return {
+                "start_date": s0,
+                "end_date":   e0,
+                "filters": {
+                    "region":   list(f.get("region",   []) or []),
+                    "segment":  list(f.get("segment",  []) or []),
+                    "category": list(f.get("category", []) or []),
+                },
+            }
+    def _filter_lists(self):
         f = self.filters or {}
-        return {
-            "start_date": s0,
-            "end_date":   e0,
-            "filters": {
-                "region":   list(f.get("region",   []) or []),
-                "segment":  list(f.get("segment",  []) or []),
-                "category": list(f.get("category", []) or []),
-            },
-        }
+        return list(f.get("region") or []), list(f.get("segment") or []), list(f.get("category") or [])
 
     @staticmethod
     def _serialise(suggs: List[Suggestion]) -> List[Dict[str, Any]]:

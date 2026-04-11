@@ -49,51 +49,18 @@ def _period_name(sdf: Any, idx: int, grain: str) -> str:
     except Exception:
         return "that period"
 
-def _margin_trend_description(overall_chg: float) -> str:
-    """Describe the trend direction from data — no hardcoded benchmarks."""
-    if overall_chg > 20:   return "strong growth trajectory"
-    elif overall_chg > 5:  return "steady upward trend"
-    elif overall_chg > -5: return "relatively stable"
-    else:                   return "declining trend — warrants review"
-
 def _trend_label(n: int, grain_lbl: str) -> str:
-    """
-    FIX-3: When n < 3, calling it a "trend" is misleading — it's a single transition.
-    
-    WHY: A trend requires at least 3 data points to establish direction.
-    With n=2 you have one delta — call it what it is: a comparison.
-    """
     if n < 2:   return "single data point"
     if n == 2:  return f"period-over-period comparison ({grain_lbl})"
     return f"overview ({grain_lbl})"
 
 def _best_period_label(best_pct: float) -> str:
-    """
-    FIX-4: best_period = the period with the HIGHEST transition pct.
-    When all transitions are negative, that's the "least-decline" period —
-    calling it "peak growth year" is factually wrong.
-
-    WHY: best_period is max(transitions). If transitions = [-91.3%], the
-    max is -91.3% — there was no growth. "Peak growth year" implies positive
-    growth that didn't exist.
-    """
     if best_pct > 10:   return "peak growth period"
     elif best_pct > 0:  return "strongest growth period"
     elif best_pct > -10: return "most stable period"
     else:               return "least-decline period"
 
 def _classify_situation(overall_chg: float, n: int) -> str:
-    """
-    FIX-5 + FIX-6: Classify the business situation so insights and actions
-    can match the actual context instead of running generic templates.
-    
-    Returns one of: "growth_strong", "growth_mild", "stable",
-                    "decline_mild", "decline_severe"
-    
-    WHY: The same template "cap discounts" is irrelevant for a -91% profit
-    drop. The action must match the severity. We can't know WHY profit dropped
-    without drill-down data, so the correct action is DIAGNOSTIC, not prescriptive.
-    """
     if overall_chg >= 20:   return "growth_strong"
     elif overall_chg >= 5:  return "growth_mild"
     elif overall_chg >= -10: return "stable"
@@ -216,7 +183,6 @@ class QuickInsightHandler:
         self.first_value         = first_v
         self.last_value          = last_v
 
-        # ── FIX-3: Use _trend_label() for header ─────────────
         overview_label = _trend_label(n, grain_lbl)
         lines += [
             f"📌 Sales {word} **{abs(overall_chg):.0f}%** — "
@@ -299,7 +265,7 @@ class QuickInsightHandler:
             "is_decelerating":     is_decel,
             "last_transition_pct": self.last_transition_pct,
             "prev_transition_pct": self.prev_transition_pct,
-            "situation":           situation,   # FIX-6
+            "situation":           situation,   
         }
         action_text = self._generate_action("sales", action_context)
         lines += ["", "🚀 **Action:**", action_text]
@@ -760,38 +726,38 @@ class QuickInsightHandler:
 
         prompt = f"""You are a senior business analyst. Write exactly 2 SPECIFIC next actions.
 
-DATA:
-- KPI: {kpi.upper()}
-- Situation: {situation}
-- Period: {context.get('period_range', 'N/A')}
-- Trend: {context.get('first_label')} ${context.get('first_value', 0):,.0f} → {context.get('last_label')} ${context.get('last_value', 0):,.0f} ({context.get('overall_change_pct', 0):+.1f}%)
-- Period transitions:
-{context.get('transitions_text', 'N/A')}
-- {best_period_label}: {best_period} ({best_pct:+.1f}%)
-- Most recent period: {last_period}
-- Top region: {context.get('top_region', 'N/A')} (${context.get('top_region_value', 0):,.0f}, {context.get('top_region_share', 0):.0f}%)
-- Top sub-category: {context.get('top_product', 'N/A')} (${context.get('top_product_value', 0):,.0f}, {context.get('top_product_share', 0):.0f}%)
-- Deceleration: {is_decel}
+        DATA:
+        - KPI: {kpi.upper()}
+        - Situation: {situation}
+        - Period: {context.get('period_range', 'N/A')}
+        - Trend: {context.get('first_label')} ${context.get('first_value', 0):,.0f} → {context.get('last_label')} ${context.get('last_value', 0):,.0f} ({context.get('overall_change_pct', 0):+.1f}%)
+        - Period transitions:
+        {context.get('transitions_text', 'N/A')}
+        - {best_period_label}: {best_period} ({best_pct:+.1f}%)
+        - Most recent period: {last_period}
+        - Top region: {context.get('top_region', 'N/A')} (${context.get('top_region_value', 0):,.0f}, {context.get('top_region_share', 0):.0f}%)
+        - Top sub-category: {context.get('top_product', 'N/A')} (${context.get('top_product_value', 0):,.0f}, {context.get('top_product_share', 0):.0f}%)
+        - Deceleration: {is_decel}
 
-SITUATION-SPECIFIC RULES:
-{
-"- Situation is DECLINE_SEVERE (>40% drop). Actions must be DIAGNOSTIC, not prescriptive." +
-"\\n- DO NOT suggest 'cap discounts' — we don't have evidence discount is the cause." +
-"\\n- Action 1: identify WHERE the decline is concentrated (region? category? segment?)" +
-"\\n- Action 2: identify WHAT changed — sales volume, margin, or both?"
-if situation == "decline_severe" else
-"- Situation is " + situation + ". Use standard analytical approach."
-}
+        SITUATION-SPECIFIC RULES:
+        {
+        "- Situation is DECLINE_SEVERE (>40% drop). Actions must be DIAGNOSTIC, not prescriptive." +
+        "\\n- DO NOT suggest 'cap discounts' — we don't have evidence discount is the cause." +
+        "\\n- Action 1: identify WHERE the decline is concentrated (region? category? segment?)" +
+        "\\n- Action 2: identify WHAT changed — sales volume, margin, or both?"
+        if situation == "decline_severe" else
+        "- Situation is " + situation + ". Use standard analytical approach."
+        }
 
-MANDATORY RULES (violation = output discarded):
-1. Each action MUST contain at least one specific number from DATA
-2. Start with: Compare / Drill into / Audit / Cap / Shift / Quantify / Break down
-3. One sentence per action, ending with a period
-4. TIME RULE: Never say 'in {best_period}' as action target. Use 'going forward' or '{last_period}'
-5. {best_period} is a {best_period_label} — label it correctly if referenced
+        MANDATORY RULES (violation = output discarded):
+        1. Each action MUST contain at least one specific number from DATA
+        2. Start with: Compare / Drill into / Audit / Cap / Shift / Quantify / Break down
+        3. One sentence per action, ending with a period
+        4. TIME RULE: Never say 'in {best_period}' as action target. Use 'going forward' or '{last_period}'
+        5. {best_period} is a {best_period_label} — label it correctly if referenced
 
-FORMAT: Exactly 2 lines. Each line: "- <action sentence>"
-"""
+        FORMAT: Exactly 2 lines. Each line: "- <action sentence>"
+        """
 
         import re as _re
         from google.genai import types as genai_types
@@ -844,20 +810,6 @@ FORMAT: Exactly 2 lines. Each line: "- <action sentence>"
         return self._fallback_action(kpi, context)
 
     def _fallback_action(self, kpi: str, context: dict) -> str:
-        """
-        FIX-6: Context-aware action templates routed by situation_type.
-
-        situation_type → action template mapping:
-          decline_severe  → DIAGNOSTIC (where/what, not prescriptive)
-          decline_mild    → DIAGNOSTIC-MILD (narrow down)
-          growth_*        → PRESCRIPTIVE (scale, optimize)
-          stable          → PRESCRIPTIVE (incremental)
-
-        WHY: A -91% profit drop cannot be addressed with "cap discounts at 20%"
-        because we have no evidence discounting is the cause. The correct response
-        is to diagnose FIRST, then prescribe. We only know two things: the magnitude
-        and the region distribution — that's what we act on.
-        """
         top_region  = context.get("top_region",  "top region")
         top_product = context.get("top_product", "top sub-category")
         best_period = context.get("best_period", "peak period")

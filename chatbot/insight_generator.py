@@ -155,8 +155,11 @@ Using ONLY the numbers in the DATA section, write the insight requested.
 Write the complete insight now:"""
 
         try:
-            resp = self._call_gemini(messages, tools)
-
+            resp = self.client.models.generate_content(
+                model=self.model_name,
+                contents=prompt,
+                config=genai_types.GenerateContentConfig(temperature=0.0, max_output_tokens=max_tokens),
+            )
             text = (getattr(resp, "text", "") or "").strip()
 
             if len(text) > 30:

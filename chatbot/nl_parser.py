@@ -283,7 +283,18 @@ class NLParser:
     # ── Tier 2: rule-based plan ───────────────────────────────
 
     def rule_based_plan(self, q: str) -> Optional[Dict[str, Any]]:
+
+        _SYNONYM_MAP = {
+            "earnings": "sales", "income": "sales", "revenue": "sales", "turnover": "sales",
+            "area": "region",    "zone": "region",  "territory": "region", "market": "region",
+            "transactions": "orders", "purchases": "orders",
+            "losing money": "profit_negative", "unprofitable": "profit_negative",
+        }
+        
         ql = (q or "").lower().strip()
+        for phrase, canonical in _SYNONYM_MAP.items():
+            pattern = r'\b' + re.escape(phrase) + r'\b'
+            ql = re.sub(pattern, canonical, ql)
         s0, e0 = self._date_range()
 
         if _DETAIL_NEGATIVE_RE.search(q):
