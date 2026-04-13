@@ -1,16 +1,20 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+import logging
 import streamlit as st
 from typing import Any, Dict, List, Optional
 
 import pandas as pd
 from google import genai
 
+# ── NEW: SmartRouter + HybridExecutor replace old QueryRouter ─
+from chatbot.smart_router import SmartRouter, RouteDecision
+from chatbot.hybrid_executor import HybridExecutor
+
 from chatbot.agent.orchestrator import AgentOrchestrator
-from chatbot.agent.suggestions import get_diagnostic_suggestions 
+from chatbot.agent.suggestions import get_diagnostic_suggestions
 from chatbot.llm_plan_auditor import LLMPlanAuditor
-from chatbot.query_router import QueryRouter
 from chatbot.quick_insight import QuickInsightHandler
 from config import Config
 from chatbot.nl_parser import NLParser
@@ -23,6 +27,7 @@ from chatbot.suggestions.rule_engine import RuleBasedSuggestionEngine
 from chatbot.suggestions.rag_engine import RAGSuggestionEngine
 from rag.engine import RAGEngine
 
+logger = logging.getLogger(__name__)
 
 _QUICK_TOKENS = {
     "__quick_sales__":   "sales",
@@ -76,8 +81,8 @@ class DashboardChatbot:
         self._last_plan:     Optional[Dict[str, Any]] = None
         self._last_question: str = ""
         self._last_answer:   str = ""
-        self._router = QueryRouter()
-        self._agent  = AgentOrchestrator(
+
+        self._agent = AgentOrchestrator(
             gemini_client  = self._gemini_client,
             model_name     = self._model,
             default_start  = s0,
@@ -86,6 +91,21 @@ class DashboardChatbot:
 
         self._plan_auditor = LLMPlanAuditor(self._gemini_client, self._model)
 
+        # ── NEW: Smart router (replaces QueryRouter) ──────────────────
+        self._smart_router = SmartRouter(
+            gemini_client = self._gemini_client,
+            model_name    = self._model,
+        )
+
+        # ── NEW: Hybrid executor (structured → agent → merge) ─────────
+        self._hybrid = HybridExecutor(
+            structured_runner = self._run_structured_query,
+            agent_runner      = (
+                lambda q: self._agent.run(q)
+                if self._agent
+                else "❌ Agent not available (no API key)."
+            ),
+        )
 
     # ── Public: get_response ──────────────────────────────────
 
@@ -120,16 +140,37 @@ class DashboardChatbot:
             self._clear_stop()
             return answer
 
-        # ── Agent path ────────────────────────────────────────
-        if self._gemini_ready and self._router.route(q) == "agent":
-            if self._is_stop_requested():
+        # ── Smart routing: LLM classifies into structured / agent / hybrid ──
+        if self._gemini_ready:
+            decision = self._smart_router.classify(q)
+            logger.debug(
+                "SmartRouter: mode=%s fallback=%s query=%r",
+                decision.mode, decision.used_fallback, q[:60]
+            )
+
+            # ── Agent path ────────────────────────────────────
+            if decision.mode == "agent":
+                if self._is_stop_requested():
+                    self._clear_stop()
+                    return "⏹️ *Generation stopped.*"
+                answer = self._agent.run(q)
+                self._last_was_agent = True
+                self._record(q, answer)
                 self._clear_stop()
-                return "⏹️ *Generation stopped.*"
-            answer = self._agent.run(q)
-            self._last_was_agent = True   
-            self._record(q, answer)
-            self._clear_stop()
-            return answer
+                return answer
+
+            # ── Hybrid path (NEW) ─────────────────────────────
+            elif decision.mode == "hybrid":
+                if self._is_stop_requested():
+                    self._clear_stop()
+                    return "⏹️ *Generation stopped.*"
+                answer = self._hybrid.execute(decision, q)
+                self._last_was_agent = True   # use diagnostic suggestions
+                self._record(q, answer)
+                self._clear_stop()
+                return answer
+
+            # ── Structured path falls through to Tier 1/2/3 ──
 
         # ── Tier 1: Fast KPI ──────────────────────────────────
         fast = self._parser.fast_kpi_answer(q)
@@ -146,7 +187,7 @@ class DashboardChatbot:
         rule_plan = self._parser.rule_based_plan(q)
         if rule_plan:
             rule_plan = self._plan_auditor.audit(q, rule_plan)
-            
+
         if not self._gemini_ready:
             result = self._execute_plan(rule_plan, q) or "⚠️ Gemini API Key not configured."
             self._clear_stop()
@@ -258,18 +299,51 @@ Output:""".strip()
         except Exception as exc:
             return f"Could not generate insights. ({type(exc).__name__}: {exc})"
 
+    # ── NEW: Structured query runner (used by HybridExecutor) ─
+
+    def _run_structured_query(self, query: str) -> str:
+        """
+        Execute a query through the structured pipeline (Tier 1 → 2 → 3).
+        Called by HybridExecutor as the structured_runner callable.
+        Returns formatted answer string.
+        """
+        # Tier 1: Fast KPI
+        fast = self._parser.fast_kpi_answer(query)
+        if fast:
+            return fast
+
+        # Tier 2: Rule-based
+        rule_plan = self._parser.rule_based_plan(query)
+        if rule_plan:
+            rule_plan = self._plan_auditor.audit(query, rule_plan)
+            result = self._execute_plan(rule_plan, query)
+            if result and not result.startswith("❌"):
+                return result
+
+        # Tier 3: Gemini plan
+        if self._gemini_ready:
+            try:
+                rag_ctx   = self._rag.retrieve(query, k=7, tier=3)
+                raw_plan  = self._parser.gemini_plan(query, rag_ctx)
+                plan      = self._validator.validate(raw_plan)
+                result_df = self._sql.run(plan)
+                insight   = self._insights.generate(plan, result_df)
+                return self._formatter.format(plan, result_df, insight)
+            except Exception as exc:
+                logger.warning("_run_structured_query tier3 failed: %s", exc)
+
+        return "❌ Could not retrieve structured data."
+
     # ── Stop request helpers ───────────────────────────────────
 
     def _is_stop_requested(self) -> bool:
         try:
-            import streamlit as st
             return bool(st.session_state.get("stop_requested", False))
         except Exception:
             return False
 
     def _clear_stop(self) -> None:
         try:
-            import streamlit as st
             st.session_state["stop_requested"] = False
             st.session_state["is_generating"]  = False
         except Exception:
@@ -291,7 +365,6 @@ Output:""".strip()
             plan      = self._validator.validate(rule_plan)
             result_df = self._sql.run(plan)
 
-            # Su et al. repair strategy: widen date if empty
             if result_df.empty and _retry < 2:
                 repaired = self._repair_plan(plan)
                 if repaired:
@@ -307,12 +380,12 @@ Output:""".strip()
 
     def _repair_plan(self, plan: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         """Widen date range by 1 year when result is empty."""
-        from datetime import datetime, timedelta
+        from datetime import timedelta
         try:
-            sd = datetime.strptime(plan["start_date"], "%Y-%m-%d")
-            ed = datetime.strptime(plan["end_date"],   "%Y-%m-%d")
+            sd   = datetime.strptime(plan["start_date"], "%Y-%m-%d")
+            ed   = datetime.strptime(plan["end_date"],   "%Y-%m-%d")
             span = (ed - sd).days
-            if span < 365:  
+            if span < 365:
                 return {**plan,
                         "start_date": (sd - timedelta(days=365)).strftime("%Y-%m-%d"),
                         "end_date":   (ed + timedelta(days=365)).strftime("%Y-%m-%d")}
@@ -321,46 +394,43 @@ Output:""".strip()
         return None
 
     def _record(self, question: str, answer: str) -> None:
-            self._last_answer = answer
-            self._rag.add_turn("user",      question)
-            self._rag.add_turn("assistant", answer)
+        self._last_answer = answer
+        self._rag.add_turn("user",      question)
+        self._rag.add_turn("assistant", answer)
 
-    def _filter_lists(self):
-            f = self.filters or {}
-            return (
-                list(f.get("region",   []) or []),
-                list(f.get("segment",  []) or []),
-                list(f.get("category", []) or []),
-            )
-
-    def _date_range(self):
-            f  = self.filters or {}
-            dr = f.get("date_range")
-            if dr and isinstance(dr, (tuple, list)) and len(dr) == 2:
-                s, e = dr
-                fmt  = lambda d: d.strftime("%Y-%m-%d") if isinstance(d, (date, datetime)) else str(d)
-                return fmt(s), fmt(e)
-            if "order_date" in self.df.columns and not self.df.empty:
-                s = pd.to_datetime(self.df["order_date"].min()).date().strftime("%Y-%m-%d")
-                e = pd.to_datetime(self.df["order_date"].max()).date().strftime("%Y-%m-%d")
-                return s, e
-            return "1900-01-01", "2100-01-01"
-
-    def _dashboard_defaults(self) -> Dict[str, Any]:
-            s0, e0 = self._date_range()
-            f = self.filters or {}
-            return {
-                "start_date": s0,
-                "end_date":   e0,
-                "filters": {
-                    "region":   list(f.get("region",   []) or []),
-                    "segment":  list(f.get("segment",  []) or []),
-                    "category": list(f.get("category", []) or []),
-                },
-            }
     def _filter_lists(self):
         f = self.filters or {}
-        return list(f.get("region") or []), list(f.get("segment") or []), list(f.get("category") or [])
+        return (
+            list(f.get("region",   []) or []),
+            list(f.get("segment",  []) or []),
+            list(f.get("category", []) or []),
+        )
+
+    def _date_range(self):
+        f  = self.filters or {}
+        dr = f.get("date_range")
+        if dr and isinstance(dr, (tuple, list)) and len(dr) == 2:
+            s, e = dr
+            fmt  = lambda d: d.strftime("%Y-%m-%d") if isinstance(d, (date, datetime)) else str(d)
+            return fmt(s), fmt(e)
+        if "order_date" in self.df.columns and not self.df.empty:
+            s = pd.to_datetime(self.df["order_date"].min()).date().strftime("%Y-%m-%d")
+            e = pd.to_datetime(self.df["order_date"].max()).date().strftime("%Y-%m-%d")
+            return s, e
+        return "1900-01-01", "2100-01-01"
+
+    def _dashboard_defaults(self) -> Dict[str, Any]:
+        s0, e0 = self._date_range()
+        f = self.filters or {}
+        return {
+            "start_date": s0,
+            "end_date":   e0,
+            "filters": {
+                "region":   list(f.get("region",   []) or []),
+                "segment":  list(f.get("segment",  []) or []),
+                "category": list(f.get("category", []) or []),
+            },
+        }
 
     @staticmethod
     def _serialise(suggs: List[Suggestion]) -> List[Dict[str, Any]]:
