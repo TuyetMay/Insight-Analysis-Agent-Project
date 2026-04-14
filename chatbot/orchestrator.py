@@ -97,7 +97,6 @@ class DashboardChatbot:
             model_name    = self._model,
         )
 
-        # ── NEW: Hybrid executor (structured → agent → merge) ─────────
         self._hybrid = HybridExecutor(
             structured_runner = self._run_structured_query,
             agent_runner      = (
@@ -105,6 +104,8 @@ class DashboardChatbot:
                 if self._agent
                 else "❌ Agent not available (no API key)."
             ),
+            gemini_client = self._gemini_client,
+            model_name    = self._model,
         )
 
     # ── Public: get_response ──────────────────────────────────

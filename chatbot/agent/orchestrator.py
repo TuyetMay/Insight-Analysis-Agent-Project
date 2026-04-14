@@ -206,14 +206,15 @@ class AgentOrchestrator:
             if not candidate:
                 break
 
+            _parts = (candidate.content.parts or []) if candidate.content else []
             tool_calls = [
-                p for p in candidate.content.parts
+                p for p in _parts
                 if hasattr(p, "function_call") and p.function_call
             ]
 
             if not tool_calls:
                 text_parts = [
-                    p.text for p in candidate.content.parts
+                    p.text for p in _parts
                     if hasattr(p, "text") and p.text
                 ]
                 final_answer = "\n".join(text_parts).strip()
@@ -239,8 +240,6 @@ class AgentOrchestrator:
             for part in tool_calls:
                 fc        = part.function_call
                 tool_name = fc.name
-                # FIX: fc.args may be a protobuf MapComposite in newer google-genai
-                # versions — dict() raises TypeError, use .items() instead.
                 if fc.args:
                     try:
                         tool_args = dict(fc.args)
@@ -250,9 +249,9 @@ class AgentOrchestrator:
                     tool_args = {}
 
                 result = execute_tool(tool_name, tool_args, self.default_start, self.default_end)
-                tool_results_log.append(f"[{tool_name}]\n{result}")   # ← was missing
-                call_count += 1                                         # ← was missing
-                tool_response_parts.append(                             # ← was missing
+                tool_results_log.append(f"[{tool_name}]\n{result}")   
+                call_count += 1                                         
+                tool_response_parts.append(                             
                     genai_types.Part(
                         function_response=genai_types.FunctionResponse(
                             name=tool_name, response={"result": result},
