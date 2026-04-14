@@ -205,7 +205,8 @@ class DashboardChatbot:
             return "⏹️ *Generation stopped.*"
 
         # ── Tier 3: Gemini ────────────────────────────────────
-        rag_ctx = self._rag.retrieve(q, k=7, tier=3)
+        _grain_hint = (rule_plan or {}).get("time_grain") or None
+        rag_ctx = self._rag.retrieve(q, k=15, tier=3, grain=_grain_hint)
         try:
             raw_plan  = self._parser.gemini_plan(q, rag_ctx)
             plan      = self._validator.validate(raw_plan)
@@ -213,6 +214,7 @@ class DashboardChatbot:
             insight   = self._insights.generate(plan, result_df)
             answer    = self._formatter.format(plan, result_df, insight)
             self._last_plan = plan
+            self._rag.record_example(q, plan.get("intent", ""), plan)
             self._record(q, answer)
             self._clear_stop()
             return answer
@@ -324,7 +326,7 @@ Output:""".strip()
         # Tier 3: Gemini plan
         if self._gemini_ready:
             try:
-                rag_ctx   = self._rag.retrieve(query, k=7, tier=3)
+                rag_ctx = self._rag.retrieve(query, k=7, tier=3, inject_examples=True)
                 raw_plan  = self._parser.gemini_plan(query, rag_ctx)
                 plan      = self._validator.validate(raw_plan)
                 result_df = self._sql.run(plan)
