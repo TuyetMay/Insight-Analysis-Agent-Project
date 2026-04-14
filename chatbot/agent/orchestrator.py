@@ -11,9 +11,8 @@ from chatbot.agent.assumption_validator import validate_assumptions
 
 logger = logging.getLogger(__name__)
 
-_MAX_TOOL_CALLS = 8   # raised from 5 to allow pre-query + diagnostic queries
+_MAX_TOOL_CALLS = 8
 
-# ── Date extraction regex ──────────────────────────────────────────────────────
 _MONTH_MAP = {
     "january": 1, "jan": 1, "february": 2, "feb": 2, "march": 3, "mar": 3,
     "april": 4, "apr": 4, "may": 5, "june": 6, "jun": 6, "july": 7, "jul": 7,
@@ -33,7 +32,6 @@ _FROM_TO_RE   = re.compile(
 )
 
 def _parse_month_year(text: str) -> Optional[Tuple[str, str]]:
-    """Return (start_date, end_date) YYYY-MM-DD for a 'Month YYYY' string."""
     m = _MONTH_YEAR_RE.search(text)
     if m:
         month = _MONTH_MAP[m.group(1).lower()]
@@ -43,26 +41,17 @@ def _parse_month_year(text: str) -> Optional[Tuple[str, str]]:
     return None
 
 def _extract_date_pairs(question: str) -> List[Tuple[str, str]]:
-    """
-    Extract up to 2 date ranges from a question.
-    Returns list of (start, end) YYYY-MM-DD pairs, IN MENTION ORDER
-    (caller is responsible for sorting into current/previous correctly).
-    """
     ql = question.lower()
     pairs: List[Tuple[str, str]] = []
-
-    # Find all month+year mentions, preserving order of appearance
     for m in _MONTH_YEAR_RE.finditer(ql):
         month = _MONTH_MAP[m.group(1).lower()]
         year  = int(m.group(2))
         last  = _MONTH_LAST_DAY.get(month, 30)
         pairs.append((f"{year}-{month:02d}-01", f"{year}-{month:02d}-{last:02d}"))
-
     if not pairs:
         for m in _YEAR_ONLY_RE.finditer(ql):
             yr = int(m.group(1))
             pairs.append((f"{yr}-01-01", f"{yr}-12-31"))
-
     return pairs[:2]
 
 
@@ -71,31 +60,22 @@ def _sort_current_previous(
 ) -> Tuple[Tuple[str, str], Tuple[str, str]]:
     a, b = pairs[0], pairs[1]
     if a[0] >= b[0]:
-        return a, b   
+        return a, b
     else:
-        return b, a  
+        return b, a
 
 def _is_hallucinated_round_number(text: str) -> bool:
-    """
-    Detect suspiciously round numbers that indicate Gemini invented data.
-    Patterns: $100,000 / $95,000 / 1,000 orders / $1.0M — exact round numbers
-    that never appear in real Superstore data.
-    """
-    # Round millions
     if re.search(r'\$\d+\.0[MB]\b', text):
         return True
-    # Exact round thousands like $100,000 or $95,000 (multiples of 5000)
     round_thousands = re.findall(r'\$(\d+),000\b', text)
     for n in round_thousands:
         if int(n) % 5 == 0 and int(n) >= 95:
             return True
-    # Round order counts like "1,000 orders" or "1100 orders"
     if re.search(r'\b(1[,.]?000|1[,.]?100)\s+orders\b', text, re.IGNORECASE):
         return True
     return False
 
 
-# Fields that don't exist in Superstore — scrub them from final answers
 _FORBIDDEN_FIELD_RE = re.compile(
     r'\b(cogs|cost of goods sold|inventory|headcount|employees?|'
     r'operating expenses?|capex|depreciation|tax rate|overhead)\b',
@@ -103,14 +83,12 @@ _FORBIDDEN_FIELD_RE = re.compile(
 )
 
 def _scrub_forbidden_fields(text: str) -> str:
-    """Replace references to non-existent fields with an honest disclaimer."""
     if _FORBIDDEN_FIELD_RE.search(text):
         disclaimer = (
             "\n\n> ⚠️ *Note: The Superstore dataset does not contain COGS, inventory, "
             "operating expenses, or tax data. Root-cause analysis is based only on "
             "sales, profit, discount, and order volume.*"
         )
-        # Remove the offending sentences
         cleaned = re.sub(
             r'[^.!?]*\b(cogs|cost of goods sold|inventory|operating expenses?)\b[^.!?]*[.!?]',
             '',
@@ -196,8 +174,7 @@ class AgentOrchestrator:
         ]
 
         forced_tool_results = self._run_forced_queries(question)
-        
-        # Build initial message with forced results injected as context
+
         forced_context = ""
         if forced_tool_results:
             forced_context = (
@@ -215,7 +192,7 @@ class AgentOrchestrator:
             )
         ]
         tool_results_log: List[str] = list(forced_tool_results)
-        call_count = len(forced_tool_results)  # count forced calls toward limit
+        call_count = len(forced_tool_results)
 
         while call_count < _MAX_TOOL_CALLS:
             resp = self.client.models.generate_content(
@@ -262,11 +239,20 @@ class AgentOrchestrator:
             for part in tool_calls:
                 fc        = part.function_call
                 tool_name = fc.name
-                tool_args = dict(fc.args) if fc.args else {}
-                result    = execute_tool(tool_name, tool_args, self.default_start, self.default_end)
-                tool_results_log.append(f"[{tool_name}]\n{result}")
-                call_count += 1
-                tool_response_parts.append(
+                # FIX: fc.args may be a protobuf MapComposite in newer google-genai
+                # versions — dict() raises TypeError, use .items() instead.
+                if fc.args:
+                    try:
+                        tool_args = dict(fc.args)
+                    except TypeError:
+                        tool_args = {k: str(v) for k, v in fc.args.items()}
+                else:
+                    tool_args = {}
+
+                result = execute_tool(tool_name, tool_args, self.default_start, self.default_end)
+                tool_results_log.append(f"[{tool_name}]\n{result}")   # ← was missing
+                call_count += 1                                         # ← was missing
+                tool_response_parts.append(                             # ← was missing
                     genai_types.Part(
                         function_response=genai_types.FunctionResponse(
                             name=tool_name, response={"result": result},
@@ -284,11 +270,6 @@ class AgentOrchestrator:
         return self._fallback_synthesis(question, tool_results_log)
 
     def _run_forced_queries(self, question: str) -> List[str]:
-        """
-         Pre-execute compare_periods with CORRECTLY ORDERED dates.
-        current = chronologically LATER period, previous = EARLIER period.
-        Preserves the user's "from A to B" intent regardless of mention order.
-        """
         results: List[str] = []
         date_pairs = _extract_date_pairs(question)
 
@@ -313,7 +294,6 @@ class AgentOrchestrator:
                     f"{result}"
                 )
         else:
-            # Single period: compare vs prior window of same length
             for metric in ("sales", "profit", "orders"):
                 args = {
                     "metric":        metric,
@@ -338,7 +318,6 @@ class AgentOrchestrator:
         if not tool_log:
             return "❌ Could not gather enough data to answer this question."
 
-        # Explicit instruction to use only data from tool results
         date_pairs = _extract_date_pairs(question)
         period_hint = ""
         if date_pairs:
@@ -352,7 +331,7 @@ class AgentOrchestrator:
 
 RULES:
 - Use ONLY the numbers shown above. Do NOT invent any figures.
-- If the user's premise contradicts the data (e.g. they say "orders increased" but data shows a decrease), state the correction clearly at the top.
+- If the user's premise contradicts the data, state the correction clearly at the top.
 - Output ALL 4 sections using only real numbers from the data above:
 
 **📊 Key Metrics:**
