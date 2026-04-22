@@ -1,0 +1,117 @@
+Q01: Smart: structured | Regex: structured | GT: structured
+Q02: Smart: structured | Regex: structured | GT: structured
+Q03: Smart: structured | Regex: structured | GT: structured
+Q04: Smart: structured | Regex: structured | GT: structured
+Q05: Smart: structured | Regex: structured | GT: structured
+Q06: Smart: structured | Regex: structured | GT: structured
+Q07: Smart: structured | Regex: structured | GT: structured
+Q08: Smart: structured | Regex: structured | GT: structured
+Q09: Smart: structured | Regex: structured | GT: structured
+Q10: Smart: structured | Regex: structured | GT: structured
+Q11: Smart: structured | Regex: structured | GT: structured
+Q12: Smart: structured | Regex: structured | GT: structured
+Q13: Smart: structured | Regex: structured | GT: structured
+Q14: Smart: structured | Regex: structured | GT: structured
+Q15: Smart: structured | Regex: structured | GT: structured
+Q16: Smart: structured | Regex: structured | GT: structured
+Q17: Smart: structured | Regex: structured | GT: structured
+Q18: Smart: structured | Regex: structured | GT: structured
+Q19: Smart: structured | Regex: structured | GT: structured
+Q20: Smart: structured | Regex: structured | GT: structured
+Q21: Smart: structured | Regex: structured | GT: structured
+Q22: Smart: structured | Regex: structured | GT: structured
+Q23: Smart: structured | Regex: structured | GT: structured
+Q24: Smart: structured | Regex: structured | GT: structured
+Q25: Smart: structured | Regex: structured | GT: structured
+Q26: Smart: structured | Regex: structured | GT: structured
+Q27: Smart: structured | Regex: structured | GT: structured
+Q28: Smart: structured | Regex: structured | GT: structured
+Q29: Smart: structured | Regex: structured | GT: structured
+Q30: Smart: structured | Regex: structured | GT: structured
+Q31: Smart: structured | Regex: structured | GT: structured
+Q32: Smart: structured | Regex: structured | GT: structured
+Q33: Smart: structured | Regex: structured | GT: structured
+Q34: Smart: structured | Regex: structured | GT: structured
+Q35: Smart: structured | Regex: structured | GT: structured
+Q36: Smart: structured | Regex: structured | GT: structured
+Q37: Smart: structured | Regex: structured | GT: structured
+Q38: Smart: structured | Regex: structured | GT: structured
+Q39: Smart: structured | Regex: structured | GT: structured
+Q40: Smart: structured | Regex: structured | GT: structured
+Q41: Smart: structured | Regex: structured | GT: structured
+Q42: Smart: structured | Regex: structured | GT: structured
+Q43: Smart: structured | Regex: structured | GT: structured
+Q44: Smart: structured | Regex: structured | GT: structured
+Q45: Smart: hybrid     | Regex: structured | GT: structured
+Q46: Smart: structured | Regex: structured | GT: structured
+Q47: Smart: structured | Regex: structured | GT: structured
+Q48: Smart: structured | Regex: structured | GT: structured
+Q49: Smart: structured | Regex: structured | GT: structured
+Q50: Smart: structured | Regex: structured | GT: structured
+Q51: Smart: structured | Regex: structured | GT: structured
+Q52: Smart: structured | Regex: structured | GT: structured
+Q53: Smart: structured | Regex: structured | GT: structured
+Q54: Smart: structured | Regex: structured | GT: structured
+Q55: Smart: structured | Regex: structured | GT: structured
+Q56: Smart: structured | Regex: structured | GT: structured
+Q57: Smart: structured | Regex: structured | GT: structured
+Q58: Smart: structured | Regex: structured | GT: structured
+Q59: Smart: structured | Regex: structured | GT: structured
+Q60: Smart: structured | Regex: structured | GT: structured
+Q61: Smart: structured | Regex: structured | GT: structured
+Q62: Smart: structured | Regex: structured | GT: structured
+Q63: Smart: hybrid     | Regex: structured | GT: structured
+Q64: Smart: structured | Regex: structured | GT: structured
+Q65: Smart: structured | Regex: structured | GT: structured
+Q66: Smart: agent      | Regex: agent      | GT: agent
+Q67: Smart: agent      | Regex: agent      | GT: agent
+Q68: Smart: agent      | Regex: agent      | GT: agent
+Q69: Smart: agent      | Regex: agent      | GT: agent
+Q70: Smart: agent      | Regex: agent      | GT: agent
+Q71: Smart: agent      | Regex: agent      | GT: agent
+Q72: Smart: agent      | Regex: agent      | GT: agent
+Q73: Smart: agent      | Regex: agent      | GT: agent
+Q74: Smart: agent      | Regex: structured | GT: agent
+Q75: Smart: agent      | Regex: agent      | GT: agent
+Q76: Smart: agent      | Regex: agent      | GT: agent
+Q77: Smart: agent      | Regex: agent      | GT: agent
+Q78: Smart: agent      | Regex: structured | GT: agent
+Q79: Smart: agent      | Regex: agent      | GT: agent
+Q80: Smart: hybrid     | Regex: agent      | GT: agent
+Q81: Smart: agent      | Regex: agent      | GT: agent
+Q82: Smart: agent      | Regex: agent      | GT: agent
+Q83: Smart: agent      | Regex: agent      | GT: agent
+Q84: Smart: agent      | Regex: agent      | GT: agent
+Q85: Smart: agent      | Regex: agent      | GT: agent
+Q86: Smart: hybrid     | Regex: structured | GT: hybrid
+Q87: Smart: hybrid     | Regex: structured | GT: hybrid
+Q88: Smart: hybrid     | Regex: structured | GT: hybrid
+Q89: Smart: hybrid     | Regex: structured | GT: hybrid
+Q90: Smart: hybrid     | Regex: structured | GT: hybrid
+Q91: Smart: hybrid     | Regex: structured | GT: hybrid
+Q92: Smart: hybrid     | Regex: agent      | GT: hybrid
+Q93: Smart: hybrid     | Regex: agent      | GT: hybrid
+Q94: Smart: hybrid     | Regex: agent      | GT: hybrid
+Q95: Smart: hybrid     | Regex: structured | GT: hybrid
+Q96: Smart: hybrid     | Regex: agent      | GT: hybrid
+Q97: Smart: hybrid     | Regex: structured | GT: hybrid
+Q98: Smart: hybrid     | Regex: structured | GT: hybrid
+Q99: Smart: hybrid     | Regex: structured | GT: hybrid
+Q100: Smart: hybrid     | Regex: structured | GT: hybrid
+
+============================================================
+OVERALL ACCURACY
+  SmartRouter : 97/100 = 97.0%
+  RegexRouter : 87/100 = 87.0%
+
+  [STRUCTURED] n=65
+    SmartRouter : 63/65 = 96.9%
+    RegexRouter : 65/65 = 100.0%
+
+  [AGENT] n=20
+    SmartRouter : 19/20 = 95.0%
+    RegexRouter : 18/20 = 90.0%
+
+  [HYBRID] n=15
+    SmartRouter : 15/15 = 100.0%
+    RegexRouter : 4/15 = 26.7%

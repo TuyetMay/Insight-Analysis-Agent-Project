@@ -1,0 +1,93 @@
+STRUCTURED PIPELINE EVALUATION — Section 5.4
+============================================================
+
+TABLE 5.5 — Execution Accuracy
+  Simple KPI                n=20  acc=90.0%
+  Structured Breakdown      n=25  acc=88.0%
+  Trend / Compare           n=20  acc=95.0%
+  Overall                   n=65  acc=90.8%
+
+TABLE 5.6 — Tier Hit Rate
+  Tier 1: 10 queries  15.4%  cumulative=15.4%
+  Tier 2: 48 queries  73.8%  cumulative=89.2%
+  Tier 3: 6 queries  9.2%  cumulative=98.5%
+
+TABLE 5.7 — Auditor Contribution (Tier 2)
+  Without auditor : 95.8%
+  With auditor    : 95.8%
+  Gain            : +0.0 pp
+  Plans corrected : 0
+
+TABLE 5.8 — Self-correction
+  Retried:   2
+  Recovered: 0
+  Rate:      0.0%
+
+PER-QUERY DETAIL
+Q    Cat                    Tier Pass Retry Rec  Question
+------------------------------------------------------------------------------------------
+Q1   simple_kpi             T1      Y     N   N  What is the total sales revenue?
+Q2   simple_kpi             T1      Y     N   N  What is the total profit?
+Q3   simple_kpi             T3      Y     N   N  How many orders were placed in total?
+Q4   simple_kpi             T1      Y     N   N  What is the overall profit margin?
+Q5   simple_kpi             T3      Y     N   N  What is the average order value?
+Q6   simple_kpi             T2      Y     N   N  What is the total revenue for 2016?
+Q7   simple_kpi             T2      Y     N   N  How many orders were placed in 2017?
+Q8   simple_kpi             T2      Y     N   N  What is the total profit in 2015?
+Q9   simple_kpi             T2      Y     N   N  What is the total sales in Q4 2016?
+Q10  simple_kpi             T2      Y     N   N  How much revenue did we generate in January 2017?
+Q11  simple_kpi             T2      Y     N   N  What is the total number of orders in the West reg
+Q12  simple_kpi             T1      Y     N   N  What is the total profit for the Consumer segment?
+Q13  simple_kpi             T1      Y     N   N  What is the total sales for the Technology categor
+Q14  simple_kpi             T1      Y     N   N  What is the profit margin for the Corporate segmen
+Q15  simple_kpi             T2      Y     N   N  What is the total revenue for Furniture in 2017?
+Q16  simple_kpi             T1      N     N   N  What is the total profit for Office Supplies?
+Q17  simple_kpi             T3      N     Y   N  What is the overall average discount rate?
+Q18  simple_kpi             T2      Y     N   N  How many orders did the South region place in 2015
+Q19  simple_kpi             T2      Y     N   N  What is the profit margin in 2014?
+Q20  simple_kpi             T2      Y     N   N  How many orders were placed in the East region in 
+Q21  structured_breakdown   T2      Y     N   N  What are the total sales by region?
+Q22  structured_breakdown   T2      Y     N   N  Show me profit breakdown by segment.
+Q23  structured_breakdown   T2      Y     N   N  What is the revenue by category in 2016?
+Q24  structured_breakdown   T2      N     N   N  What are the top 5 sub-categories by profit?
+Q25  structured_breakdown   T2      Y     N   N  Show me the top 10 products by sales.
+Q26  structured_breakdown   T2      Y     N   N  What is the profit margin by category?
+Q27  structured_breakdown   T2      Y     N   N  Show me monthly sales trend for 2016.
+Q28  structured_breakdown   T2      Y     N   N  What is the quarterly revenue breakdown for 2017?
+Q29  structured_breakdown   T2      Y     N   N  Show profit by region and segment.
+Q30  structured_breakdown   T2      Y     N   N  What is the yearly sales trend from 2014 to 2017?
+Q31  structured_breakdown   T2      Y     N   N  What is the profit breakdown by sub-category for F
+Q32  structured_breakdown   T2      Y     N   N  Show monthly orders trend in 2017.
+Q33  structured_breakdown   T2      Y     N   N  What are the loss-making sub-categories?
+Q34  structured_breakdown   T2      Y     N   N  Show me which products are losing money.
+Q35  structured_breakdown   T2      Y     N   N  What sub-categories have negative profit?
+Q36  structured_breakdown   T2      Y     N   N  Show sales trend by segment over years.
+Q37  structured_breakdown   T2      Y     N   N  What is the profit margin by region in 2016?
+Q38  structured_breakdown   T1      Y     N   N  Show top 5 categories by revenue growth.
+Q39  structured_breakdown   T2      Y     N   N  What is the discount impact on profit by category?
+Q40  structured_breakdown   T2      Y     N   N  Show sales and profit by segment in 2017.
+Q41  structured_breakdown   T?      N     N   N  What are the top 5 regions by revenue in Q3 2016?
+Q42  structured_breakdown   T2      N     N   N  Show top 10 sub-categories by sales in the West re
+Q43  structured_breakdown   T2      Y     N   N  Show sales by region for each year.
+Q44  structured_breakdown   T1      Y     N   N  What are the top 3 segments by profit margin?
+Q45  structured_breakdown   T2      Y     N   N  Show me sales by category broken down by region.
+Q46  trend_compare          T2      Y     N   N  Compare 2016 vs 2017 total sales.
+Q47  trend_compare          T3      Y     N   N  How did profit change from 2015 to 2016?
+Q48  trend_compare          T2      Y     N   N  Compare Q3 2016 vs Q3 2017 revenue.
+Q49  trend_compare          T2      Y     N   N  What is the year-over-year sales growth?
+Q50  trend_compare          T2      Y     N   N  How does profit in 2017 compare to 2016?
+Q51  trend_compare          T2      Y     N   N  Compare the West region vs East region sales in 20
+Q52  trend_compare          T2      Y     N   N  Show month-over-month revenue change in 2017.
+Q53  trend_compare          T2      Y     N   N  How did the Consumer segment perform compared to C
+Q54  trend_compare          T2      Y     N   N  Compare Technology vs Furniture profit in 2017.
+Q55  trend_compare          T2      Y     N   N  What is the sales growth rate from 2014 to 2017?
+Q56  trend_compare          T2      Y     N   N  How did profit margin change from 2015 to 2017?
+Q57  trend_compare          T2      Y     N   N  Compare Q1 2016 vs Q1 2017 orders.
+Q58  trend_compare          T2      Y     N   N  Show year-over-year profit growth by region.
+Q59  trend_compare          T3      N     Y   N  How did discount levels change from 2015 to 2016?
+Q60  trend_compare          T2      Y     N   N  Compare the top region vs bottom region sales in 2
+Q61  trend_compare          T2      Y     N   N  How did orders in the South region change from 201
+Q62  trend_compare          T3      Y     N   N  Compare profit margin between Consumer and Home Of
+Q63  trend_compare          T1      Y     N   N  Show the revenue trend — is growth accelerating or
+Q64  trend_compare          T2      Y     N   N  How did the Furniture category perform vs Technolo
+Q65  trend_compare          T2      Y     N   N  Compare October 2016 vs October 2015 total sales.

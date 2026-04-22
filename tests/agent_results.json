@@ -1,0 +1,574 @@
+{
+  "factual_accuracy": {
+    "grounded": {
+      "label": "WITH PRE-QUERY (grounded)",
+      "n": 20,
+      "mean_factual_acc_pct": 47.8,
+      "fully_accurate": 9,
+      "hallucination_count": 0,
+      "hallucination_rate_pct": 0.0,
+      "completeness_count": 9,
+      "completeness_rate_pct": 45.0,
+      "per_query": [
+        {
+          "query": "Why did profit drop in Q4 2016?",
+          "answer": "🔍 **Diagnostic Analysis:**\n\nThe premise of your question is incorrect. Profit did not drop in Q4 2016; it increased compared to the previous period.\n\n**📊 Key Metrics:**\n- Sales: $609,206 (Current) vs $475,786 (Previous) - **+28.0%** ($133,420)\n- Profit: $81,795 (Current) vs $63,063 (Previous) - **+29.7%** ($18,732)\n- Orders: 1,315 (Current) vs 1,045 (Previous) - **+25.8%** (270)\n\n**🔍 Root Cause:**\nProfit increased by 29.7%, or $18,732, from $63,063 in the previous period to $81,795 in the current period. This growth in profit outpaced the sales growth of 28.0%, indicating improved profitability.\n\n**📉 Supporting Evidence:**\n- Profit increased by $18,732, representing a 29.7% growth.\n\n**✅ Recommended Actions:**\n1. Continue to monitor sales trends, which saw a 28.0% increase.\n2. Analyze the factors contributing to the profit margin improvement to identify opportunities for further enhancement.",
+          "n_claims": 17,
+          "n_supported": 0,
+          "factual_acc": 0.0,
+          "hallucinated": false,
+          "complete": true,
+          "db_values_used": 9
+        },
+        {
+          "query": "What caused the revenue decline in the Central region?",
+          "answer": "⚠️ **Data Check: Your assumption does not match the actual numbers.**\n\n- **Sales** — You assumed it decreased, but it **actually increased +29.5%** in this period.\n\n**📊 Profit margin:** 12.8% → 16.2% (improved by 3.4pp)\n\n**📊 What actually happened:**\n  - Sales went up +29.5%, not down.\n  - Would you like to explore **why Sales up 29.5%** instead?\n\n*Check the sidebar date filters or rephrase the question to explore the actual trend.*",
+          "n_claims": 5,
+          "n_supported": 0,
+          "factual_acc": 0.0,
+          "hallucinated": false,
+          "complete": false,
+          "db_values_used": 7
+        },
+        {
+          "query": "Why is the Furniture category underperforming?",
+          "answer": "❌ Could not gather enough data to answer this question.",
+          "n_claims": 0,
+          "n_supported": 0,
+          "factual_acc": 1.0,
+          "hallucinated": false,
+          "complete": false,
+          "db_values_used": 8
+        },
+        {
+          "query": "What drove the sales spike in November 2017?",
+          "answer": "🔍 **Diagnostic Analysis:**\n\n**📊 Key Metrics:**\n- Sales before: $74,798 → after: $118,448 (58.4% change, +$43,649)\n- Profit before: $8,262 → after: $9,690 (17.3% change, +$1,428)\n- Orders before: 141 → after: 261 (85.1% change, +120)\n\n**🔍 Root Cause:**\nSales increased by 58.4% in November 2017 compared to October 2017, primarily driven by a significant surge in the number of orders, which grew by 85.1%. While orders saw substantial growth, profit only increased by 17.3%, indicating that the increased sales volume did not translate proportionally to profit growth.\n\n**📉 Supporting Evidence:**\n- Sales in November 2017 were $118,448, an increase of $43,649 from October 2017.\n- The number of orders in November 2017 was 261, an increase of 120 orders from October 2017.\n- Profit in November 2017 was $9,690, an increase of $1,428 from October 2017.\n\n**✅ Recommended Actions:**\n1. Investigate the profitability of the products included in the surge of orders in November 2017 to identify any low-margin items that may have suppressed overall profit growth.\n2. Analyze the customer segments that contributed to the increase in orders to understand their purchasing behavior and tailor future marketing efforts.\n\n*Based on 3 data queries*",
+          "n_claims": 16,
+          "n_supported": 2,
+          "factual_acc": 0.125,
+          "hallucinated": false,
+          "complete": true,
+          "db_values_used": 6
+        },
+        {
+          "query": "Why does the South region have lower profit than the West?",
+          "answer": "🔍 **Diagnostic Analysis:**\n\nThe premise that the South region has lower profit than the West is true. The West region had a profit of $24,052 in 2016, while the South region had a profit of $17,703 in 2016.\n\n**📊 Key Metrics:**\n- Profit in West region: $21,091 (2015) → $24,052 (2016) (+14.0% change)\n- Profit in South region: $15,504 (2015) → $17,703 (2016) (+14.2% change)\n\n**🔍 Root Cause:**\nThe West region generated significantly more sales ($187,480) than the South region ($93,610) in 2016. Despite a similar profit growth rate of approximately 14% for both regions, the larger sales volume in the West directly translated to a higher absolute profit.\n\n**📉 Supporting Evidence:**\n- In 2016, the West region's profit was $24,052, while the South region's profit was $17,703.\n- In 2016, the West region's sales were $187,480, while the South region's sales were $93,610.\n- Profit in the West region grew by $2,961 from 2015 to 2016.\n- Profit in the South region grew by $2,199 from 2015 to 2016.\n\n**✅ Recommended Actions:**\n1. Increase sales in the South region by 10% to $102,971 by the end of 2017.\n2. Analyze the product mix and customer segments in the South region to identify opportunities for increasing average order value.\n\n*Based on 4 data queries*",
+          "n_claims": 19,
+          "n_supported": 0,
+          "factual_acc": 0.0,
+          "hallucinated": false,
+          "complete": true,
+          "db_values_used": 8
+        },
+        {
+          "query": "What is causing the margin compression in 2016?",
+          "answer": "🔍 **Diagnostic Analysis:**\n\nThe premise of margin compression in 2016 is false. Both sales and profit increased at a higher rate than profit margin.\n\n**📊 Key Metrics:**\n- Sales before: $470,533 → after: $609,206 (29.5% change)\n- Profit before: $61,619 → after: $81,795 (32.7% change)\n- Profit Margin before: $13 → after: $13 (2.5% change)\n\n**🔍 Root Cause:**\nN/A as the premise is false.\n\n**📉 Supporting Evidence:**\n- Sales increased by $138,673 from 2015 to 2016.\n- Profit increased by $20,177 from 2015 to 2016.\n- Profit margin saw a slight increase of 2.5% from 2015 to 2016.\n\n**✅ Recommended Actions:**\n1. Continue to monitor sales and profit growth to ensure continued positive trends.\n2. Investigate product categories or regions that may not be contributing to the overall profit margin growth.\n\n*Based on 6 data queries*",
+          "n_claims": 12,
+          "n_supported": 2,
+          "factual_acc": 0.167,
+          "hallucinated": false,
+          "complete": true,
+          "db_values_used": 2
+        },
+        {
+          "query": "Why are Tables and Bookcases losing money?",
+          "answer": "❌ Could not gather enough data to answer this question.",
+          "n_claims": 0,
+          "n_supported": 0,
+          "factual_acc": 1.0,
+          "hallucinated": false,
+          "complete": false,
+          "db_values_used": 2
+        },
+        {
+          "query": "What caused the high discount rate in the Central region?",
+          "answer": "❌ Could not gather enough data to answer this question.",
+          "n_claims": 0,
+          "n_supported": 0,
+          "factual_acc": 1.0,
+          "hallucinated": false,
+          "complete": false,
+          "db_values_used": 3
+        },
+        {
+          "query": "Why did orders drop in Q1 2017?",
+          "answer": "🔍 **Diagnostic Analysis:**\n\nThe user is asking about a drop in orders in Q1 2017, but the provided data is for the entire year of 2017 compared to 2016. The data shows an *increase* in orders, not a drop. Therefore, the premise of the question is false.\n\n**📊 Key Metrics:**\n- Sales: $609,206 (2016) → $733,215 (2017) (+20.4% change)\n- Profit: $81,795 (2016) → $93,439 (2017) (+14.2% change)\n- Orders: 1,315 (2016) → 1,687 (2017) (+28.3% change)\n\n**🔍 Root Cause:**\nThe premise that orders dropped in Q1 2017 is incorrect. In fact, orders increased by 28.3% from 2016 to 2017. Sales and profit also saw significant growth during the same period.\n\n**📉 Supporting Evidence:**\n- Orders increased by 372 units, a 28.3% rise, from 1,315 in 2016 to 1,687 in 2017.\n- Sales grew by $124,010 (20.4%) from $609,206 to $733,215.\n- Profit increased by $11,644 (14.2%) from $81,795 to $93,439.\n\n**✅ Recommended Actions:**\n1. Continue to monitor sales, profit, and order trends to sustain growth.\n2. Investigate the factors that contributed to the positive growth in 2017 to replicate successful strategies.\n\n*Based on 6 data queries*",
+          "n_claims": 17,
+          "n_supported": 0,
+          "factual_acc": 0.0,
+          "hallucinated": false,
+          "complete": true,
+          "db_values_used": 6
+        },
+        {
+          "query": "What is driving the profit growth in the West region?",
+          "answer": "❌ Could not gather enough data to answer this question.",
+          "n_claims": 0,
+          "n_supported": 0,
+          "factual_acc": 1.0,
+          "hallucinated": false,
+          "complete": false,
+          "db_values_used": 10
+        },
+        {
+          "query": "Why is the Home Office segment more profitable than Consumer?",
+          "answer": "❌ Could not gather enough data to answer this question.",
+          "n_claims": 0,
+          "n_supported": 0,
+          "factual_acc": 1.0,
+          "hallucinated": false,
+          "complete": false,
+          "db_values_used": 5
+        },
+        {
+          "query": "Why did profit decline in 2016 despite revenue growth?",
+          "answer": "⚠️ **Data Check: Your assumption does not match the actual numbers.**\n\n- **Sales** — You assumed it decreased, but it **actually increased +28.0%** in this period.\n- **Profit** — You assumed it grew faster than sales, but it **actually increased +29.7%** in this period.\n\n**📊 Profit margin:** 13.3% → 13.4% (improved by 0.2pp)\n\n**📊 What actually happened:**\n  - The actual data shows the **reverse pattern** from what you described.\n  - Try verifying the date range in the sidebar, or rephrase with specific months.\n\n*Check the sidebar date filters or rephrase the question to explore the actual trend.*",
+          "n_claims": 4,
+          "n_supported": 0,
+          "factual_acc": 0.0,
+          "hallucinated": false,
+          "complete": false,
+          "db_values_used": 12
+        },
+        {
+          "query": "Why does heavy discounting hurt profitability?",
+          "answer": "❌ Could not gather enough data to answer this question.",
+          "n_claims": 0,
+          "n_supported": 0,
+          "factual_acc": 1.0,
+          "hallucinated": false,
+          "complete": false,
+          "db_values_used": 0
+        },
+        {
+          "query": "What is causing loss-making in the Tables sub-category?",
+          "answer": "❌ Could not gather enough data to answer this question.",
+          "n_claims": 0,
+          "n_supported": 0,
+          "factual_acc": 1.0,
+          "hallucinated": false,
+          "complete": false,
+          "db_values_used": 4
+        },
+        {
+          "query": "Why is Technology the most profitable category?",
+          "answer": "🔍 **Diagnostic Analysis:**\n\n**Correction:** The premise that Technology is the most profitable category is incorrect based on the provided data. Office Supplies generated higher profit.\n\n**📊 Key Metrics:**\n- Profit by Category:\n    - Office Supplies: $20,834\n    - Technology: $13,802\n    - Furniture: $3,504\n- Sales by Category:\n    - Technology: $80,997\n    - Furniture: $80,335\n    - Office Supplies: $74,767\n\n**🔍 Root Cause:**\nWhile Technology has the highest sales at $80,997, Office Supplies generated the highest profit at $20,834. This indicates that Office Supplies likely have a better profit margin or lower associated costs compared to Technology, despite lower sales volume.\n\n**📉 Supporting Evidence:**\n- Office Supplies generated $20,834 in profit, which is higher than Technology's profit of $13,802.\n- Technology achieved the highest sales at $80,997, but this did not translate to the highest profit.\n\n**✅ Recommended Actions:**\n1. Analyze the cost structure and pricing strategies for Technology products to identify opportunities to improve profit margins.\n2. Investigate the factors contributing to the high profitability of Office Supplies, such as efficient supply chain management or strong customer loyalty, to see if these can be replicated.",
+          "n_claims": 11,
+          "n_supported": 0,
+          "factual_acc": 0.0,
+          "hallucinated": false,
+          "complete": true,
+          "db_values_used": 6
+        },
+        {
+          "query": "Why did Q4 always outperform other quarters in sales?",
+          "answer": "❌ Could not gather enough data to answer this question.",
+          "n_claims": 0,
+          "n_supported": 0,
+          "factual_acc": 1.0,
+          "hallucinated": false,
+          "complete": false,
+          "db_values_used": 12
+        },
+        {
+          "query": "What drove Consumer segment growth from 2014 to 2017?",
+          "answer": "🔍 **Diagnostic Analysis:**\n\n**📊 Key Metrics:**\n- Sales before: $484,247 → after: $733,215 (51.4% change, from tool result)\n- Profit before: $49,544 → after: $93,439 (88.6% change, from tool result)\n- Orders before: 969 → after: 1,687 (74.1% change, from tool result)\n\n**🔍 Root Cause:**\nThe Consumer segment experienced significant growth from 2014 to 2017, driven by a substantial increase in orders. While sales grew by 51.4%, profit grew at a faster rate of 88.6%, indicating improved profitability within the segment.\n\n**📉 Supporting Evidence:**\n- Sales increased by $248,968 from $484,247 in 2014 to $733,215 in 2017.\n- Profit increased by $43,895 from $49,544 in 2014 to $93,439 in 2017.\n- The number of orders grew by 718, from 969 in 2014 to 1,687 in 2017.\n\n**✅ Recommended Actions:**\n1. Continue to focus on strategies that increase order volume within the Consumer segment, aiming for a 15% increase in orders year-over-year.\n2. Analyze product mix within the Consumer segment to identify opportunities for further margin improvement, targeting a 5% increase in profit margin.\n3. Investigate the factors contributing to the disproportionately high profit growth compared to sales growth to replicate successful strategies in other segments.\n\n*Based on 3 data queries*",
+          "n_claims": 17,
+          "n_supported": 0,
+          "factual_acc": 0.0,
+          "hallucinated": false,
+          "complete": true,
+          "db_values_used": 7
+        },
+        {
+          "query": "What caused the 2016 to 2017 profit margin improvement?",
+          "answer": "🔍 **Diagnostic Analysis:**\n\n**📊 Key Metrics:**\n- Sales before: $609,206 → after: $733,215 (20.4% change)\n- Profit before: $81,795 → after: $93,439 (14.2% change)\n- Orders before: 1,315 → after: 1,687 (28.3% change)\n\n**🔍 Root Cause:**\nProfit margin improved from 2016 to 2017 because sales grew at a faster rate (20.4%) than profit (14.2%). While both sales and profit increased, the increase in sales outpaced the increase in profit, leading to a lower profit margin in 2017 compared to 2016.\n\n**📉 Supporting Evidence:**\n- Sales increased by $124,010 (20.4%) from $609,206 in 2016 to $733,215 in 2017.\n- Profit increased by $11,644 (14.2%) from $81,795 in 2016 to $93,439 in 2017.\n- The profit margin in 2016 was 13.4% ($81,795 / $609,206), and in 2017 it was 12.7% ($93,439 / $733,215).\n\n**✅ Recommended Actions:**\n1. Investigate the reasons for the slower growth in profit compared to sales, aiming to increase the profit margin by at least 1% in the next fiscal year.\n2. Analyze product categories to identify those with declining profit margins and implement strategies to improve their profitability.\n\n*Based on 3 data queries*",
+          "n_claims": 24,
+          "n_supported": 2,
+          "factual_acc": 0.083,
+          "hallucinated": false,
+          "complete": true,
+          "db_values_used": 2
+        },
+        {
+          "query": "Why is the East region second in profitability?",
+          "answer": "❌ Could not gather enough data to answer this question.",
+          "n_claims": 0,
+          "n_supported": 0,
+          "factual_acc": 1.0,
+          "hallucinated": false,
+          "complete": false,
+          "db_values_used": 7
+        },
+        {
+          "query": "Why does the Corporate segment have lower margin than Home Office?",
+          "answer": "🔍 **Diagnostic Analysis:**\n\nThe Corporate segment has a higher profit margin (15.0%) than the Home Office segment (14.3%). Therefore, the premise of your question is incorrect.\n\n**📊 Key Metrics:**\n- Profit Margin by Segment (2016):\n    - Corporate: 15.0%\n    - Home Office: 14.3%\n    - Consumer: 12.0%\n- Profit by Segment (2016):\n    - Consumer: $35,771\n    - Corporate: $30,995\n    - Home Office: $15,029\n- Sales by Segment (2016):\n    - Consumer: $296,864\n    - Corporate: $207,106\n    - Home Office: $105,235\n\n**🔍 Root Cause:**\nThe Corporate segment has a higher profit margin than the Home Office segment. While the Corporate segment generated significantly more sales ($207,106) than the Home Office segment ($105,235), its profit margin was also higher at 15.0% compared to the Home Office's 14.3%.\n\n**📉 Supporting Evidence:**\n- In 2016, the Corporate segment achieved a profit margin of 15.0%, while the Home Office segment had a profit margin of 14.3%.\n- The Corporate segment's sales were $207,106, contributing $30,995 in profit, whereas the Home Office segment's sales were $105,235, contributing $15,029 in profit.\n\n**✅ Recommended Actions:**\n1. Investigate the factors contributing to the Home Office segment's lower profit margin to identify opportunities for improvement, aiming to increase it by at least 1% to match the Corporate segment's performance.\n2. Analyze the sales and profit drivers within the Corporate segment to identify best practices that could potentially be replicated in the Home Office segment to further boost its profitability.\n\n*Based on 3 data queries*",
+          "n_claims": 22,
+          "n_supported": 4,
+          "factual_acc": 0.182,
+          "hallucinated": false,
+          "complete": true,
+          "db_values_used": 2
+        }
+      ]
+    },
+    "baseline": {
+      "label": "WITHOUT PRE-QUERY (baseline)",
+      "n": 20,
+      "mean_factual_acc_pct": 64.4,
+      "fully_accurate": 12,
+      "hallucination_count": 0,
+      "hallucination_rate_pct": 0.0,
+      "completeness_count": 6,
+      "completeness_rate_pct": 30.0,
+      "per_query": [
+        {
+          "query": "Why did profit drop in Q4 2016?",
+          "answer": "🔍 **Diagnostic Analysis:**\n\n**📊 Key Metrics:**\n- Profit before: $23,309 → after: $38,140 (63.6% change, $14,831)\n- Sales before: $182,297 → after: $236,099 (29.5% change, $53,802)\n\n**🔍 Root Cause:**\nThe premise that profit dropped in Q4 2016 is false. Profit actually increased by 63.6% ($14,831) from $23,309 in Q4 2015 to $38,140 in Q4 2016. This growth in profit outpaced the sales growth of 29.5% ($53,802).\n\n**📉 Supporting Evidence:**\n- Profit in Q4 2015 was $23,309, and in Q4 2016 it was $38,140, representing a 63.6% increase.\n- Sales in Q4 2015 were $182,297, and in Q4 2016 they were $236,099, representing a 29.5% increase.\n\n**✅ Recommended Actions:**\n1. Continue to monitor sales and profit trends in the Technology category, as it has shown significant growth.\n2. Investigate the performance of other categories to identify any potential underperformance that may have been masked by the overall positive trend.\n\n*Based on 4 data queries*",
+          "n_claims": 20,
+          "n_supported": 8,
+          "factual_acc": 0.4,
+          "hallucinated": false,
+          "complete": true,
+          "db_values_used": 9
+        },
+        {
+          "query": "What caused the revenue decline in the Central region?",
+          "answer": "⚠️ **Data Check: Your assumption does not match the actual numbers.**\n\n- **Sales** — You assumed it decreased, but it **actually increased +20.4%** in this period.\n\n**📊 Profit margin:** 13.4% → 12.7% (compressed by 0.7pp)\n\n**📊 What actually happened:**\n  - Sales went up +20.4%, not down.\n  - Would you like to explore **why Sales up 20.4%** instead?\n\n*Check the sidebar date filters or rephrase the question to explore the actual trend.*",
+          "n_claims": 5,
+          "n_supported": 0,
+          "factual_acc": 0.0,
+          "hallucinated": false,
+          "complete": false,
+          "db_values_used": 7
+        },
+        {
+          "query": "Why is the Furniture category underperforming?",
+          "answer": "❌ Could not gather enough data to answer this question.",
+          "n_claims": 0,
+          "n_supported": 0,
+          "factual_acc": 1.0,
+          "hallucinated": false,
+          "complete": false,
+          "db_values_used": 8
+        },
+        {
+          "query": "What drove the sales spike in November 2017?",
+          "answer": "🔍 **Diagnostic Analysis:**\n\n**📊 Key Metrics:**\n- Sales before: $79,412 → after: $118,448 (+49.2% change)\n- Profit before: $4,011 → after: $9,690 (+141.6% change)\n\n**🔍 Root Cause:**\nThe sales spike in November 2017 was primarily driven by a significant increase in sales from the Technology category, which grew by $22,778 (from $27,141 in Nov 2016 to $49,919 in Nov 2017). While Furniture and Office Supplies also saw growth, the surge in Technology sales had the largest impact.\n\n**📉 Supporting Evidence:**\n- Technology sales increased by 83.9% from $27,141 in November 2016 to $49,919 in November 2017.\n- Furniture sales increased by 16.9% from $31,784 in November 2016 to $37,057 in November 2017.\n- Office Supplies sales increased by 53.7% from $20,487 in November 2016 to $31,472 in November 2017.\n\n**✅ Recommended Actions:**\n1. Investigate the specific products or sub-categories within Technology that contributed most to the sales increase in November 2017 and consider targeted marketing campaigns.\n2. Analyze customer purchasing behavior in November 2017 to identify any trends or promotions that may have influenced the sales spike, and replicate successful strategies.\n\n*Based on 4 data queries*",
+          "n_claims": 18,
+          "n_supported": 2,
+          "factual_acc": 0.111,
+          "hallucinated": false,
+          "complete": true,
+          "db_values_used": 6
+        },
+        {
+          "query": "Why does the South region have lower profit than the West?",
+          "answer": "❌ Could not gather enough data to answer this question.",
+          "n_claims": 0,
+          "n_supported": 0,
+          "factual_acc": 1.0,
+          "hallucinated": false,
+          "complete": false,
+          "db_values_used": 8
+        },
+        {
+          "query": "What is causing the margin compression in 2016?",
+          "answer": "❌ Could not gather enough data to answer this question.",
+          "n_claims": 0,
+          "n_supported": 0,
+          "factual_acc": 1.0,
+          "hallucinated": false,
+          "complete": false,
+          "db_values_used": 2
+        },
+        {
+          "query": "Why are Tables and Bookcases losing money?",
+          "answer": "❌ Could not gather enough data to answer this question.",
+          "n_claims": 0,
+          "n_supported": 0,
+          "factual_acc": 1.0,
+          "hallucinated": false,
+          "complete": false,
+          "db_values_used": 2
+        },
+        {
+          "query": "What caused the high discount rate in the Central region?",
+          "answer": "❌ Could not gather enough data to answer this question.",
+          "n_claims": 0,
+          "n_supported": 0,
+          "factual_acc": 1.0,
+          "hallucinated": false,
+          "complete": false,
+          "db_values_used": 3
+        },
+        {
+          "query": "Why did orders drop in Q1 2017?",
+          "answer": "🔍 **Diagnostic Analysis:**\n\nThe premise that orders dropped in Q1 2017 is false. Orders increased by 34.1% ($61) from $179 in Q1 2016 to $240 in Q1 2017.\n\n**📊 Key Metrics:**\n- orders before: $179 → after: $240 (34.1% change, from tool result)\n\n**🔍 Root Cause:**\nThe previous tool calls did not provide a clear root cause for the premise that orders dropped. However, the data shows a significant increase in orders in Q1 2017 compared to Q1 2016. The increase in orders was driven by the East region, which saw a 200.0% increase in orders.\n\n**📉 Supporting Evidence:**\n- Orders in the East region increased by 200.0% ($84) from $28 in Q1 2016 to $84 in Q1 2017.\n- Orders in the Central region decreased by 54.8% ($28) from $66 in Q1 2016 to $28 in Q1 2017.\n- Orders in the West region decreased by 6.1% ($62) from $66 in Q1 2016 to $62 in Q1 2017.\n\n**✅ Recommended Actions:**\n1. Investigate the factors contributing to the significant order increase in the East region to identify potential best practices that can be replicated.\n2. Analyze the reasons for the order decline in the Central and West regions to develop targeted strategies for improvement.\n\n*Based on 4 data queries*",
+          "n_claims": 20,
+          "n_supported": 4,
+          "factual_acc": 0.2,
+          "hallucinated": false,
+          "complete": true,
+          "db_values_used": 6
+        },
+        {
+          "query": "What is driving the profit growth in the West region?",
+          "answer": "❌ Could not gather enough data to answer this question.",
+          "n_claims": 0,
+          "n_supported": 0,
+          "factual_acc": 1.0,
+          "hallucinated": false,
+          "complete": false,
+          "db_values_used": 10
+        },
+        {
+          "query": "Why is the Home Office segment more profitable than Consumer?",
+          "answer": "❌ Could not gather enough data to answer this question.",
+          "n_claims": 0,
+          "n_supported": 0,
+          "factual_acc": 1.0,
+          "hallucinated": false,
+          "complete": false,
+          "db_values_used": 5
+        },
+        {
+          "query": "Why did profit decline in 2016 despite revenue growth?",
+          "answer": "⚠️ **Data Check: Your assumption does not match the actual numbers.**\n\n- **Sales** — You assumed it decreased, but it **actually increased +29.5%** in this period.\n- **Profit** — You assumed it grew faster than sales, but it **actually increased +32.7%** in this period.\n\n**📊 Profit margin:** 13.1% → 13.4% (improved by 0.3pp)\n\n**📊 What actually happened:**\n  - The actual data shows the **reverse pattern** from what you described.\n  - Try verifying the date range in the sidebar, or rephrase with specific months.\n\n*Check the sidebar date filters or rephrase the question to explore the actual trend.*",
+          "n_claims": 4,
+          "n_supported": 0,
+          "factual_acc": 0.0,
+          "hallucinated": false,
+          "complete": false,
+          "db_values_used": 12
+        },
+        {
+          "query": "Why does heavy discounting hurt profitability?",
+          "answer": "❌ Could not gather enough data to answer this question.",
+          "n_claims": 0,
+          "n_supported": 0,
+          "factual_acc": 1.0,
+          "hallucinated": false,
+          "complete": false,
+          "db_values_used": 0
+        },
+        {
+          "query": "What is causing loss-making in the Tables sub-category?",
+          "answer": "❌ Could not gather enough data to answer this question.",
+          "n_claims": 0,
+          "n_supported": 0,
+          "factual_acc": 1.0,
+          "hallucinated": false,
+          "complete": false,
+          "db_values_used": 4
+        },
+        {
+          "query": "Why is Technology the most profitable category?",
+          "answer": "🔍 **Diagnostic Analysis:**\n\n**Correction:** The premise that Technology is the most profitable category is incorrect based on the provided data. Office Supplies generated higher profit.\n\n**📊 Key Metrics:**\n- Profit by Category:\n    - Office Supplies: $20,834\n    - Technology: $13,802\n    - Furniture: $3,504\n- Sales by Category:\n    - Technology: $80,997\n    - Furniture: $80,335\n    - Office Supplies: $74,767\n\n**🔍 Root Cause:**\nWhile Technology has the highest sales at $80,997, Office Supplies generated the highest profit at $20,834. This indicates that Office Supplies likely have a better profit margin or lower associated costs compared to Technology, despite lower sales volume.\n\n**📉 Supporting Evidence:**\n- Office Supplies generated $20,834 in profit, which is higher than Technology's profit of $13,802.\n- Technology achieved the highest sales at $80,997, but this did not translate to the highest profit.\n\n**✅ Recommended Actions:**\n1. Analyze the cost structure and pricing strategies for Technology products to identify opportunities to improve profit margins.\n2. Investigate the factors contributing to the high profitability of Office Supplies, such as efficient supply chain management or strong customer loyalty, to see if these can be replicated.",
+          "n_claims": 11,
+          "n_supported": 0,
+          "factual_acc": 0.0,
+          "hallucinated": false,
+          "complete": true,
+          "db_values_used": 6
+        },
+        {
+          "query": "Why did Q4 always outperform other quarters in sales?",
+          "answer": "❌ Could not gather enough data to answer this question.",
+          "n_claims": 0,
+          "n_supported": 0,
+          "factual_acc": 1.0,
+          "hallucinated": false,
+          "complete": false,
+          "db_values_used": 12
+        },
+        {
+          "query": "What drove Consumer segment growth from 2014 to 2017?",
+          "answer": "❌ Could not gather enough data to answer this question.",
+          "n_claims": 0,
+          "n_supported": 0,
+          "factual_acc": 1.0,
+          "hallucinated": false,
+          "complete": false,
+          "db_values_used": 7
+        },
+        {
+          "query": "What caused the 2016 to 2017 profit margin improvement?",
+          "answer": "🔍 **Diagnostic Analysis:**\n\nThe premise that profit margin improved from 2016 to 2017 is false. The profit margin actually decreased by 5.1% from $13 in 2016 to $13 in 2017. While sales increased by 20.4% and profit increased by 14.2%, the profit margin did not improve.\n\n**📊 Key Metrics:**\n- profit_margin before: $13 → after: $13 (-5.1% change)\n- sales before: $609,206 → after: $733,215 (+20.4% change)\n- profit before: $81,795 → after: $93,439 (+14.2% change)\n\n**🔍 Root Cause:**\nThe profit margin decreased despite an increase in sales and profit. This indicates that the cost of sales grew at a faster rate than sales revenue, eroding the profit margin.\n\n**📉 Supporting Evidence:**\n- Profit margin decreased by 5.1% from $13 in 2016 to $13 in 2017.\n- Sales increased by 20.4% from $609,206 in 2016 to $733,215 in 2017.\n- Profit increased by 14.2% from $81,795 in 2016 to $93,439 in 2017.\n\n**✅ Recommended Actions:**\n1.\n2. Analyze sales by category to identify lower-margin products and consider strategies to improve their profitability or reduce their contribution to overall sales.\n\n> ⚠️ *Note: The Superstore dataset does not contain COGS, inventory, operating expenses, or tax data. Root-cause analysis is based only on sales, profit, discount, and order volume.*\n\n*Based on 3 data queries*",
+          "n_claims": 23,
+          "n_supported": 0,
+          "factual_acc": 0.0,
+          "hallucinated": false,
+          "complete": true,
+          "db_values_used": 2
+        },
+        {
+          "query": "Why is the East region second in profitability?",
+          "answer": "❌ Could not gather enough data to answer this question.",
+          "n_claims": 0,
+          "n_supported": 0,
+          "factual_acc": 1.0,
+          "hallucinated": false,
+          "complete": false,
+          "db_values_used": 7
+        },
+        {
+          "query": "Why does the Corporate segment have lower margin than Home Office?",
+          "answer": "🔍 **Diagnostic Analysis:**\n\nThe premise that the Corporate segment has a lower profit margin than the Home Office segment is false. In 2016, the Corporate segment had a profit margin of 15.0%, while the Home Office segment had a profit margin of 14.3%. The Corporate segment also generated significantly more sales ($207,106) and profit ($30,995) compared to the Home Office segment ($105,235 in sales and $15,029 in profit).\n\n**📊 Key Metrics:**\n- Profit Margin by segment: Corporate: 15.0%, Home Office: 14.3%\n- Sales by segment: Corporate: $207,106, Home Office: $105,235\n- Profit by segment: Corporate: $30,995, Home Office: $15,029\n\n**🔍 Root Cause:**\nThe Corporate segment has a higher profit margin than the Home Office segment. This is likely due to a combination of factors, including potentially higher average selling prices or more efficient cost structures within the Corporate segment.\n\n**📉 Supporting Evidence:**\n- In 2016, the Corporate segment's profit margin was 15.0%, which is higher than the Home Office segment's 14.3%.\n- The Corporate segment's sales were $207,106, more than double the Home Office segment's sales of $105,235.\n- The Corporate segment's profit was $30,995, more than double the Home Office segment's profit of $15,029.\n\n**✅ Recommended Actions:**\n1. Investigate the cost structure of the Home Office segment to identify potential areas for efficiency improvements to increase its profit margin.\n2. Analyze pricing strategies for products sold to the Corporate segment to understand if there are opportunities to further optimize revenue and profit.\n\n*Based on 3 data queries*",
+          "n_claims": 18,
+          "n_supported": 3,
+          "factual_acc": 0.167,
+          "hallucinated": false,
+          "complete": true,
+          "db_values_used": 2
+        }
+      ]
+    },
+    "delta": {
+      "factual_acc_pp": -16.6,
+      "hallucination_pp": 0.0,
+      "completeness_pp": 15.0
+    }
+  },
+  "assumption_validator": {
+    "n": 10,
+    "detected": 8,
+    "detected_pct": 80.0,
+    "corrected": 8,
+    "corrected_pct": 80.0,
+    "missed": 2,
+    "missed_pct": 20.0,
+    "by_type": {
+      "sales_drop": {
+        "n": 4,
+        "detected_pct": 75.0,
+        "corrected_pct": 75.0,
+        "missed_pct": 25.0
+      },
+      "profit_drop": {
+        "n": 4,
+        "detected_pct": 75.0,
+        "corrected_pct": 75.0,
+        "missed_pct": 25.0
+      },
+      "divergence": {
+        "n": 2,
+        "detected_pct": 100.0,
+        "corrected_pct": 100.0,
+        "missed_pct": 0.0
+      }
+    },
+    "per_query": [
+      {
+        "id": 1,
+        "query": "Why did sales drop from 2015 to 2016?",
+        "false_metric": "sales",
+        "false_direction": "down",
+        "actual_direction": "up",
+        "premise_is_false": true,
+        "detected": true,
+        "corrected": true,
+        "type": "sales_drop"
+      },
+      {
+        "id": 2,
+        "query": "Why did revenue decline in 2017 compared to 2016?",
+        "false_metric": "sales",
+        "false_direction": "down",
+        "actual_direction": "up",
+        "premise_is_false": true,
+        "detected": true,
+        "corrected": true,
+        "type": "sales_drop"
+      },
+      {
+        "id": 3,
+        "query": "Why did orders fall in 2016?",
+        "false_metric": "orders",
+        "false_direction": "down",
+        "actual_direction": "up",
+        "premise_is_false": true,
+        "detected": false,
+        "corrected": false,
+        "type": "sales_drop"
+      },
+      {
+        "id": 4,
+        "query": "Why did profit decrease from 2016 to 2017?",
+        "false_metric": "profit",
+        "false_direction": "down",
+        "actual_direction": "up",
+        "premise_is_false": true,
+        "detected": true,
+        "corrected": true,
+        "type": "profit_drop"
+      },
+      {
+        "id": 5,
+        "query": "Why did profit fall in Q1 2016 compared to Q1 2015?",
+        "false_metric": "profit",
+        "false_direction": "down",
+        "actual_direction": "up",
+        "premise_is_false": true,
+        "detected": true,
+        "corrected": true,
+        "type": "profit_drop"
+      },
+      {
+        "id": 6,
+        "query": "Why did sales increase but profit decrease from 2016 to 2017?",
+        "false_metric": "profit",
+        "false_direction": "down",
+        "actual_direction": "up",
+        "premise_is_false": true,
+        "detected": true,
+        "corrected": true,
+        "type": "divergence"
+      },
+      {
+        "id": 7,
+        "query": "Why did revenue grow but orders declined in 2016?",
+        "false_metric": "orders",
+        "false_direction": "down",
+        "actual_direction": "up",
+        "premise_is_false": true,
+        "detected": true,
+        "corrected": true,
+        "type": "divergence"
+      },
+      {
+        "id": 8,
+        "query": "Why did profit collapse in 2014?",
+        "false_metric": "profit",
+        "false_direction": "down",
+        "actual_direction": "unknown",
+        "premise_is_false": false,
+        "detected": false,
+        "corrected": false,
+        "type": "profit_drop"
+      },
+      {
+        "id": 9,
+        "query": "Why did West region sales decline in 2017?",
+        "false_metric": "sales",
+        "false_direction": "down",
+        "actual_direction": "up",
+        "premise_is_false": true,
+        "detected": true,
+        "corrected": true,
+        "type": "sales_drop"
+      },
+      {
+        "id": 10,
+        "query": "Why did Consumer segment profit shrink from 2015 to 2016?",
+        "false_metric": "profit",
+        "false_direction": "down",
+        "actual_direction": "up",
+        "premise_is_false": true,
+        "detected": true,
+        "corrected": true,
+        "type": "profit_drop"
+      }
+    ]
+  }
+}

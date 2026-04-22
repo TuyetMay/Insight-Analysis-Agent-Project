@@ -1,0 +1,23 @@
+RAG EVALUATION RESULTS — Section 5.5
+============================================================
+
+TABLE 5.9 — Precision@6 by intent
+  Simple KPI / Snapshot          n=6  dense=0.167  tfidf=0.167  delta=+0.000
+  Structured Breakdown / Rank    n=8  dense=0.104  tfidf=0.084  delta=+0.021
+  Trend / Compare                n=6  dense=0.167  tfidf=0.195  delta=-0.028
+  Loss / Anomaly                 n=5  dense=0.167  tfidf=0.134  delta=+0.033
+  Informal / Paraphrase          n=5  dense=0.167  tfidf=0.100  delta=+0.067
+  Overall mean P@6               n=30  dense=0.150  tfidf=0.134  delta=+0.017
+
+TABLE 5.10 — HyDE impact (informal queries)
+  p6_no_hyde=0.167  p6_hyde=0.167  delta=+0.000  q=which products are bleeding money
+  p6_no_hyde=0.167  p6_hyde=0.167  delta=+0.000  q=which region makes the most cash
+  p6_no_hyde=0.000  p6_hyde=0.167  delta=+0.167  q=what is draining our profitability
+  p6_no_hyde=0.167  p6_hyde=0.167  delta=+0.000  q=orders that are hurting us
+  p6_no_hyde=0.167  p6_hyde=0.167  delta=+0.000  q=which items are making money
+  MEAN: no_hyde=0.134  hyde=0.167  delta=+0.033
+
+TABLE 5.11 — Grounding score
+  WITH pre-query:    mean=0.612  pass=65.0%  fallback=35.0%
+  WITHOUT pre-query: mean=0.146  pass=5.0%  fallback=95.0%
+  DELTA:             mean=+0.466  pass=+60.0pp  fallback=-60.0pp

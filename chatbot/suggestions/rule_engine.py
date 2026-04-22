@@ -1,21 +1,7 @@
-# chatbot/suggestions/rule_engine.py — PATCHED v3
-"""
-FIX-10: Grammar "the the" bug
-  OLD: period_verb="contributed to the" + template "the {best_period}" = "the the 2016"
-  NEW: template never adds "the" — period_verb owns all articles
-
-FIX-11: Decline context uses worst_period, not best_period
-  OLD: "Which region drove the 2015 spike?" when 2015 was -2.8% (not a spike, not worst)
-  NEW: For decline situations, reference worst_period (the period with the most negative transition)
-
-FIX-12: Partial period context awareness in suggestions
-  NEW: When has_partial_period=True, suggestion 3 is "Compare same months YoY"
-       instead of a generic YoY comparison
-"""
-
 from __future__ import annotations
 
 import copy
+import re
 from typing import Any, Dict, List, Optional, Set
 
 from chatbot.suggestions.models import Suggestion
@@ -48,6 +34,13 @@ class RuleBasedSuggestionEngine:
         "prev_period": "vs previous period",
     }
 
+    # ── Keywords để detect loss content trong answer ──────────────────────────
+    _LOSS_KEYWORDS = re.compile(
+        r'\b(loss|losing money|negative profit|loss-making|unprofitable'
+        r'|avg discount \d+%|bleeding|drain)\b',
+        re.IGNORECASE,
+    )
+
     def __init__(self, *, allowed_metrics: Optional[List[str]] = None,
                  allowed_breakdowns: Optional[List[str]] = None,
                  allowed_compare_periods: Optional[List[str]] = None,
@@ -58,20 +51,30 @@ class RuleBasedSuggestionEngine:
         self.max_suggestions         = max(1, int(max_suggestions))
 
     def suggest(self, plan: Dict[str, Any],
-                dashboard_defaults: Optional[Dict[str, Any]] = None) -> List[Suggestion]:
+                dashboard_defaults: Optional[Dict[str, Any]] = None,
+                last_answer: str = "") -> List[Suggestion]:
+        """
+        FIX-1: Added last_answer parameter so _last_answer_has_loss() can work.
+        FIX-2: Pass plan as last_plan to _dedup() to block exact repeats.
+        """
         if not isinstance(plan, dict) or not plan.get("intent"):
             return self._fallback(dashboard_defaults)
 
         base = self._normalize(plan, dashboard_defaults or {})
         qctx = plan.get("_quick_context")
         if qctx:
-            return self._dedup(self._analyst_suggestions(base, qctx))
+            return self._dedup(self._analyst_suggestions(base, qctx), last_plan=plan)
 
         if base.get("breakdown_by") and base.get("secondary_breakdown"):
-            return self._dedup(self._cross_breakdown_suggestions(base))
+            return self._dedup(self._cross_breakdown_suggestions(base), last_plan=plan)
 
         b = base.get("breakdown_by")
         candidates: List[Suggestion] = []
+
+        # FIX-1: _last_answer_has_loss now receives last_answer correctly
+        if self._last_answer_has_loss(last_answer):
+            candidates = self._loss_followups(base) + candidates
+
         if b:
             candidates += self._rank_from_breakdown(base)
             candidates += self._compare(base)
@@ -87,32 +90,58 @@ class RuleBasedSuggestionEngine:
         elif base.get("intent") == "kpi_rank":
             candidates += self._rank_variations(base)
 
-        return self._dedup(candidates)
+        # FIX-2: pass plan so _dedup blocks exact repeats
+        return self._dedup(candidates, last_plan=plan)
 
-    # ── Analyst suggestions for Quick Insight ─────────────────
+    # ── Loss detection (FIX-1) ────────────────────────────────────────────────
+
+    @classmethod
+    def _last_answer_has_loss(cls, last_answer: str) -> bool:
+        """
+        Return True if the previous response contains loss/negative-profit content.
+        Used to inject loss-specific follow-up suggestions.
+        """
+        if not last_answer:
+            return False
+        return bool(cls._LOSS_KEYWORDS.search(last_answer))
+
+    # ── Loss follow-ups ───────────────────────────────────────────────────────
+
+    def _loss_followups(self, base: Dict[str, Any]) -> List[Suggestion]:
+        """
+        Contextual suggestions after a loss-analysis response.
+        These surface discount impact and margin analysis — the natural
+        next analytical steps after identifying loss-making sub-categories.
+        """
+        return [
+            Suggestion(
+                "Discount impact on profit — by category",
+                self._clone(base, intent="kpi_value",
+                            metrics=["profit"], breakdown_by="category",
+                            time_grain="none", order_by="profit")
+            ),
+            Suggestion(
+                "Profit margin by category — where is margin lowest?",
+                self._clone(base, intent="kpi_value",
+                            metrics=["profit_margin"], breakdown_by="category",
+                            time_grain="none", order_by="profit_margin")
+            ),
+        ]
+
+    # ── Analyst suggestions for Quick Insight ─────────────────────────────────
 
     def _analyst_suggestions(self, base: Dict[str, Any],
                               ctx: Dict[str, Any]) -> List[Suggestion]:
         kpi           = ctx.get("kpi", "sales")
         m             = base["metrics"][0]
         best_period   = ctx.get("best_period", "")
-        worst_period  = ctx.get("worst_period", "")           # FIX-11
+        worst_period  = ctx.get("worst_period", "")
         top_region    = ctx.get("top_region", "")
         top_product   = ctx.get("top_product", "")
         is_decel      = ctx.get("is_decelerating", False)
         overall_chg   = ctx.get("overall_change_pct", 0.0)
         last_pct      = ctx.get("last_transition_pct", 0.0)
-        has_partial   = ctx.get("has_partial_period", False)  # FIX-12
-
-        # ── FIX-10 + FIX-11: Build period event phrase ────────
-        # Rules:
-        #   1. No double "the" — the phrase must include its own articles
-        #   2. For decline context, reference worst_period (biggest drop)
-        #      not best_period (which is the "least bad" period)
-        #   3. Threshold for "spike" = overall_chg >= 20%, not just positive
-        #
-        # Build a complete phrase: "drove the 2016 growth spike"
-        # instead of "drove" + "the" + "2016" + "spike" (template fragmentation = bugs)
+        has_partial   = ctx.get("has_partial_period", False)
 
         if overall_chg >= 20:
             reference_period = best_period
@@ -124,17 +153,15 @@ class RuleBasedSuggestionEngine:
             reference_period = best_period or worst_period
             period_phrase    = f"drove the {reference_period} change"
         elif overall_chg >= -40:
-            # Use worst_period (the period with the biggest drop) for decline
             reference_period = worst_period or best_period
             period_phrase    = f"contributed to the {reference_period} decline"
         else:
-            # Severe decline — worst_period is where the drop happened
             reference_period = worst_period or best_period
             period_phrase    = f"contributed to the {reference_period} drop"
 
         suggs: List[Suggestion] = []
 
-        # ── 1. Region breakdown — context-aware phrase ─────────
+        # 1. Region breakdown
         if reference_period:
             suggs.append(Suggestion(
                 f"Which region {period_phrase}?",
@@ -148,7 +175,7 @@ class RuleBasedSuggestionEngine:
                             top_k=5, secondary_breakdown=None, time_grain="none"),
             ))
 
-        # ── 2. Sub-category drill-down — context-aware ─────────
+        # 2. Sub-category drill-down
         if overall_chg < -10:
             suggs.append(Suggestion(
                 f"Which sub-categories drove the {self._lm(m)} drop?",
@@ -168,10 +195,8 @@ class RuleBasedSuggestionEngine:
                             top_k=5, secondary_breakdown=None, time_grain="none"),
             ))
 
-        # ── 3. FIX-12: Partial-period aware comparison ─────────
+        # 3. Comparison
         if has_partial and best_period:
-            # When last period is partial, the most useful next question
-            # is a like-for-like comparison (same months, different year)
             suggs.append(Suggestion(
                 f"{self._lm(m)} — same date range last year",
                 self._clone(base, intent="kpi_compare", compare_period="yoy",
@@ -203,7 +228,7 @@ class RuleBasedSuggestionEngine:
                             breakdown_by=None, secondary_breakdown=None, metrics=[m]),
             ))
 
-        # ── 4. Complementary metric ────────────────────────────
+        # 4. Complementary metric
         if kpi == "sales":
             lbl = "is profitability also declining?" if overall_chg < -10 else "is growth profitable?"
             suggs.append(Suggestion(
@@ -242,7 +267,7 @@ class RuleBasedSuggestionEngine:
 
         return suggs
 
-    # ── Private helpers (unchanged from v2) ───────────────────
+    # ── Private helpers ───────────────────────────────────────────────────────
 
     def _lm(self, m: str) -> str:
         return self._METRIC_LABELS.get(m, m.replace("_", " ").title())
@@ -296,15 +321,50 @@ class RuleBasedSuggestionEngine:
         p.update(updates)
         return p
 
-    def _dedup(self, candidates: List[Suggestion]) -> List[Suggestion]:
-        seen: set = set()
+    def _dedup(self, candidates: List[Suggestion],
+               last_plan: Optional[Dict[str, Any]] = None) -> List[Suggestion]:
+        """
+        FIX-2: Block suggestions that duplicate the current plan
+        (same intent + breakdown + metric = exact repeat of what was just shown).
+        """
+        seen_text: set = set()
+        seen_plan_keys: set = set()
         result: List[Suggestion] = []
+
+        # Pre-seed with current plan's key so we don't suggest exact same query
+        if last_plan:
+            last_key = (
+                last_plan.get("intent"),
+                last_plan.get("breakdown_by"),
+                tuple(sorted(last_plan.get("metrics", []))),
+                last_plan.get("time_grain", "none"),
+            )
+            seen_plan_keys.add(last_key)
+
         for s in candidates:
-            if s.text and s.text not in seen:
-                seen.add(s.text)
-                result.append(s)
+            if not s.text:
+                continue
+            if s.text in seen_text:
+                continue
+
+            # Check plan-level duplicate
+            if s.plan:
+                plan_key = (
+                    s.plan.get("intent"),
+                    s.plan.get("breakdown_by"),
+                    tuple(sorted(s.plan.get("metrics", []))),
+                    s.plan.get("time_grain", "none"),
+                )
+                if plan_key in seen_plan_keys:
+                    continue
+                seen_plan_keys.add(plan_key)
+
+            seen_text.add(s.text)
+            result.append(s)
+
             if len(result) >= self.max_suggestions:
                 break
+
         return result
 
     def _breakdowns(self, base: Dict[str, Any]) -> List[Suggestion]:

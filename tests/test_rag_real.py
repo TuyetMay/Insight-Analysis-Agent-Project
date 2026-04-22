@@ -1,11 +1,8 @@
 # test_rag_real.py
 import os
-from dotenv import load_dotenv
 
 from core.database import execute_query
-load_dotenv()
 
-import pandas as pd
 from rag.engine import RAGEngine
 
 # Lấy sample data thật

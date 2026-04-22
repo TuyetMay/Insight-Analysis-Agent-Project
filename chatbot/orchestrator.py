@@ -237,12 +237,16 @@ class DashboardChatbot:
             )
             if diag_suggs:
                 return diag_suggs
-
+ 
         defaults = self._dashboard_defaults()
         if not self._last_question:
-            suggs = self._rule_suggestions.suggest(self._last_plan or {}, defaults)
+            suggs = self._rule_suggestions.suggest(
+                self._last_plan or {},
+                defaults,
+                last_answer=self._last_answer,         
+            )
             return self._serialise(suggs)
-
+ 
         rag_ctx = self._rag.retrieve_for_suggestions(
             self._last_question, self._last_answer, k=8
         )
@@ -253,8 +257,13 @@ class DashboardChatbot:
                 rag_ctx, self._last_plan, defaults
             )
         else:
-            suggs = engine.suggest(self._last_plan or {}, defaults)
+            suggs = engine.suggest(
+                self._last_plan or {},
+                defaults,
+                last_answer=self._last_answer,          # ← FIX: truyền last_answer
+            )
         return self._serialise(suggs)
+ 
 
     # ── Public: run a suggestion plan directly ────────────────
 

@@ -1,20 +1,70 @@
+"""
+tests/test_routing.py
+────────────────────────────────────────────────────────────────────────────────
+So sánh SmartRouter (LLM-based) vs QueryRouter (regex-based).
+
+Cách chạy:
+    cd /path/to/project
+    python tests/test_routing.py          # dùng SmartRouter nếu có GCP_PROJECT
+    python tests/test_routing.py --regex  # chỉ chạy regex, không cần GCP
+
+Nếu GCP_PROJECT không được cấu hình trong .env, script tự động
+fallback về chế độ regex-only (không lỗi).
+"""
+
 import os
 import sys
-sys.path.append('..')
+import argparse
+
+# ── Path setup: chạy từ bất kỳ thư mục nào cũng được ─────────────────────────
+_THIS_DIR    = os.path.dirname(os.path.abspath(__file__))
+_PROJECT_ROOT = os.path.dirname(_THIS_DIR)
+sys.path.insert(0, _PROJECT_ROOT)
+
+# Load .env từ project root
+
 from config import Config
-from google import genai
-from chatbot.smart_router import SmartRouter
 from chatbot.query_router import QueryRouter
 
-# Init
-gemini_client = genai.Client(
-    vertexai=True,
-    project=Config.GCP_PROJECT,
-    location=Config.GCP_LOCATION,
-)
-smart_router = SmartRouter(gemini_client=gemini_client, model_name=Config.GEMINI_MODEL)
+# ── Parse args ────────────────────────────────────────────────────────────────
+parser_args = argparse.ArgumentParser()
+parser_args.add_argument("--regex", action="store_true",
+                         help="Chỉ chạy regex router, bỏ qua SmartRouter")
+args, _ = parser_args.parse_known_args()
+
+# ── Khởi tạo SmartRouter nếu GCP_PROJECT có sẵn ──────────────────────────────
+smart_router  = None
+use_smart     = False
+gemini_client = None
+
+if not args.regex and Config.GCP_PROJECT:
+    try:
+        from google import genai
+        from chatbot.smart_router import SmartRouter
+
+        gemini_client = genai.Client(
+            vertexai=True,
+            project=Config.GCP_PROJECT,
+            location=Config.GCP_LOCATION,
+        )
+        smart_router = SmartRouter(
+            gemini_client=gemini_client,
+            model_name=Config.GEMINI_MODEL,
+        )
+        use_smart = True
+        print(f"✅ SmartRouter khởi tạo thành công (project={Config.GCP_PROJECT})")
+    except Exception as e:
+        print(f"⚠️  Không thể khởi tạo SmartRouter: {e}")
+        print("   → Chỉ chạy regex router.\n")
+else:
+    if args.regex:
+        print("ℹ️  Chế độ --regex: bỏ qua SmartRouter.")
+    else:
+        print("ℹ️  GCP_PROJECT không được cấu hình → chỉ chạy regex router.")
+
 regex_router = QueryRouter()
 
+# ── Dataset ───────────────────────────────────────────────────────────────────
 questions = [
     # SIMPLE KPI (1-20) — GT: structured
     "What is the total sales revenue?",
@@ -31,10 +81,10 @@ questions = [
     "What is the total number of orders in the West region?",
     "What is the total profit for the Consumer segment?",
     "What is the total sales for the Technology category?",
-    "How many orders were placed in the East region in 2016?",
+    "How many orders did the South region place in 2015?",
     "What is the profit margin for the Corporate segment?",
     "What is the total revenue for Furniture in 2017?",
-    "How many orders did the South region place in 2015?",
+    "How many orders were placed in the East region in 2016?",
     "What is the total profit for Office Supplies?",
     "What is the overall average discount rate?",
     # STRUCTURED BREAKDOWN (21-45) — GT: structured
@@ -131,64 +181,94 @@ ground_truth = (
     ["hybrid"]     * 15    # Hybrid
 )
 
-print("Q_ID | QUESTION (truncated)                          | GT         | SMART      | REGEX")
+# ── Chạy evaluation ───────────────────────────────────────────────────────────
+header_cols = "Q_ID | GT         | REGEX"
+if use_smart:
+    header_cols = "Q_ID | GT         | SMART      | REGEX"
+
+print()
+print(f"{'Q':>4}  {header_cols:<60}  Question (truncated)")
 print("-" * 100)
 
 results = []
 for i, (q, gt) in enumerate(zip(questions, ground_truth), 1):
-    smart_decision = smart_router.classify(q)
-    smart_mode     = smart_decision.mode
-
     regex_mode = regex_router.route(q)
-    # regex chỉ trả structured/agent, không có hybrid
-    # map hybrid → agent cho regex để fair comparison
 
-    smart_correct = (smart_mode == gt)
+    # regex chỉ có structured/agent — map hybrid → agent cho fair comparison
     regex_correct = (regex_mode == gt) or (gt == "hybrid" and regex_mode == "agent")
+
+    if use_smart:
+        try:
+            smart_decision = smart_router.classify(q)
+            smart_mode     = smart_decision.mode
+        except Exception as e:
+            smart_mode = "structured"  # fallback an toàn
+            print(f"  ⚠️  SmartRouter lỗi Q{i}: {e}")
+
+        smart_correct = (smart_mode == gt)
+        print(f"Q{i:02d}  | {gt:<10} | {smart_mode:<10} | {regex_mode:<10}  {q[:45]}")
+    else:
+        smart_mode    = None
+        smart_correct = None
+        print(f"Q{i:02d}  | {gt:<10} | {regex_mode:<10}  {q[:45]}")
 
     results.append({
         "id": i, "q": q, "gt": gt,
-        "smart": smart_mode, "regex": regex_mode,
+        "smart": smart_mode,
+        "regex": regex_mode,
         "smart_correct": smart_correct,
         "regex_correct": regex_correct,
     })
 
-    print(f"Q{i:02d}  | {q[:45]:<45} | {gt:<10} | {smart_mode:<10} | {regex_mode}")
-
-# Summary
-smart_total = sum(r["smart_correct"] for r in results)
+# ── Tổng kết ──────────────────────────────────────────────────────────────────
+n           = len(results)
 regex_total = sum(r["regex_correct"] for r in results)
-n = len(results)
 
 print(f"\n{'='*60}")
-print(f"OVERALL ACCURACY")
-print(f"  SmartRouter : {smart_total}/{n} = {smart_total/n*100:.1f}%")
+print("OVERALL ACCURACY")
+print(f"{'='*60}")
+
+if use_smart:
+    smart_total = sum(r["smart_correct"] for r in results)
+    print(f"  SmartRouter : {smart_total}/{n} = {smart_total/n*100:.1f}%")
+
 print(f"  RegexRouter : {regex_total}/{n} = {regex_total/n*100:.1f}%")
 
 # Per-class breakdown
-for mode, label in [("structured","structured"), ("agent","agent"), ("hybrid","hybrid")]:
+for mode in ["structured", "agent", "hybrid"]:
     subset = [r for r in results if r["gt"] == mode]
-    s_acc = sum(r["smart_correct"] for r in subset)
+    if not subset:
+        continue
     r_acc = sum(r["regex_correct"] for r in subset)
-    print(f"\n  [{label.upper()}] n={len(subset)}")
-    print(f"    SmartRouter : {s_acc}/{len(subset)} = {s_acc/len(subset)*100:.1f}%")
+    print(f"\n  [{mode.upper()}] n={len(subset)}")
+    if use_smart:
+        s_acc = sum(r["smart_correct"] for r in subset)
+        print(f"    SmartRouter : {s_acc}/{len(subset)} = {s_acc/len(subset)*100:.1f}%")
     print(f"    RegexRouter : {r_acc}/{len(subset)} = {r_acc/len(subset)*100:.1f}%")
 
-with open("routing_results.txt", "w", encoding="utf-8") as f:
+# ── Ghi file kết quả ─────────────────────────────────────────────────────────
+output_path = os.path.join(_PROJECT_ROOT, "routing_results.txt")
+with open(output_path, "w", encoding="utf-8") as f:
     for r in results:
-        f.write(f"Q{r['id']:02d}: {r['smart']:<10} | GT: {r['gt']:<10} | Regex: {r['regex']}\n")
-    
+        smart_col = f"Smart: {r['smart']:<10} | " if use_smart else ""
+        f.write(f"Q{r['id']:02d}: {smart_col}Regex: {r['regex']:<10} | GT: {r['gt']}\n")
+
     f.write(f"\n{'='*60}\n")
-    f.write(f"OVERALL ACCURACY\n")
-    f.write(f"  SmartRouter : {smart_total}/{n} = {smart_total/n*100:.1f}%\n")
+    f.write("OVERALL ACCURACY\n")
+    if use_smart:
+        smart_total = sum(r["smart_correct"] for r in results)
+        f.write(f"  SmartRouter : {smart_total}/{n} = {smart_total/n*100:.1f}%\n")
     f.write(f"  RegexRouter : {regex_total}/{n} = {regex_total/n*100:.1f}%\n")
-    
+
     for mode in ["structured", "agent", "hybrid"]:
         subset = [r for r in results if r["gt"] == mode]
-        s_acc = sum(r["smart_correct"] for r in subset)
+        if not subset:
+            continue
         r_acc = sum(r["regex_correct"] for r in subset)
         f.write(f"\n  [{mode.upper()}] n={len(subset)}\n")
-        f.write(f"    SmartRouter : {s_acc}/{len(subset)} = {s_acc/len(subset)*100:.1f}%\n")
+        if use_smart:
+            s_acc = sum(r["smart_correct"] for r in subset)
+            f.write(f"    SmartRouter : {s_acc}/{len(subset)} = {s_acc/len(subset)*100:.1f}%\n")
         f.write(f"    RegexRouter : {r_acc}/{len(subset)} = {r_acc/len(subset)*100:.1f}%\n")
 
-print("Saved to routing_results.txt")
+print(f"\nĐã lưu → {output_path}")

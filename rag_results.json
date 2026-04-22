@@ -1,0 +1,1067 @@
+{
+  "precision_at_6": {
+    "per_query": [
+      {
+        "query": "What is the total sales revenue?",
+        "intent": "simple_kpi",
+        "relevant_ids": [
+          "kpi_sales_snapshot"
+        ],
+        "dense_retrieved": [
+          "kpi_sales_snapshot",
+          "trend_overview_sales_yearly",
+          "segment_corporate_fact",
+          "year_2017_sales_fact",
+          "category_technology_fact",
+          "segment_consumer_fact"
+        ],
+        "tfidf_retrieved": [
+          "kpi_sales_snapshot",
+          "category_furniture_fact",
+          "region_east_fact",
+          "segment_corporate_fact",
+          "region_south_fact",
+          "category_office_supplies_fact"
+        ],
+        "dense_p6": 0.167,
+        "tfidf_p6": 0.167,
+        "delta": 0.0
+      },
+      {
+        "query": "What is the overall profit margin?",
+        "intent": "simple_kpi",
+        "relevant_ids": [
+          "kpi_margin_snapshot"
+        ],
+        "dense_retrieved": [
+          "kpi_profit_snapshot",
+          "kpi_margin_snapshot",
+          "year_2014_sales_fact",
+          "segment_corporate_fact",
+          "anomaly_low_margin_category_furniture",
+          "region_west_fact"
+        ],
+        "tfidf_retrieved": [
+          "kpi_margin_snapshot",
+          "anomaly_low_margin_category_furniture",
+          "month_worst_profit",
+          "year_2014_sales_fact",
+          "segment_home_office_fact",
+          "kpi_profit_snapshot"
+        ],
+        "dense_p6": 0.167,
+        "tfidf_p6": 0.167,
+        "delta": 0.0
+      },
+      {
+        "query": "How many orders were placed in total?",
+        "intent": "simple_kpi",
+        "relevant_ids": [
+          "kpi_orders_snapshot"
+        ],
+        "dense_retrieved": [
+          "kpi_orders_snapshot",
+          "kpi_sales_snapshot",
+          "anomaly_high_discount_loss",
+          "discount_impact",
+          "year_2014_sales_fact",
+          "trend_overview_sales_yearly"
+        ],
+        "tfidf_retrieved": [
+          "kpi_orders_snapshot",
+          "year_2014_sales_fact",
+          "anomaly_high_discount_loss",
+          "discount_impact",
+          "kpi_sales_snapshot",
+          "year_2016_sales_fact"
+        ],
+        "dense_p6": 0.167,
+        "tfidf_p6": 0.167,
+        "delta": 0.0
+      },
+      {
+        "query": "What is the total profit in 2016?",
+        "intent": "simple_kpi",
+        "relevant_ids": [
+          "year_2016_sales_fact"
+        ],
+        "dense_retrieved": [
+          "year_2017_sales_fact",
+          "year_2016_sales_fact",
+          "trend_year_sales_2016_2017",
+          "trend_year_sales_2015_2016",
+          "kpi_profit_snapshot",
+          "category_technology_fact"
+        ],
+        "tfidf_retrieved": [
+          "year_2016_sales_fact",
+          "category_furniture_fact",
+          "region_east_fact",
+          "segment_corporate_fact",
+          "region_south_fact",
+          "category_office_supplies_fact"
+        ],
+        "dense_p6": 0.167,
+        "tfidf_p6": 0.167,
+        "delta": 0.0
+      },
+      {
+        "query": "What is total revenue for Q4 2016?",
+        "intent": "simple_kpi",
+        "relevant_ids": [
+          "quarter_2016_annual_summary"
+        ],
+        "dense_retrieved": [
+          "quarter_2016_annual_summary",
+          "quarter_2017_annual_summary",
+          "quarter_2014_annual_summary",
+          "year_2017_sales_fact",
+          "quarter_2015_annual_summary",
+          "month_peak_sales"
+        ],
+        "tfidf_retrieved": [
+          "quarter_2016_annual_summary",
+          "quarter_2015_annual_summary",
+          "quarter_2017_annual_summary",
+          "quarter_2014_annual_summary",
+          "segment_consumer_fact",
+          "category_furniture_fact"
+        ],
+        "dense_p6": 0.167,
+        "tfidf_p6": 0.167,
+        "delta": 0.0
+      },
+      {
+        "query": "What is the profit margin for the Consumer segment?",
+        "intent": "simple_kpi",
+        "relevant_ids": [
+          "segment_consumer_fact"
+        ],
+        "dense_retrieved": [
+          "segment_consumer_fact",
+          "cross_segment_category_profit",
+          "kpi_margin_snapshot",
+          "kpi_profit_snapshot",
+          "segment_ranked_by_profit",
+          "segment_corporate_fact"
+        ],
+        "tfidf_retrieved": [
+          "segment_home_office_fact",
+          "segment_consumer_fact",
+          "segment_corporate_fact",
+          "year_2014_sales_fact",
+          "kpi_profit_snapshot",
+          "kpi_margin_snapshot"
+        ],
+        "dense_p6": 0.167,
+        "tfidf_p6": 0.167,
+        "delta": 0.0
+      },
+      {
+        "query": "What are the total sales by region?",
+        "intent": "structured_breakdown",
+        "relevant_ids": [
+          "region_ranked_by_sales"
+        ],
+        "dense_retrieved": [
+          "region_east_fact",
+          "region_ranked_by_profit",
+          "region_ranked_by_sales",
+          "region_west_fact",
+          "region_south_fact",
+          "region_central_fact"
+        ],
+        "tfidf_retrieved": [
+          "region_east_fact",
+          "region_south_fact",
+          "region_central_fact",
+          "anomaly_loss_subcat_summary",
+          "kpi_sales_snapshot",
+          "category_furniture_fact"
+        ],
+        "dense_p6": 0.167,
+        "tfidf_p6": 0.0,
+        "delta": 0.167
+      },
+      {
+        "query": "Show profit by segment.",
+        "intent": "structured_breakdown",
+        "relevant_ids": [
+          "segment_ranked_by_profit"
+        ],
+        "dense_retrieved": [
+          "segment_consumer_fact",
+          "segment_corporate_fact",
+          "cross_segment_category_profit",
+          "year_2017_sales_fact",
+          "kpi_profit_snapshot",
+          "region_west_fact"
+        ],
+        "tfidf_retrieved": [
+          "segment_home_office_fact",
+          "segment_corporate_fact",
+          "cross_segment_category_profit",
+          "segment_consumer_fact",
+          "category_furniture_fact",
+          "region_west_fact"
+        ],
+        "dense_p6": 0.0,
+        "tfidf_p6": 0.0,
+        "delta": 0.0
+      },
+      {
+        "query": "What are the top 5 sub-categories by profit?",
+        "intent": "structured_breakdown",
+        "relevant_ids": [
+          "top10_sub_category_profit"
+        ],
+        "dense_retrieved": [
+          "cross_segment_category_profit",
+          "segment_corporate_fact",
+          "segment_ranked_by_profit",
+          "top10_sub_category_sales",
+          "segment_ranked_by_sales",
+          "category_technology_fact"
+        ],
+        "tfidf_retrieved": [
+          "anomaly_loss_subcat_summary",
+          "category_technology_fact",
+          "cross_segment_category_profit",
+          "top10_sub_category_sales",
+          "top10_sub_category_profit",
+          "anomaly_low_margin_category_furniture"
+        ],
+        "dense_p6": 0.0,
+        "tfidf_p6": 0.167,
+        "delta": -0.167
+      },
+      {
+        "query": "What is the profit margin by category?",
+        "intent": "structured_breakdown",
+        "relevant_ids": [
+          "category_ranked_by_profit"
+        ],
+        "dense_retrieved": [
+          "kpi_profit_snapshot",
+          "kpi_margin_snapshot",
+          "cross_segment_category_profit",
+          "anomaly_low_margin_category_furniture",
+          "segment_corporate_fact",
+          "year_2014_sales_fact"
+        ],
+        "tfidf_retrieved": [
+          "category_furniture_fact",
+          "category_office_supplies_fact",
+          "segment_home_office_fact",
+          "year_2014_sales_fact",
+          "anomaly_low_margin_category_furniture",
+          "region_east_fact"
+        ],
+        "dense_p6": 0.0,
+        "tfidf_p6": 0.0,
+        "delta": 0.0
+      },
+      {
+        "query": "Show loss-making sub-categories.",
+        "intent": "structured_breakdown",
+        "relevant_ids": [
+          "anomaly_loss_subcat_summary"
+        ],
+        "dense_retrieved": [
+          "anomaly_loss_subcat_summary",
+          "cross_segment_category_profit",
+          "month_worst_profit",
+          "anomaly_low_margin_category_furniture",
+          "top10_sub_category_profit",
+          "segment_corporate_fact"
+        ],
+        "tfidf_retrieved": [
+          "anomaly_loss_subcat_summary",
+          "top10_sub_category_profit",
+          "month_worst_profit",
+          "top10_sub_category_sales",
+          "anomaly_high_discount_loss",
+          "cross_segment_category_profit"
+        ],
+        "dense_p6": 0.167,
+        "tfidf_p6": 0.167,
+        "delta": 0.0
+      },
+      {
+        "query": "Which sub-categories have negative profit?",
+        "intent": "structured_breakdown",
+        "relevant_ids": [
+          "anomaly_loss_subcat_summary"
+        ],
+        "dense_retrieved": [
+          "anomaly_loss_subcat_summary",
+          "cross_segment_category_profit",
+          "month_worst_profit",
+          "segment_corporate_fact",
+          "top10_sub_category_profit",
+          "anomaly_low_margin_category_furniture"
+        ],
+        "tfidf_retrieved": [
+          "top10_sub_category_profit",
+          "anomaly_loss_subcat_summary",
+          "month_worst_profit",
+          "top10_sub_category_sales",
+          "cross_segment_category_profit",
+          "category_furniture_fact"
+        ],
+        "dense_p6": 0.167,
+        "tfidf_p6": 0.167,
+        "delta": 0.0
+      },
+      {
+        "query": "Show sales and profit by segment in 2017.",
+        "intent": "structured_breakdown",
+        "relevant_ids": [
+          "segment_ranked_by_sales",
+          "year_2017_sales_fact"
+        ],
+        "dense_retrieved": [
+          "year_2017_sales_fact",
+          "trend_year_sales_2016_2017",
+          "trend_year_sales_2015_2016",
+          "year_2016_sales_fact",
+          "segment_corporate_fact",
+          "trend_overview_sales_yearly"
+        ],
+        "tfidf_retrieved": [
+          "segment_corporate_fact",
+          "segment_home_office_fact",
+          "kpi_orders_snapshot",
+          "month_peak_sales",
+          "cross_segment_category_profit",
+          "segment_consumer_fact"
+        ],
+        "dense_p6": 0.167,
+        "tfidf_p6": 0.0,
+        "delta": 0.167
+      },
+      {
+        "query": "What is the discount impact on profit by category?",
+        "intent": "structured_breakdown",
+        "relevant_ids": [
+          "discount_impact"
+        ],
+        "dense_retrieved": [
+          "discount_impact",
+          "cross_segment_category_profit",
+          "anomaly_high_discount_loss",
+          "category_technology_fact",
+          "kpi_profit_snapshot",
+          "trend_year_sales_2014_2015"
+        ],
+        "tfidf_retrieved": [
+          "discount_impact",
+          "category_furniture_fact",
+          "category_office_supplies_fact",
+          "kpi_profit_snapshot",
+          "region_east_fact",
+          "segment_corporate_fact"
+        ],
+        "dense_p6": 0.167,
+        "tfidf_p6": 0.167,
+        "delta": 0.0
+      },
+      {
+        "query": "What is the yearly sales trend from 2014 to 2017?",
+        "intent": "trend_compare",
+        "relevant_ids": [
+          "trend_overview_sales_yearly"
+        ],
+        "dense_retrieved": [
+          "trend_year_sales_2016_2017",
+          "trend_year_sales_2015_2016",
+          "trend_overview_sales_yearly",
+          "year_2016_sales_fact",
+          "year_2017_sales_fact",
+          "year_2015_sales_fact"
+        ],
+        "tfidf_retrieved": [
+          "filter_active",
+          "trend_year_sales_2014_2015",
+          "trend_overview_sales_yearly",
+          "year_2015_sales_fact",
+          "trend_year_sales_2016_2017",
+          "category_furniture_fact"
+        ],
+        "dense_p6": 0.167,
+        "tfidf_p6": 0.167,
+        "delta": 0.0
+      },
+      {
+        "query": "Compare 2016 vs 2017 total sales.",
+        "intent": "trend_compare",
+        "relevant_ids": [
+          "trend_year_sales_2016_2017"
+        ],
+        "dense_retrieved": [
+          "trend_year_sales_2016_2017",
+          "year_2016_sales_fact",
+          "year_2017_sales_fact",
+          "trend_year_sales_2015_2016",
+          "trend_overview_sales_yearly",
+          "month_peak_sales"
+        ],
+        "tfidf_retrieved": [
+          "year_2017_sales_fact",
+          "trend_overview_sales_yearly",
+          "kpi_sales_snapshot",
+          "trend_year_sales_2016_2017",
+          "year_2016_sales_fact",
+          "filter_active"
+        ],
+        "dense_p6": 0.167,
+        "tfidf_p6": 0.167,
+        "delta": 0.0
+      },
+      {
+        "query": "How did profit change from 2015 to 2016?",
+        "intent": "trend_compare",
+        "relevant_ids": [
+          "trend_year_sales_2015_2016"
+        ],
+        "dense_retrieved": [
+          "trend_year_sales_2015_2016",
+          "trend_year_sales_2016_2017",
+          "trend_year_sales_2014_2015",
+          "year_2016_sales_fact",
+          "year_2017_sales_fact",
+          "year_2015_sales_fact"
+        ],
+        "tfidf_retrieved": [
+          "trend_year_sales_2015_2016",
+          "filter_active",
+          "trend_year_sales_2014_2015",
+          "year_2015_sales_fact",
+          "trend_year_sales_2016_2017",
+          "year_2016_sales_fact"
+        ],
+        "dense_p6": 0.167,
+        "tfidf_p6": 0.167,
+        "delta": 0.0
+      },
+      {
+        "query": "Show monthly sales trend for 2016.",
+        "intent": "trend_compare",
+        "relevant_ids": [
+          "quarter_2016_annual_summary"
+        ],
+        "dense_retrieved": [
+          "year_2016_sales_fact",
+          "trend_year_sales_2016_2017",
+          "month_peak_sales",
+          "trend_year_sales_2015_2016",
+          "trend_overview_sales_yearly",
+          "year_2017_sales_fact"
+        ],
+        "tfidf_retrieved": [
+          "quarter_2016_annual_summary",
+          "year_2016_sales_fact",
+          "trend_year_sales_2016_2017",
+          "trend_year_sales_2015_2016",
+          "year_2017_sales_fact",
+          "quarter_2015_annual_summary"
+        ],
+        "dense_p6": 0.0,
+        "tfidf_p6": 0.167,
+        "delta": -0.167
+      },
+      {
+        "query": "What is the year-over-year sales growth?",
+        "intent": "trend_compare",
+        "relevant_ids": [
+          "trend_overview_sales_yearly"
+        ],
+        "dense_retrieved": [
+          "trend_overview_sales_yearly",
+          "trend_year_sales_2016_2017",
+          "trend_year_sales_2015_2016",
+          "year_2016_sales_fact",
+          "year_2015_sales_fact",
+          "trend_year_sales_2014_2015"
+        ],
+        "tfidf_retrieved": [
+          "trend_overview_sales_yearly",
+          "year_2016_sales_fact",
+          "year_2017_sales_fact",
+          "year_2015_sales_fact",
+          "quarter_2015_annual_summary",
+          "quarter_2017_annual_summary"
+        ],
+        "dense_p6": 0.167,
+        "tfidf_p6": 0.167,
+        "delta": 0.0
+      },
+      {
+        "query": "Compare Q3 2016 vs Q3 2017 revenue.",
+        "intent": "trend_compare",
+        "relevant_ids": [
+          "quarter_2016_annual_summary",
+          "quarter_2017_annual_summary"
+        ],
+        "dense_retrieved": [
+          "quarter_2016_annual_summary",
+          "quarter_2017_annual_summary",
+          "quarter_2014_annual_summary",
+          "quarter_2015_annual_summary",
+          "year_2017_sales_fact",
+          "month_peak_sales"
+        ],
+        "tfidf_retrieved": [
+          "year_2017_sales_fact",
+          "quarter_2016_annual_summary",
+          "quarter_2017_annual_summary",
+          "trend_year_sales_2016_2017",
+          "quarter_2015_annual_summary",
+          "quarter_2014_annual_summary"
+        ],
+        "dense_p6": 0.333,
+        "tfidf_p6": 0.333,
+        "delta": 0.0
+      },
+      {
+        "query": "Which products are losing money?",
+        "intent": "loss_anomaly",
+        "relevant_ids": [
+          "anomaly_loss_subcat_summary"
+        ],
+        "dense_retrieved": [
+          "anomaly_loss_subcat_summary",
+          "cross_segment_category_profit",
+          "top10_sub_category_profit",
+          "year_2015_sales_fact",
+          "month_worst_profit",
+          "trend_year_sales_2014_2015"
+        ],
+        "tfidf_retrieved": [
+          "anomaly_loss_subcat_summary",
+          "top10_sub_category_profit",
+          "month_worst_profit",
+          "anomaly_high_discount_loss",
+          "cross_segment_category_profit",
+          "category_furniture_fact"
+        ],
+        "dense_p6": 0.167,
+        "tfidf_p6": 0.167,
+        "delta": 0.0
+      },
+      {
+        "query": "What sub-categories are unprofitable?",
+        "intent": "loss_anomaly",
+        "relevant_ids": [
+          "anomaly_loss_subcat_summary"
+        ],
+        "dense_retrieved": [
+          "anomaly_loss_subcat_summary",
+          "cross_segment_category_profit",
+          "top10_sub_category_profit",
+          "month_worst_profit",
+          "segment_corporate_fact",
+          "segment_ranked_by_profit"
+        ],
+        "tfidf_retrieved": [
+          "anomaly_loss_subcat_summary",
+          "top10_sub_category_profit",
+          "anomaly_high_discount_loss",
+          "month_worst_profit",
+          "top10_sub_category_sales",
+          "cross_segment_category_profit"
+        ],
+        "dense_p6": 0.167,
+        "tfidf_p6": 0.167,
+        "delta": 0.0
+      },
+      {
+        "query": "Show me all loss-making items and their discounts.",
+        "intent": "loss_anomaly",
+        "relevant_ids": [
+          "anomaly_loss_subcat_summary",
+          "discount_impact"
+        ],
+        "dense_retrieved": [
+          "anomaly_loss_subcat_summary",
+          "anomaly_high_discount_loss",
+          "cross_segment_category_profit",
+          "top10_sub_category_profit",
+          "month_worst_profit",
+          "trend_year_sales_2014_2015"
+        ],
+        "tfidf_retrieved": [
+          "anomaly_loss_subcat_summary",
+          "top10_sub_category_profit",
+          "anomaly_high_discount_loss",
+          "month_worst_profit",
+          "cross_segment_category_profit",
+          "category_furniture_fact"
+        ],
+        "dense_p6": 0.167,
+        "tfidf_p6": 0.167,
+        "delta": 0.0
+      },
+      {
+        "query": "Which region has the lowest profit margin?",
+        "intent": "loss_anomaly",
+        "relevant_ids": [
+          "region_ranked_by_profit"
+        ],
+        "dense_retrieved": [
+          "region_ranked_by_profit",
+          "region_south_fact",
+          "region_ranked_by_sales",
+          "region_east_fact",
+          "region_west_fact",
+          "region_central_fact"
+        ],
+        "tfidf_retrieved": [
+          "anomaly_low_margin_category_furniture",
+          "year_2014_sales_fact",
+          "segment_home_office_fact",
+          "region_south_fact",
+          "category_office_supplies_fact",
+          "region_east_fact"
+        ],
+        "dense_p6": 0.167,
+        "tfidf_p6": 0.0,
+        "delta": 0.167
+      },
+      {
+        "query": "Are there any anomalies in discount behaviour?",
+        "intent": "loss_anomaly",
+        "relevant_ids": [
+          "anomaly_high_discount_loss"
+        ],
+        "dense_retrieved": [
+          "anomaly_high_discount_loss",
+          "discount_impact",
+          "trend_year_sales_2014_2015",
+          "year_2015_sales_fact",
+          "anomaly_loss_subcat_summary",
+          "trend_year_sales_2016_2017"
+        ],
+        "tfidf_retrieved": [
+          "discount_impact",
+          "anomaly_loss_subcat_summary",
+          "kpi_orders_snapshot",
+          "anomaly_high_discount_loss",
+          "year_2015_sales_fact",
+          "month_peak_sales"
+        ],
+        "dense_p6": 0.167,
+        "tfidf_p6": 0.167,
+        "delta": 0.0
+      },
+      {
+        "query": "which products are bleeding money",
+        "intent": "informal",
+        "relevant_ids": [
+          "anomaly_loss_subcat_summary"
+        ],
+        "dense_retrieved": [
+          "anomaly_loss_subcat_summary",
+          "cross_segment_category_profit",
+          "month_worst_profit",
+          "top10_sub_category_profit",
+          "trend_year_sales_2014_2015",
+          "year_2015_sales_fact"
+        ],
+        "tfidf_retrieved": [
+          "anomaly_loss_subcat_summary",
+          "top10_sub_category_profit",
+          "month_worst_profit",
+          "anomaly_high_discount_loss",
+          "cross_segment_category_profit",
+          "category_furniture_fact"
+        ],
+        "dense_p6": 0.167,
+        "tfidf_p6": 0.167,
+        "delta": 0.0
+      },
+      {
+        "query": "which region makes the most cash",
+        "intent": "informal",
+        "relevant_ids": [
+          "region_ranked_by_sales"
+        ],
+        "dense_retrieved": [
+          "region_ranked_by_sales",
+          "region_east_fact",
+          "region_ranked_by_profit",
+          "segment_corporate_fact",
+          "segment_ranked_by_sales",
+          "region_central_fact"
+        ],
+        "tfidf_retrieved": [
+          "segment_home_office_fact",
+          "region_east_fact",
+          "region_central_fact",
+          "category_ranked_by_profit",
+          "segment_ranked_by_profit",
+          "anomaly_loss_subcat_summary"
+        ],
+        "dense_p6": 0.167,
+        "tfidf_p6": 0.0,
+        "delta": 0.167
+      },
+      {
+        "query": "what is draining our profitability",
+        "intent": "informal",
+        "relevant_ids": [
+          "anomaly_high_discount_loss"
+        ],
+        "dense_retrieved": [
+          "anomaly_high_discount_loss",
+          "discount_impact",
+          "anomaly_loss_subcat_summary",
+          "trend_year_sales_2014_2015",
+          "kpi_margin_snapshot",
+          "month_worst_profit"
+        ],
+        "tfidf_retrieved": [
+          "discount_impact",
+          "month_worst_profit",
+          "anomaly_loss_subcat_summary",
+          "top10_sub_category_profit",
+          "kpi_profit_snapshot",
+          "year_2014_sales_fact"
+        ],
+        "dense_p6": 0.167,
+        "tfidf_p6": 0.0,
+        "delta": 0.167
+      },
+      {
+        "query": "orders that are hurting us",
+        "intent": "informal",
+        "relevant_ids": [
+          "anomaly_high_discount_loss"
+        ],
+        "dense_retrieved": [
+          "anomaly_high_discount_loss",
+          "kpi_orders_snapshot",
+          "anomaly_loss_subcat_summary",
+          "discount_impact",
+          "kpi_sales_snapshot",
+          "top10_sub_category_sales"
+        ],
+        "tfidf_retrieved": [
+          "anomaly_high_discount_loss",
+          "anomaly_loss_subcat_summary",
+          "discount_impact",
+          "kpi_sales_snapshot",
+          "year_2017_sales_fact",
+          "year_2016_sales_fact"
+        ],
+        "dense_p6": 0.167,
+        "tfidf_p6": 0.167,
+        "delta": 0.0
+      },
+      {
+        "query": "which items are making money",
+        "intent": "informal",
+        "relevant_ids": [
+          "top10_sub_category_profit"
+        ],
+        "dense_retrieved": [
+          "cross_segment_category_profit",
+          "top10_sub_category_profit",
+          "top10_sub_category_sales",
+          "category_technology_fact",
+          "category_ranked_by_profit",
+          "anomaly_loss_subcat_summary"
+        ],
+        "tfidf_retrieved": [
+          "anomaly_loss_subcat_summary",
+          "anomaly_high_discount_loss",
+          "top10_sub_category_profit",
+          "cross_segment_category_profit",
+          "trend_year_sales_2014_2015",
+          "quarter_2017_annual_summary"
+        ],
+        "dense_p6": 0.167,
+        "tfidf_p6": 0.167,
+        "delta": 0.0
+      }
+    ],
+    "by_intent": {
+      "simple_kpi": {
+        "n": 6,
+        "dense_mean": 0.167,
+        "tfidf_mean": 0.167,
+        "delta": 0.0
+      },
+      "structured_breakdown": {
+        "n": 8,
+        "dense_mean": 0.104,
+        "tfidf_mean": 0.084,
+        "delta": 0.021
+      },
+      "trend_compare": {
+        "n": 6,
+        "dense_mean": 0.167,
+        "tfidf_mean": 0.195,
+        "delta": -0.028
+      },
+      "loss_anomaly": {
+        "n": 5,
+        "dense_mean": 0.167,
+        "tfidf_mean": 0.134,
+        "delta": 0.033
+      },
+      "informal": {
+        "n": 5,
+        "dense_mean": 0.167,
+        "tfidf_mean": 0.1,
+        "delta": 0.067
+      }
+    },
+    "overall": {
+      "n": 30,
+      "dense_mean_p6": 0.15,
+      "tfidf_mean_p6": 0.134,
+      "delta": 0.017
+    }
+  },
+  "hyde_impact": {
+    "per_query": [
+      {
+        "query": "which products are bleeding money",
+        "relevant_ids": [
+          "anomaly_loss_subcat_summary"
+        ],
+        "p6_no_hyde": 0.167,
+        "p6_hyde": 0.167,
+        "delta": 0.0,
+        "expansion_added": "loss-making unprofitable negative profit sub-category losing money sub_category "
+      },
+      {
+        "query": "which region makes the most cash",
+        "relevant_ids": [
+          "region_ranked_by_sales"
+        ],
+        "p6_no_hyde": 0.167,
+        "p6_hyde": 0.167,
+        "delta": 0.0,
+        "expansion_added": "highest profit revenue ranking top profitable highest profit revenue ranking"
+      },
+      {
+        "query": "what is draining our profitability",
+        "relevant_ids": [
+          "anomaly_high_discount_loss"
+        ],
+        "p6_no_hyde": 0.0,
+        "p6_hyde": 0.167,
+        "delta": 0.167,
+        "expansion_added": "discount impact profit margin loss negative profit anomaly high discount discoun"
+      },
+      {
+        "query": "orders that are hurting us",
+        "relevant_ids": [
+          "anomaly_high_discount_loss"
+        ],
+        "p6_no_hyde": 0.167,
+        "p6_hyde": 0.167,
+        "delta": 0.0,
+        "expansion_added": "(none)"
+      },
+      {
+        "query": "which items are making money",
+        "relevant_ids": [
+          "top10_sub_category_profit"
+        ],
+        "p6_no_hyde": 0.167,
+        "p6_hyde": 0.167,
+        "delta": 0.0,
+        "expansion_added": "sub_category product items"
+      }
+    ],
+    "mean_no_hyde": 0.134,
+    "mean_hyde": 0.167,
+    "mean_delta": 0.033
+  },
+  "grounding": {
+    "per_query": [
+      {
+        "id": 1,
+        "query": "Why did profit drop in Q4 2016?",
+        "score_grounded": 0.438,
+        "score_baseline": 0.333,
+        "pass_grounded": true,
+        "pass_baseline": false
+      },
+      {
+        "id": 2,
+        "query": "What caused the revenue decline in the Central region?",
+        "score_grounded": 0.0,
+        "score_baseline": 0.0,
+        "pass_grounded": false,
+        "pass_baseline": false
+      },
+      {
+        "id": 3,
+        "query": "Why is the Furniture category underperforming?",
+        "score_grounded": 1.0,
+        "score_baseline": 0.095,
+        "pass_grounded": true,
+        "pass_baseline": false
+      },
+      {
+        "id": 4,
+        "query": "What drove the sales spike in November 2017?",
+        "score_grounded": 0.25,
+        "score_baseline": 0.133,
+        "pass_grounded": false,
+        "pass_baseline": false
+      },
+      {
+        "id": 5,
+        "query": "Why does the South region have lower profit than the West?",
+        "score_grounded": 0.278,
+        "score_baseline": 0.077,
+        "pass_grounded": false,
+        "pass_baseline": false
+      },
+      {
+        "id": 6,
+        "query": "What is causing the margin compression in 2016?",
+        "score_grounded": 0.4,
+        "score_baseline": 0.167,
+        "pass_grounded": true,
+        "pass_baseline": false
+      },
+      {
+        "id": 7,
+        "query": "Why are Tables and Bookcases losing money?",
+        "score_grounded": 1.0,
+        "score_baseline": 0.071,
+        "pass_grounded": true,
+        "pass_baseline": false
+      },
+      {
+        "id": 8,
+        "query": "Why did sales increase but profit decrease from 2015 to 2016?",
+        "score_grounded": 0.8,
+        "score_baseline": 0.176,
+        "pass_grounded": true,
+        "pass_baseline": false
+      },
+      {
+        "id": 9,
+        "query": "What caused the high discount rate in the Central region?",
+        "score_grounded": 1.0,
+        "score_baseline": 0.143,
+        "pass_grounded": true,
+        "pass_baseline": false
+      },
+      {
+        "id": 10,
+        "query": "Why did orders drop in Q1 2017?",
+        "score_grounded": 0.353,
+        "score_baseline": 0.462,
+        "pass_grounded": false,
+        "pass_baseline": true
+      },
+      {
+        "id": 11,
+        "query": "What is driving the profit growth in the West region?",
+        "score_grounded": 1.0,
+        "score_baseline": 0.0,
+        "pass_grounded": true,
+        "pass_baseline": false
+      },
+      {
+        "id": 12,
+        "query": "Why is the Home Office segment more profitable than Consumer?",
+        "score_grounded": 1.0,
+        "score_baseline": 0.0,
+        "pass_grounded": true,
+        "pass_baseline": false
+      },
+      {
+        "id": 13,
+        "query": "Why did profit decline in 2016 despite revenue growth?",
+        "score_grounded": 0.2,
+        "score_baseline": 0.167,
+        "pass_grounded": false,
+        "pass_baseline": false
+      },
+      {
+        "id": 14,
+        "query": "What caused sales to fall in 2017?",
+        "score_grounded": 0.706,
+        "score_baseline": 0.143,
+        "pass_grounded": true,
+        "pass_baseline": false
+      },
+      {
+        "id": 15,
+        "query": "Why does heavy discounting hurt profitability?",
+        "score_grounded": 1.0,
+        "score_baseline": 0.182,
+        "pass_grounded": true,
+        "pass_baseline": false
+      },
+      {
+        "id": 16,
+        "query": "What is causing loss-making in Tables sub-category?",
+        "score_grounded": 0.1,
+        "score_baseline": 0.071,
+        "pass_grounded": false,
+        "pass_baseline": false
+      },
+      {
+        "id": 17,
+        "query": "Why did Q4 always outperform other quarters?",
+        "score_grounded": 1.0,
+        "score_baseline": 0.222,
+        "pass_grounded": true,
+        "pass_baseline": false
+      },
+      {
+        "id": 18,
+        "query": "What drove Consumer segment growth?",
+        "score_grounded": 1.0,
+        "score_baseline": 0.125,
+        "pass_grounded": true,
+        "pass_baseline": false
+      },
+      {
+        "id": 19,
+        "query": "Why is Technology the most profitable category?",
+        "score_grounded": 0.0,
+        "score_baseline": 0.067,
+        "pass_grounded": false,
+        "pass_baseline": false
+      },
+      {
+        "id": 20,
+        "query": "What caused the 2016 to 2017 profit margin improvement?",
+        "score_grounded": 0.722,
+        "score_baseline": 0.286,
+        "pass_grounded": true,
+        "pass_baseline": false
+      }
+    ],
+    "n": 20,
+    "threshold": 0.4,
+    "grounded": {
+      "mean_score": 0.612,
+      "pass_count": 13,
+      "pass_rate_pct": 65.0,
+      "fallback_rate_pct": 35.0
+    },
+    "baseline": {
+      "mean_score": 0.146,
+      "pass_count": 1,
+      "pass_rate_pct": 5.0,
+      "fallback_rate_pct": 95.0
+    },
+    "delta": {
+      "mean_score": 0.466,
+      "pass_rate_pp": 60.0,
+      "fallback_rate_pp": -60.0
+    }
+  }
+}

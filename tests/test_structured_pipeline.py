@@ -23,8 +23,7 @@ Requirements:
 
 import os, sys, json, time, re
 from datetime import date
-from dotenv import load_dotenv
-load_dotenv()
+from turtle import pd
 sys.path.append('..')
 
 from config import Config
@@ -38,7 +37,6 @@ from chatbot.answer_formatter import AnswerFormatter
 from chatbot.insight_generator import InsightGenerator
 from chatbot.llm_plan_auditor import LLMPlanAuditor
 from rag.engine import RAGEngine
-import pandas as pd
 
 # ── Setup ─────────────────────────────────────────────────────────────────────
 gemini_client = genai.Client(

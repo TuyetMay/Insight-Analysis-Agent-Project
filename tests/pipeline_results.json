@@ -1,0 +1,703 @@
+{
+  "execution_accuracy": {
+    "Simple KPI": {
+      "n": 20,
+      "passed": 18,
+      "accuracy_pct": 90.0
+    },
+    "Structured Breakdown": {
+      "n": 25,
+      "passed": 22,
+      "accuracy_pct": 88.0
+    },
+    "Trend / Compare": {
+      "n": 20,
+      "passed": 19,
+      "accuracy_pct": 95.0
+    }
+  },
+  "overall_accuracy": {
+    "n": 65,
+    "passed": 59,
+    "accuracy_pct": 90.8
+  },
+  "tier_hit_rate": {
+    "tier1": {
+      "count": 10,
+      "pct": 15.4
+    },
+    "tier2": {
+      "count": 48,
+      "pct": 73.8
+    },
+    "tier3": {
+      "count": 6,
+      "pct": 9.2
+    }
+  },
+  "auditor": {
+    "tier2_acc_without_pct": 95.8,
+    "tier2_acc_with_pct": 95.8,
+    "gain_pp": 0.0,
+    "plans_corrected": 0,
+    "tier2_total": 48
+  },
+  "self_correction": {
+    "retried": 2,
+    "recovered": 0,
+    "failed": 2,
+    "success_rate_pct": 0.0
+  },
+  "per_query": [
+    {
+      "id": 1,
+      "question": "What is the total sales revenue?",
+      "category": "simple_kpi",
+      "tier": 1,
+      "passed": true,
+      "empty_retried": false,
+      "recovered": false,
+      "elapsed_s": 0.336
+    },
+    {
+      "id": 2,
+      "question": "What is the total profit?",
+      "category": "simple_kpi",
+      "tier": 1,
+      "passed": true,
+      "empty_retried": false,
+      "recovered": false,
+      "elapsed_s": 0.343
+    },
+    {
+      "id": 3,
+      "question": "How many orders were placed in total?",
+      "category": "simple_kpi",
+      "tier": 3,
+      "passed": true,
+      "empty_retried": false,
+      "recovered": false,
+      "elapsed_s": 1.322
+    },
+    {
+      "id": 4,
+      "question": "What is the overall profit margin?",
+      "category": "simple_kpi",
+      "tier": 1,
+      "passed": true,
+      "empty_retried": false,
+      "recovered": false,
+      "elapsed_s": 0.36
+    },
+    {
+      "id": 5,
+      "question": "What is the average order value?",
+      "category": "simple_kpi",
+      "tier": 3,
+      "passed": true,
+      "empty_retried": false,
+      "recovered": false,
+      "elapsed_s": 1.17
+    },
+    {
+      "id": 6,
+      "question": "What is the total revenue for 2016?",
+      "category": "simple_kpi",
+      "tier": 2,
+      "passed": true,
+      "empty_retried": false,
+      "recovered": false,
+      "elapsed_s": 0.789
+    },
+    {
+      "id": 7,
+      "question": "How many orders were placed in 2017?",
+      "category": "simple_kpi",
+      "tier": 2,
+      "passed": true,
+      "empty_retried": false,
+      "recovered": false,
+      "elapsed_s": 0.819
+    },
+    {
+      "id": 8,
+      "question": "What is the total profit in 2015?",
+      "category": "simple_kpi",
+      "tier": 2,
+      "passed": true,
+      "empty_retried": false,
+      "recovered": false,
+      "elapsed_s": 0.915
+    },
+    {
+      "id": 9,
+      "question": "What is the total sales in Q4 2016?",
+      "category": "simple_kpi",
+      "tier": 2,
+      "passed": true,
+      "empty_retried": false,
+      "recovered": false,
+      "elapsed_s": 0.879
+    },
+    {
+      "id": 10,
+      "question": "How much revenue did we generate in January 2017?",
+      "category": "simple_kpi",
+      "tier": 2,
+      "passed": true,
+      "empty_retried": false,
+      "recovered": false,
+      "elapsed_s": 0.901
+    },
+    {
+      "id": 11,
+      "question": "What is the total number of orders in the West region?",
+      "category": "simple_kpi",
+      "tier": 2,
+      "passed": true,
+      "empty_retried": false,
+      "recovered": false,
+      "elapsed_s": 0.351
+    },
+    {
+      "id": 12,
+      "question": "What is the total profit for the Consumer segment?",
+      "category": "simple_kpi",
+      "tier": 1,
+      "passed": true,
+      "empty_retried": false,
+      "recovered": false,
+      "elapsed_s": 0.347
+    },
+    {
+      "id": 13,
+      "question": "What is the total sales for the Technology category?",
+      "category": "simple_kpi",
+      "tier": 1,
+      "passed": true,
+      "empty_retried": false,
+      "recovered": false,
+      "elapsed_s": 0.343
+    },
+    {
+      "id": 14,
+      "question": "What is the profit margin for the Corporate segment?",
+      "category": "simple_kpi",
+      "tier": 1,
+      "passed": true,
+      "empty_retried": false,
+      "recovered": false,
+      "elapsed_s": 0.406
+    },
+    {
+      "id": 15,
+      "question": "What is the total revenue for Furniture in 2017?",
+      "category": "simple_kpi",
+      "tier": 2,
+      "passed": true,
+      "empty_retried": false,
+      "recovered": false,
+      "elapsed_s": 1.911
+    },
+    {
+      "id": 16,
+      "question": "What is the total profit for Office Supplies?",
+      "category": "simple_kpi",
+      "tier": 1,
+      "passed": false,
+      "empty_retried": false,
+      "recovered": false,
+      "elapsed_s": 0.336
+    },
+    {
+      "id": 17,
+      "question": "What is the overall average discount rate?",
+      "category": "simple_kpi",
+      "tier": 3,
+      "passed": false,
+      "empty_retried": true,
+      "recovered": false,
+      "elapsed_s": 0.858
+    },
+    {
+      "id": 18,
+      "question": "How many orders did the South region place in 2015?",
+      "category": "simple_kpi",
+      "tier": 2,
+      "passed": true,
+      "empty_retried": false,
+      "recovered": false,
+      "elapsed_s": 0.919
+    },
+    {
+      "id": 19,
+      "question": "What is the profit margin in 2014?",
+      "category": "simple_kpi",
+      "tier": 2,
+      "passed": true,
+      "empty_retried": false,
+      "recovered": false,
+      "elapsed_s": 0.905
+    },
+    {
+      "id": 20,
+      "question": "How many orders were placed in the East region in 2016?",
+      "category": "simple_kpi",
+      "tier": 2,
+      "passed": true,
+      "empty_retried": false,
+      "recovered": false,
+      "elapsed_s": 0.923
+    },
+    {
+      "id": 21,
+      "question": "What are the total sales by region?",
+      "category": "structured_breakdown",
+      "tier": 2,
+      "passed": true,
+      "empty_retried": false,
+      "recovered": false,
+      "elapsed_s": 0.344
+    },
+    {
+      "id": 22,
+      "question": "Show me profit breakdown by segment.",
+      "category": "structured_breakdown",
+      "tier": 2,
+      "passed": true,
+      "empty_retried": false,
+      "recovered": false,
+      "elapsed_s": 0.345
+    },
+    {
+      "id": 23,
+      "question": "What is the revenue by category in 2016?",
+      "category": "structured_breakdown",
+      "tier": 2,
+      "passed": true,
+      "empty_retried": false,
+      "recovered": false,
+      "elapsed_s": 0.893
+    },
+    {
+      "id": 24,
+      "question": "What are the top 5 sub-categories by profit?",
+      "category": "structured_breakdown",
+      "tier": 2,
+      "passed": false,
+      "empty_retried": false,
+      "recovered": false,
+      "elapsed_s": 0.341
+    },
+    {
+      "id": 25,
+      "question": "Show me the top 10 products by sales.",
+      "category": "structured_breakdown",
+      "tier": 2,
+      "passed": true,
+      "empty_retried": false,
+      "recovered": false,
+      "elapsed_s": 0.338
+    },
+    {
+      "id": 26,
+      "question": "What is the profit margin by category?",
+      "category": "structured_breakdown",
+      "tier": 2,
+      "passed": true,
+      "empty_retried": false,
+      "recovered": false,
+      "elapsed_s": 0.343
+    },
+    {
+      "id": 27,
+      "question": "Show me monthly sales trend for 2016.",
+      "category": "structured_breakdown",
+      "tier": 2,
+      "passed": true,
+      "empty_retried": false,
+      "recovered": false,
+      "elapsed_s": 0.867
+    },
+    {
+      "id": 28,
+      "question": "What is the quarterly revenue breakdown for 2017?",
+      "category": "structured_breakdown",
+      "tier": 2,
+      "passed": true,
+      "empty_retried": false,
+      "recovered": false,
+      "elapsed_s": 1.041
+    },
+    {
+      "id": 29,
+      "question": "Show profit by region and segment.",
+      "category": "structured_breakdown",
+      "tier": 2,
+      "passed": true,
+      "empty_retried": false,
+      "recovered": false,
+      "elapsed_s": 0.341
+    },
+    {
+      "id": 30,
+      "question": "What is the yearly sales trend from 2014 to 2017?",
+      "category": "structured_breakdown",
+      "tier": 2,
+      "passed": true,
+      "empty_retried": false,
+      "recovered": false,
+      "elapsed_s": 0.927
+    },
+    {
+      "id": 31,
+      "question": "What is the profit breakdown by sub-category for Furniture?",
+      "category": "structured_breakdown",
+      "tier": 2,
+      "passed": true,
+      "empty_retried": false,
+      "recovered": false,
+      "elapsed_s": 0.345
+    },
+    {
+      "id": 32,
+      "question": "Show monthly orders trend in 2017.",
+      "category": "structured_breakdown",
+      "tier": 2,
+      "passed": true,
+      "empty_retried": false,
+      "recovered": false,
+      "elapsed_s": 1.036
+    },
+    {
+      "id": 33,
+      "question": "What are the loss-making sub-categories?",
+      "category": "structured_breakdown",
+      "tier": 2,
+      "passed": true,
+      "empty_retried": false,
+      "recovered": false,
+      "elapsed_s": 0.707
+    },
+    {
+      "id": 34,
+      "question": "Show me which products are losing money.",
+      "category": "structured_breakdown",
+      "tier": 2,
+      "passed": true,
+      "empty_retried": false,
+      "recovered": false,
+      "elapsed_s": 0.702
+    },
+    {
+      "id": 35,
+      "question": "What sub-categories have negative profit?",
+      "category": "structured_breakdown",
+      "tier": 2,
+      "passed": true,
+      "empty_retried": false,
+      "recovered": false,
+      "elapsed_s": 0.695
+    },
+    {
+      "id": 36,
+      "question": "Show sales trend by segment over years.",
+      "category": "structured_breakdown",
+      "tier": 2,
+      "passed": true,
+      "empty_retried": false,
+      "recovered": false,
+      "elapsed_s": 0.349
+    },
+    {
+      "id": 37,
+      "question": "What is the profit margin by region in 2016?",
+      "category": "structured_breakdown",
+      "tier": 2,
+      "passed": true,
+      "empty_retried": false,
+      "recovered": false,
+      "elapsed_s": 1.002
+    },
+    {
+      "id": 38,
+      "question": "Show top 5 categories by revenue growth.",
+      "category": "structured_breakdown",
+      "tier": 1,
+      "passed": true,
+      "empty_retried": false,
+      "recovered": false,
+      "elapsed_s": 0.338
+    },
+    {
+      "id": 39,
+      "question": "What is the discount impact on profit by category?",
+      "category": "structured_breakdown",
+      "tier": 2,
+      "passed": true,
+      "empty_retried": false,
+      "recovered": false,
+      "elapsed_s": 0.348
+    },
+    {
+      "id": 40,
+      "question": "Show sales and profit by segment in 2017.",
+      "category": "structured_breakdown",
+      "tier": 2,
+      "passed": true,
+      "empty_retried": false,
+      "recovered": false,
+      "elapsed_s": 0.974
+    },
+    {
+      "id": 41,
+      "question": "What are the top 5 regions by revenue in Q3 2016?",
+      "category": "structured_breakdown",
+      "tier": null,
+      "passed": false,
+      "empty_retried": false,
+      "recovered": false,
+      "elapsed_s": 1.642
+    },
+    {
+      "id": 42,
+      "question": "Show top 10 sub-categories by sales in the West region.",
+      "category": "structured_breakdown",
+      "tier": 2,
+      "passed": false,
+      "empty_retried": false,
+      "recovered": false,
+      "elapsed_s": 0.341
+    },
+    {
+      "id": 43,
+      "question": "Show sales by region for each year.",
+      "category": "structured_breakdown",
+      "tier": 2,
+      "passed": true,
+      "empty_retried": false,
+      "recovered": false,
+      "elapsed_s": 0.356
+    },
+    {
+      "id": 44,
+      "question": "What are the top 3 segments by profit margin?",
+      "category": "structured_breakdown",
+      "tier": 1,
+      "passed": true,
+      "empty_retried": false,
+      "recovered": false,
+      "elapsed_s": 0.35
+    },
+    {
+      "id": 45,
+      "question": "Show me sales by category broken down by region.",
+      "category": "structured_breakdown",
+      "tier": 2,
+      "passed": true,
+      "empty_retried": false,
+      "recovered": false,
+      "elapsed_s": 0.347
+    },
+    {
+      "id": 46,
+      "question": "Compare 2016 vs 2017 total sales.",
+      "category": "trend_compare",
+      "tier": 2,
+      "passed": true,
+      "empty_retried": false,
+      "recovered": false,
+      "elapsed_s": 0.721
+    },
+    {
+      "id": 47,
+      "question": "How did profit change from 2015 to 2016?",
+      "category": "trend_compare",
+      "tier": 3,
+      "passed": true,
+      "empty_retried": false,
+      "recovered": false,
+      "elapsed_s": 1.525
+    },
+    {
+      "id": 48,
+      "question": "Compare Q3 2016 vs Q3 2017 revenue.",
+      "category": "trend_compare",
+      "tier": 2,
+      "passed": true,
+      "empty_retried": false,
+      "recovered": false,
+      "elapsed_s": 0.657
+    },
+    {
+      "id": 49,
+      "question": "What is the year-over-year sales growth?",
+      "category": "trend_compare",
+      "tier": 2,
+      "passed": true,
+      "empty_retried": false,
+      "recovered": false,
+      "elapsed_s": 0.34
+    },
+    {
+      "id": 50,
+      "question": "How does profit in 2017 compare to 2016?",
+      "category": "trend_compare",
+      "tier": 2,
+      "passed": true,
+      "empty_retried": false,
+      "recovered": false,
+      "elapsed_s": 0.673
+    },
+    {
+      "id": 51,
+      "question": "Compare the West region vs East region sales in 2016.",
+      "category": "trend_compare",
+      "tier": 2,
+      "passed": true,
+      "empty_retried": false,
+      "recovered": false,
+      "elapsed_s": 1.325
+    },
+    {
+      "id": 52,
+      "question": "Show month-over-month revenue change in 2017.",
+      "category": "trend_compare",
+      "tier": 2,
+      "passed": true,
+      "empty_retried": false,
+      "recovered": false,
+      "elapsed_s": 0.933
+    },
+    {
+      "id": 53,
+      "question": "How did the Consumer segment perform compared to Corporate in 2016?",
+      "category": "trend_compare",
+      "tier": 2,
+      "passed": true,
+      "empty_retried": false,
+      "recovered": false,
+      "elapsed_s": 1.299
+    },
+    {
+      "id": 54,
+      "question": "Compare Technology vs Furniture profit in 2017.",
+      "category": "trend_compare",
+      "tier": 2,
+      "passed": true,
+      "empty_retried": false,
+      "recovered": false,
+      "elapsed_s": 1.245
+    },
+    {
+      "id": 55,
+      "question": "What is the sales growth rate from 2014 to 2017?",
+      "category": "trend_compare",
+      "tier": 2,
+      "passed": true,
+      "empty_retried": false,
+      "recovered": false,
+      "elapsed_s": 1.007
+    },
+    {
+      "id": 56,
+      "question": "How did profit margin change from 2015 to 2017?",
+      "category": "trend_compare",
+      "tier": 2,
+      "passed": true,
+      "empty_retried": false,
+      "recovered": false,
+      "elapsed_s": 1.064
+    },
+    {
+      "id": 57,
+      "question": "Compare Q1 2016 vs Q1 2017 orders.",
+      "category": "trend_compare",
+      "tier": 2,
+      "passed": true,
+      "empty_retried": false,
+      "recovered": false,
+      "elapsed_s": 0.664
+    },
+    {
+      "id": 58,
+      "question": "Show year-over-year profit growth by region.",
+      "category": "trend_compare",
+      "tier": 2,
+      "passed": true,
+      "empty_retried": false,
+      "recovered": false,
+      "elapsed_s": 0.332
+    },
+    {
+      "id": 59,
+      "question": "How did discount levels change from 2015 to 2016?",
+      "category": "trend_compare",
+      "tier": 3,
+      "passed": false,
+      "empty_retried": true,
+      "recovered": false,
+      "elapsed_s": 0.803
+    },
+    {
+      "id": 60,
+      "question": "Compare the top region vs bottom region sales in 2017.",
+      "category": "trend_compare",
+      "tier": 2,
+      "passed": true,
+      "empty_retried": false,
+      "recovered": false,
+      "elapsed_s": 1.321
+    },
+    {
+      "id": 61,
+      "question": "How did orders in the South region change from 2016 to 2017?",
+      "category": "trend_compare",
+      "tier": 2,
+      "passed": true,
+      "empty_retried": false,
+      "recovered": false,
+      "elapsed_s": 1.021
+    },
+    {
+      "id": 62,
+      "question": "Compare profit margin between Consumer and Home Office segments.",
+      "category": "trend_compare",
+      "tier": 3,
+      "passed": true,
+      "empty_retried": false,
+      "recovered": false,
+      "elapsed_s": 2.538
+    },
+    {
+      "id": 63,
+      "question": "Show the revenue trend — is growth accelerating or slowing?",
+      "category": "trend_compare",
+      "tier": 1,
+      "passed": true,
+      "empty_retried": false,
+      "recovered": false,
+      "elapsed_s": 0.338
+    },
+    {
+      "id": 64,
+      "question": "How did the Furniture category perform vs Technology in 2016?",
+      "category": "trend_compare",
+      "tier": 2,
+      "passed": true,
+      "empty_retried": false,
+      "recovered": false,
+      "elapsed_s": 1.305
+    },
+    {
+      "id": 65,
+      "question": "Compare October 2016 vs October 2015 total sales.",
+      "category": "trend_compare",
+      "tier": 2,
+      "passed": true,
+      "empty_retried": false,
+      "recovered": false,
+      "elapsed_s": 0.666
+    }
+  ]
+}

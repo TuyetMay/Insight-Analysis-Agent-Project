@@ -1,0 +1,22 @@
+AGENT EVALUATION RESULTS — Section 5.6  (v2)
+============================================================
+
+METHODOLOGY NOTE
+  Factual accuracy measured on DIAGNOSTIC responses only.
+  No-data and corrective responses excluded from accuracy pool.
+
+RESPONSE BREAKDOWN
+  Grounded:  diagnostic=11  corrective=2  no_data=7  /20
+  Baseline:  diagnostic=7  corrective=2  no_data=11  /20
+
+TABLE 5.12 — Factual Accuracy & Response Quality
+  Factual accuracy:     grounded=23.0%  baseline=27.5%  delta=-4.5pp
+  Fully accurate:       grounded=0/11  baseline=0/7
+  Hallucination rate:   grounded=0.0%  baseline=0.0%  delta=+0.0pp
+  Completeness:         grounded=55.0%  baseline=35.0%  delta=+20.0pp
+
+TABLE 5.13 — AssumptionValidator
+  Sales direction inverted: n=4  detected=75.0%  corrected=75.0%  missed=25.0%
+  Profit direction inverted: n=4  detected=75.0%  corrected=75.0%  missed=25.0%
+  Divergence claim: n=2  detected=100.0%  corrected=100.0%  missed=0.0%
+  OVERALL: n=10  detected=80.0%  corrected=80.0%  missed=20.0%

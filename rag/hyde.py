@@ -1,26 +1,12 @@
 """
-rag/hyde.py  —  v2
+rag/hyde.py  —  v2.1
 ────────────────────────────────────────────────────────────────────────────────
-Hypothetical Document Expansion (template-based, no LLM required).
-
-v1 vs v2 differences
-─────────────────────
-v1: simple keyword append
-    "bleeding money" → "loss-making unprofitable negative profit sub-category"
-
-v2 additions:
-  1. Semantic phrase table  — maps *any* natural-language variant to canonical
-     business vocabulary (35+ patterns vs 8 in v1)
-  2. Multi-pass expansion   — runs ALL matching patterns, not just the first
-  3. Intent-context suffix  — still fires when no pattern matched, but now
-     only for queries that lack metric vocabulary AND are long enough
-  4. Negation guard         — "which region is NOT losing money" should not
-     expand to "loss-making" vocabulary
-
-DESIGN INVARIANT
-────────────────
-Original query is always the prefix.  Expansion only ADDS terms.
-No information is removed or overwritten.
+v2.1 change vs v2:
+  FIX-HYDE-1: Added pattern for "drain/erode/deplete/hurt profitability/margin"
+              Previously "what is draining our profitability" returned
+              expansion_added="(none)" → P@6 = 0.000
+              Now expands to discount/loss/negative profit terms → retrieves
+              anomaly_high_discount_loss correctly.
 """
 
 from __future__ import annotations
@@ -28,10 +14,6 @@ from __future__ import annotations
 import re
 from typing import List, Optional, Tuple
 
-
-# ── Pattern table  ───────────────────────────────────────────────────────────
-# Each entry: (regex pattern, canonical expansion string)
-# Multiple patterns can match a single query — all expansions are appended.
 
 _PARAPHRASE_PATTERNS: List[Tuple[str, str]] = [
 
@@ -51,6 +33,20 @@ _PARAPHRASE_PATTERNS: List[Tuple[str, str]] = [
     (
         r'\b(which\s+(products?|items?|sub[\s-]?categories?)\s+(are\s+)?(hurting|dragging|pulling\s+down))\b',
         "loss-making negative profit unprofitable sub-category",
+    ),
+
+    # ── FIX-HYDE-1: drain/erode/hurt profitability or margin ─────────────
+    # Catches: "what is draining our profitability", "what erodes margin",
+    #          "hurting profitability", "eating into margin", "deplete profit"
+    (
+        r'\b(drain(ing)?|ero(de|ding|sion)|deplet(e|ing)|hurt(ing)?|eat(ing)?\s+into|compress(ing)?)\s+'
+        r'(our\s+)?(profit(ability)?|margin|earnings|revenue)\b',
+        "discount impact profit margin loss negative profit anomaly high discount",
+    ),
+    # Also catch "what is X our profitability" where X is a vague verb
+    (
+        r'\b(what\s+is|what\'s|what\s+are)\s+\w+ing\s+(our\s+|the\s+)?(profitability|margin|profit)\b',
+        "discount impact negative profit loss-making anomaly high discount",
     ),
 
     # ── Revenue / sales synonyms ──────────────────────────────────────────
@@ -182,16 +178,13 @@ _PARAPHRASE_PATTERNS: List[Tuple[str, str]] = [
     ),
 ]
 
-# ── Negation guard  ──────────────────────────────────────────────────────────
-# When these precede a matched phrase, suppress loss/negative expansion.
+# ── Negation guard ────────────────────────────────────────────────────────────
 _NEGATION_RE = re.compile(
     r'\b(not?|no\s+longer|without|except|exclude|isn\'?t|aren\'?t|doesn\'?t)\b',
     re.IGNORECASE,
 )
 
-# ── Loss-related patterns that should be guarded ────────────────────────────
-_LOSS_PATTERN_INDICES = {0, 1, 2, 3}   # indices in _PARAPHRASE_PATTERNS
-
+_LOSS_PATTERN_INDICES = {0, 1, 2, 3}
 
 # ── Intent-level suffix (fallback) ───────────────────────────────────────────
 _INTENT_SUFFIXES: dict = {
@@ -202,10 +195,8 @@ _INTENT_SUFFIXES: dict = {
     "kpi_value":   "total sales profit revenue breakdown summary",
 }
 
-# Minimum query length to trigger intent suffix
 _MIN_LEN_FOR_SUFFIX = 8
 
-# Metric vocabulary — if ANY of these are present, intent suffix is skipped
 _METRIC_RE = re.compile(
     r'\b(sales|profit|revenue|orders?|margin|loss|income|earn|discount|trend)\b',
     re.IGNORECASE,
@@ -220,14 +211,6 @@ class HyDEExpander:
     """
 
     def expand(self, query: str, intent: Optional[str] = None) -> str:
-        """
-        Return augmented query string.
-
-        Processing order:
-          1. Multi-pass paraphrase pattern matching (all hits, with negation guard)
-          2. Intent-level suffix (fires only when no patterns matched + vague vocab)
-          3. Return original unchanged if nothing applies
-        """
         if not query or not query.strip():
             return query
 
@@ -236,16 +219,14 @@ class HyDEExpander:
 
         for idx, (pattern, expansion) in enumerate(_PARAPHRASE_PATTERNS):
             if re.search(pattern, query, re.IGNORECASE):
-                # Guard: suppress loss-pattern expansions after negation
                 if has_negation and idx in _LOSS_PATTERN_INDICES:
                     continue
-                if expansion not in additions:   # dedup
+                if expansion not in additions:
                     additions.append(expansion)
 
         if additions:
             return f"{query} {' '.join(additions)}"
 
-        # ── Fallback: intent-level suffix ─────────────────────────────────
         if (
             intent
             and intent in _INTENT_SUFFIXES
