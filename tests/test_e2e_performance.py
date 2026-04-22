@@ -22,8 +22,8 @@ import os, sys, json, time, re
 sys.path.append('..')
 
 from config import Config
-from google import genai
-from google.genai import types as genai_types
+from google import genai  # type: ignore
+from google.genai import types as genai_types  # type: ignore
 from core.data_loader import load_filtered_data_safe, calculate_kpis, get_filter_options
 from core.database import execute_query
 from chatbot.nl_parser import NLParser
@@ -36,7 +36,7 @@ from chatbot.smart_router import SmartRouter
 from chatbot.agent.orchestrator import AgentOrchestrator
 from chatbot.hybrid_executor import HybridExecutor
 from rag.engine import RAGEngine
-import pandas as pd
+import pandas as pd  # type: ignore
 
 # ── Setup ─────────────────────────────────────────────────────────────────────
 gemini_client = genai.Client(

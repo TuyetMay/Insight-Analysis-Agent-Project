@@ -3,7 +3,8 @@ import logging
 import re as _re
 from typing import Any, Dict, List, Optional
 
-import pandas as pd
+import pandas as pd  # type: ignore
+from google.genai import types as genai_types  # type: ignore
 
 logger = logging.getLogger(__name__)
 
