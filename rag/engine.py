@@ -205,26 +205,11 @@ class RAGEngine:
         breakdown_by: Optional[str] = None,
         tier: int = 2,
         grain: Optional[str] = None,
-        inject_examples: bool = True,   # v3 NEW: inject few-shot into context
+        inject_examples: bool = True,   
     ) -> RAGContext:
         """
         Retrieve relevant chunks.
 
-        v3 pipeline
-        ───────────
-        1. HyDE expansion (semantic vocabulary augmentation)
-        2. Dense cosine retrieval from both static + dynamic layers
-        3. Soft re-ranking: score × priority_weight × dimension_boost
-        4. Schema injection (tier-3 only)
-        5. Intent must-have injection
-        6. Breakdown rank chunk injection (kpi_rank + known dimension)
-        7. Example section retrieval (inject_examples=True and tier=3)
-        8. Return RAGContext with example_section populated
-
-        Parameters
-        ──────────
-        grain           : time grain hint for trend scoring boost
-        inject_examples : include few-shot examples (default True for tier=3 callers)
         """
         if not self._built:
             return RAGContext(

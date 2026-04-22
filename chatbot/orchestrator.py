@@ -49,9 +49,13 @@ class DashboardChatbot:
         if "order_date" in self.df.columns and not pd.api.types.is_datetime64_any_dtype(self.df["order_date"]):
             self.df["order_date"] = pd.to_datetime(self.df["order_date"], errors="coerce")
 
-        api_key = getattr(Config, "GOOGLE_API_KEY", "") or ""
-        self._gemini_ready  = bool(api_key)
-        self._gemini_client = genai.Client(api_key=api_key) if self._gemini_ready else None
+        project  = getattr(Config, "GCP_PROJECT", "") or ""
+        location = getattr(Config, "GCP_LOCATION", "us-central1") or "us-central1"
+        self._gemini_ready  = bool(project)
+        self._gemini_client = (
+            genai.Client(vertexai=True, project=project, location=location)
+            if self._gemini_ready else None
+        )
         self._model         = getattr(Config, "GEMINI_MODEL", "gemini-1.5-flash")
 
         regions, segments, categories = self._filter_lists()

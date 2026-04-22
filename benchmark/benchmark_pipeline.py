@@ -260,7 +260,7 @@ print("  [!] Requires GOOGLE_API_KEY — skipping if not set\n")
 from config import Config
 tier3_results = {}
 
-if Config.GOOGLE_API_KEY:
+if Config.GCP_PROJECT:
     from rag.engine import RAGEngine
     from google import genai
 
@@ -268,7 +268,11 @@ if Config.GOOGLE_API_KEY:
     rag.build_static(df)
     rag.build(df, kpis, filters)
 
-    gemini_client = genai.Client(api_key=Config.GOOGLE_API_KEY)
+    gemini_client = genai.Client(
+        vertexai=True,
+        project=Config.GCP_PROJECT,
+        location=Config.GCP_LOCATION,
+    )
     parser_with_llm = NLParser(df, filters, gemini_client, Config.GEMINI_MODEL)
 
     tier3_queries = [
@@ -298,7 +302,7 @@ if Config.GOOGLE_API_KEY:
     results["step3_tier3_llm_planning"] = tier3_results
     print(f"\n  Average Tier 3 (LLM plan): {statistics.mean(tier3_times):.0f}ms")
 else:
-    print("  GOOGLE_API_KEY not set — Tier 3 skipped.")
+    print("  GCP_PROJECT not set — Tier 3 skipped.")
     results["step3_tier3_llm_planning"] = {"note": "skipped — no API key"}
 
 # ─────────────────────────────────────────────────────────────

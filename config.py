@@ -19,8 +19,13 @@ class Config:
     APP_TITLE = os.getenv('APP_TITLE', 'Superstore Business Intelligence Dashboard')
     APP_ICON = os.getenv('APP_ICON', '📊')
 
+    # Vertex AI settings – uses your $300 GCP free credit
+    GCP_PROJECT  = os.getenv("GCP_PROJECT", "")
+    GCP_LOCATION = os.getenv("GCP_LOCATION", "us-central1")
+    GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-1.5-flash-002")
+
+    # Legacy AI Studio key – kept for backward-compat checks; no longer used
     GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "")
-    GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-1.5-flash-lite")
 
     
     @classmethod
