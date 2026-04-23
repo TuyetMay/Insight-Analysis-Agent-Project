@@ -191,6 +191,12 @@ class DashboardChatbot:
         # ── Tier 2: Rule-based ────────────────────────────────
         rule_plan = self._parser.rule_based_plan(q)
         if rule_plan:
+            if rule_plan.get("intent") == "kpi_detail":  # FIX: strip filter contamination
+                rule_plan["filters"] = {
+                    "region": [], "segment": [], "category": [], "sub_category": []
+                }
+            rule_plan = self._plan_auditor.audit(q, rule_plan)
+        if rule_plan:
             rule_plan = self._plan_auditor.audit(q, rule_plan)
 
         if not self._gemini_ready:
@@ -331,6 +337,11 @@ Output:""".strip()
         # Tier 2: Rule-based
         rule_plan = self._parser.rule_based_plan(query)
         if rule_plan:
+            
+            if rule_plan.get("intent") == "kpi_detail":
+                rule_plan["filters"] = {
+                    "region": [], "segment": [], "category": [], "sub_category": []
+                }
             rule_plan = self._plan_auditor.audit(query, rule_plan)
             result = self._execute_plan(rule_plan, query)
             if result and not result.startswith("❌"):

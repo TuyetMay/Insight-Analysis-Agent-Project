@@ -101,6 +101,8 @@ class RuleBasedSuggestionEngine:
 
         if base.get("intent") == "kpi_trend":
             candidates += self._breakdowns(base)
+            candidates += self._decomposition_suggestions(base)
+
         elif base.get("intent") == "kpi_rank":
             candidates += self._rank_variations(base)
 
@@ -406,11 +408,21 @@ class RuleBasedSuggestionEngine:
         m, b = base["metrics"][0], base.get("breakdown_by")
         if not b or b not in self.allowed_breakdowns:
             return []
-        return [
+        
+        suggestions = [
             Suggestion(f"Top {k} {self._ld(b)} by {self._lm(m)}",
-                       self._clone(base, intent="kpi_rank", top_k=k, order_by=m))
+                    self._clone(base, intent="kpi_rank", top_k=k, order_by=m))
             for k in (3, 5)
         ]
+        
+        if b in ("region", "segment"):
+            suggestions.append(Suggestion(
+                f"Highest vs lowest {self._ld(b)} — gap analysis",
+                self._clone(base, intent="kpi_value",
+                            breakdown_by=b, show_extremes=True, top_k=None)
+            ))
+        
+        return suggestions
 
     def _rank_variations(self, base: Dict[str, Any]) -> List[Suggestion]:
         m = base["metrics"][0]
@@ -420,14 +432,55 @@ class RuleBasedSuggestionEngine:
                        self._clone(base, intent="kpi_rank", top_k=k, order_by=m, breakdown_by=b))
             for k in (3, 5, 10) if base.get("top_k") != k
         ]
+    
+    def _decomposition_suggestions(self, base: Dict[str, Any]) -> List[Suggestion]:
+        """Suggest breaking a metric into its components."""
+        m = base["metrics"][0]
+        suggestions = []
+        
+        if m == "sales":
+            # Sales = orders × AOV → suggest both
+            suggestions.append(Suggestion(
+                "Orders vs AOV — is sales growth volume or value driven?",
+                self._clone(base, intent="kpi_value", metrics=["orders", "sales"],
+                            breakdown_by=None, time_grain="none")
+            ))
+        
+        if m in ("sales", "profit") and not base.get("breakdown_by"):
+            # Add cross-breakdown suggestion
+            suggestions.append(Suggestion(
+                f"{self._lm(m)} by category × region — cross-breakdown",
+                self._clone(base, intent="kpi_value",
+                            breakdown_by="category",
+                            secondary_breakdown="region",
+                            time_grain="none")
+            ))
+        
+        return suggestions
 
     def _metric_switch(self, base: Dict[str, Any]) -> List[Suggestion]:
         current = base["metrics"][0]
-        return [
-            Suggestion(f"View {self._lm(m)}", self._clone(base, metrics=[m], order_by=m))
-            for m in ["sales", "profit", "orders", "profit_margin"]
-            if m in self.allowed_metrics and m != current
-        ]
+        suggestions = []
+        
+        _METRIC_PROGRESSIONS = {
+            "sales":         ["profit", "profit_margin", "orders"],
+            "profit":        ["profit_margin", "sales", "orders"],   # margin always next after profit
+            "orders":        ["sales", "profit"],
+            "profit_margin": ["profit", "sales"],
+        }
+        
+        for m in _METRIC_PROGRESSIONS.get(current, []):
+            if m in self.allowed_metrics:
+                label = self._lm(m)
+                if current == "profit" and m == "profit_margin":
+                    text = f"Profit margin — is {self._lm(current)} translating to margin?"
+                elif current == "sales" and m == "profit":
+                    text = f"Profit — is {self._lm(current)} growth profitable?"
+                else:
+                    text = f"View {label}"
+                suggestions.append(Suggestion(text, self._clone(base, metrics=[m], order_by=m)))
+        
+        return suggestions
 
     def _cross_breakdown_suggestions(self, base: Dict[str, Any]) -> List[Suggestion]:
         m  = base["metrics"][0]

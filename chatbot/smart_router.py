@@ -1,18 +1,3 @@
-"""
-chatbot/smart_router.py
-───────────────────────────────────────────────────────────────
-
-FIXES vs original:
-  FIX-SR-1: "Why did/does/is/are X" queries bây giờ luôn route "agent"
-             TRƯỚC khi gọi LLM. LLM trước đây phân loại sai chúng là
-             "structured" vì thấy metric + date. Thêm pre-LLM shortcut.
-  
-  FIX-SR-2: "What caused/drove X" queries cũng route agent ngay.
-  
-  FIX-SR-3: Regex fallback được cải thiện — khi has_agent=True và không
-             có has_structured, luôn route agent (không check thêm điều kiện).
-"""
-
 from __future__ import annotations
 
 import json
@@ -83,6 +68,14 @@ Q: "is the profit margin healthy?"
 
 Q: "what should we focus on to improve profit?"
 → {"mode":"agent","structured_query":null,"explain_query":"what should we focus on to improve profit?"}
+Q: "compare Consumer vs Corporate profit and explain the performance gap"
+→ {"mode":"hybrid","structured_query":"compare Consumer vs Corporate profit","explain_query":"why does Consumer profit differ from Corporate?"}
+
+Q: "which region contributes least to profit and explain why"  
+→ {"mode":"hybrid","structured_query":"profit by region","explain_query":"why does the lowest profit region underperform?"}
+
+Q: "show me sales by segment over years and explain the trend"
+→ {"mode":"hybrid","structured_query":"sales by segment over years","explain_query":"explain why sales trend differs across segments"}
 """
 
 _CLASSIFIER_PROMPT = """You are a query intent classifier for a business analytics dashboard.
@@ -308,6 +301,7 @@ class SmartRouter:
         re.IGNORECASE,
     )
 
+
     def _regex_fallback(self, query: str) -> RouteDecision:
         has_agent      = bool(self._AGENT_RE.search(query))
         has_divergence = bool(self._DIVERGENCE_RE.search(query))
@@ -316,6 +310,43 @@ class SmartRouter:
         has_compound   = bool(self._COMPOUND_CAUSAL_RE.search(query))
         has_standalone = bool(self._STANDALONE_EXPLAIN_RE.search(query))
         has_qualitative = bool(self._QUALITATIVE_RE.search(query))
+
+        _COMPARE_WITH_CONTEXT_RE = re.compile(
+        r'\b(compare|vs\.?|versus)\b.{0,60}'
+        r'\b(explain|tell me|describe|what drives?|what accounts?|why|reason)\b'
+        r'|\b(explain|tell me|describe|what drives?|what accounts?|why|reason)\b.{0,60}'
+        r'\b(compare|vs\.?|versus|between|segment|region|category)\b',
+        re.IGNORECASE | re.DOTALL,
+    )
+
+        _SEGMENT_REGION_WHY_RE = re.compile(
+            r'\b(which\s+(region|segment|category|area)|'
+            r'(region|segment|category)\s+(perform|contribut|underperform|lag|lead))'
+            r'.{0,50}\b(why|explain|reason|cause|drove|drives?)\b'
+            r'|\b(why|explain|reason|cause|drove|drives?)\b.{0,50}'
+            r'\b(region|segment|category)\b',
+            re.IGNORECASE | re.DOTALL,
+        )
+
+        if _COMPARE_WITH_CONTEXT_RE.search(query):
+            return RouteDecision(
+                mode="hybrid",
+                structured_query=query,
+                explain_query=query,
+                used_fallback=True,
+            )
+
+        # Hybrid: region/segment question with why/explain
+        if _SEGMENT_REGION_WHY_RE.search(query):
+            return RouteDecision(
+                mode="hybrid",
+                structured_query=re.sub(
+                    r'\b(why|explain|reason|cause)\b.*$', '', query,
+                    flags=re.IGNORECASE
+                ).strip(),
+                explain_query=query,
+                used_fallback=True,
+            )
 
         # Divergence pattern → always agent
         if has_divergence:
@@ -335,10 +366,6 @@ class SmartRouter:
         if has_qualitative and not has_structured:
             return RouteDecision(mode="agent", used_fallback=True,
                                  explain_query=query)
-
-        # FIX-SR-3: Agent pattern (has_agent=True) WITHOUT structured → luôn agent
-        # Original code chỉ check "why" khi has_structured cũng True, nhưng
-        # "Why is Furniture underperforming?" không match _STRUCTURED_RE → phải agent
         if has_agent and not has_structured:
             return RouteDecision(mode="agent", used_fallback=True,
                                  explain_query=query)
