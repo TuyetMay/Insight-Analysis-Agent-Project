@@ -1,3 +1,21 @@
+"""
+chatbot/suggestions/rule_engine.py — PATCHED
+
+FIX-RE-1: Suggestions sau loss analysis (Tables/Bookcases losing money) hiện
+           là generic (Sales YoY, Sales MoM) thay vì contextual loss analysis.
+           
+           Sau khi user hỏi về loss-making items, suggestions cần là:
+           - Discount impact on profit by category
+           - Profit margin by category  
+           - Loss-making sub-categories full breakdown
+           - Profit trend YoY comparison
+
+FIX-RE-2: Suggestions sau agent/hybrid response cũng bị generic.
+           _last_answer_has_loss() đã đúng logic nhưng _loss_followups()
+           tạo suggestions quá generic — chỉ trả kpi_value profit by category.
+           Cần thêm discount-specific và comparison suggestions.
+"""
+
 from __future__ import annotations
 
 import copy
@@ -34,10 +52,11 @@ class RuleBasedSuggestionEngine:
         "prev_period": "vs previous period",
     }
 
-    # ── Keywords để detect loss content trong answer ──────────────────────────
+    # FIX-RE-1: Enhanced loss keywords
     _LOSS_KEYWORDS = re.compile(
         r'\b(loss|losing money|negative profit|loss-making|unprofitable'
-        r'|avg discount \d+%|bleeding|drain)\b',
+        r'|avg discount \d+%|bleeding|drain|tables|bookcases|supplies'
+        r'|loss:\s*\$|total loss|loss-making sub-categor)\b',
         re.IGNORECASE,
     )
 
@@ -53,10 +72,6 @@ class RuleBasedSuggestionEngine:
     def suggest(self, plan: Dict[str, Any],
                 dashboard_defaults: Optional[Dict[str, Any]] = None,
                 last_answer: str = "") -> List[Suggestion]:
-        """
-        FIX-1: Added last_answer parameter so _last_answer_has_loss() can work.
-        FIX-2: Pass plan as last_plan to _dedup() to block exact repeats.
-        """
         if not isinstance(plan, dict) or not plan.get("intent"):
             return self._fallback(dashboard_defaults)
 
@@ -71,9 +86,8 @@ class RuleBasedSuggestionEngine:
         b = base.get("breakdown_by")
         candidates: List[Suggestion] = []
 
-        # FIX-1: _last_answer_has_loss now receives last_answer correctly
         if self._last_answer_has_loss(last_answer):
-            candidates = self._loss_followups(base) + candidates
+            candidates = self._loss_followups(base, last_answer) + candidates
 
         if b:
             candidates += self._rank_from_breakdown(base)
@@ -90,32 +104,27 @@ class RuleBasedSuggestionEngine:
         elif base.get("intent") == "kpi_rank":
             candidates += self._rank_variations(base)
 
-        # FIX-2: pass plan so _dedup blocks exact repeats
         return self._dedup(candidates, last_plan=plan)
-
-    # ── Loss detection (FIX-1) ────────────────────────────────────────────────
 
     @classmethod
     def _last_answer_has_loss(cls, last_answer: str) -> bool:
-        """
-        Return True if the previous response contains loss/negative-profit content.
-        Used to inject loss-specific follow-up suggestions.
-        """
         if not last_answer:
             return False
         return bool(cls._LOSS_KEYWORDS.search(last_answer))
 
-    # ── Loss follow-ups ───────────────────────────────────────────────────────
-
-    def _loss_followups(self, base: Dict[str, Any]) -> List[Suggestion]:
+    def _loss_followups(self, base: Dict[str, Any],
+                        last_answer: str = "") -> List[Suggestion]:
         """
-        Contextual suggestions after a loss-analysis response.
-        These surface discount impact and margin analysis — the natural
-        next analytical steps after identifying loss-making sub-categories.
+        FIX-RE-1: Contextual suggestions after loss analysis.
+        Cung cấp 4 suggestions thực sự hữu ích:
+        1. Discount impact → hiểu tại sao
+        2. Profit margin by category → xem dimension rộng hơn
+        3. Profit YoY → có đang tệ hơn không?
+        4. Profit by region → vùng nào bị ảnh hưởng?
         """
         return [
             Suggestion(
-                "Discount impact on profit — by category",
+                "Discount impact on profit — which category has worst ratio?",
                 self._clone(base, intent="kpi_value",
                             metrics=["profit"], breakdown_by="category",
                             time_grain="none", order_by="profit")
@@ -126,9 +135,19 @@ class RuleBasedSuggestionEngine:
                             metrics=["profit_margin"], breakdown_by="category",
                             time_grain="none", order_by="profit_margin")
             ),
+            Suggestion(
+                "Profit trend YoY — is loss-making getting worse over time?",
+                self._clone(base, intent="kpi_compare",
+                            metrics=["profit"], compare_period="yoy",
+                            breakdown_by=None, time_grain="none")
+            ),
+            Suggestion(
+                "Profit by region — which region is most affected by losses?",
+                self._clone(base, intent="kpi_value",
+                            metrics=["profit"], breakdown_by="region",
+                            time_grain="none", order_by="profit")
+            ),
         ]
-
-    # ── Analyst suggestions for Quick Insight ─────────────────────────────────
 
     def _analyst_suggestions(self, base: Dict[str, Any],
                               ctx: Dict[str, Any]) -> List[Suggestion]:
@@ -161,7 +180,6 @@ class RuleBasedSuggestionEngine:
 
         suggs: List[Suggestion] = []
 
-        # 1. Region breakdown
         if reference_period:
             suggs.append(Suggestion(
                 f"Which region {period_phrase}?",
@@ -175,7 +193,6 @@ class RuleBasedSuggestionEngine:
                             top_k=5, secondary_breakdown=None, time_grain="none"),
             ))
 
-        # 2. Sub-category drill-down
         if overall_chg < -10:
             suggs.append(Suggestion(
                 f"Which sub-categories drove the {self._lm(m)} drop?",
@@ -195,7 +212,6 @@ class RuleBasedSuggestionEngine:
                             top_k=5, secondary_breakdown=None, time_grain="none"),
             ))
 
-        # 3. Comparison
         if has_partial and best_period:
             suggs.append(Suggestion(
                 f"{self._lm(m)} — same date range last year",
@@ -228,7 +244,6 @@ class RuleBasedSuggestionEngine:
                             breakdown_by=None, secondary_breakdown=None, metrics=[m]),
             ))
 
-        # 4. Complementary metric
         if kpi == "sales":
             lbl = "is profitability also declining?" if overall_chg < -10 else "is growth profitable?"
             suggs.append(Suggestion(
@@ -266,8 +281,6 @@ class RuleBasedSuggestionEngine:
             ))
 
         return suggs
-
-    # ── Private helpers ───────────────────────────────────────────────────────
 
     def _lm(self, m: str) -> str:
         return self._METRIC_LABELS.get(m, m.replace("_", " ").title())
@@ -323,15 +336,10 @@ class RuleBasedSuggestionEngine:
 
     def _dedup(self, candidates: List[Suggestion],
                last_plan: Optional[Dict[str, Any]] = None) -> List[Suggestion]:
-        """
-        FIX-2: Block suggestions that duplicate the current plan
-        (same intent + breakdown + metric = exact repeat of what was just shown).
-        """
         seen_text: set = set()
         seen_plan_keys: set = set()
         result: List[Suggestion] = []
 
-        # Pre-seed with current plan's key so we don't suggest exact same query
         if last_plan:
             last_key = (
                 last_plan.get("intent"),
@@ -347,7 +355,6 @@ class RuleBasedSuggestionEngine:
             if s.text in seen_text:
                 continue
 
-            # Check plan-level duplicate
             if s.plan:
                 plan_key = (
                     s.plan.get("intent"),

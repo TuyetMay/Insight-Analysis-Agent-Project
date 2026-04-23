@@ -1,36 +1,16 @@
 """
 chatbot/smart_router.py
 ───────────────────────────────────────────────────────────────
-Smart Query Router — LLM-based intent classification (Step R2)
 
-PROBLEMS SOLVED:
-  Limitation 1: "Explain the sales trend by region"
-    → contains "explain" (agent signal) + "trend by region" (structured signal)
-    → old regex: routes to structured (loses causal explanation)
-    → new router: detects HYBRID — runs structured first, agent explains with data
-
-  Limitation 2: "Which region contributes least to profit and why?"
-    → complex sentence, "why" may be missed in variant phrasings
-    → old regex: fragile pattern matching
-    → new router: LLM reads full semantic intent, returns JSON mode
-
-ARCHITECTURE (based on DIN-SQL / Decomposed Prompting / BIRD):
-  Input query
-      │
-      ▼
-  LLM Classifier (few-shot, returns JSON)
-      │
-      ├─ mode: "structured"  → existing rule-based + SQL path
-      ├─ mode: "agent"       → existing AgentOrchestrator path
-      └─ mode: "hybrid"      → STEP 1: structured query (get data)
-                                STEP 2: agent explain (with data as context)
-                                STEP 3: merge & return combined answer
-
-COST OPTIMISATION:
-  - Uses gemini-1.5-flash-lite (cheapest, fastest)
-  - Prompt < 300 tokens
-  - Falls back to regex router on ANY LLM failure
-  - Caches result per query string (no repeated LLM calls)
+FIXES vs original:
+  FIX-SR-1: "Why did/does/is/are X" queries bây giờ luôn route "agent"
+             TRƯỚC khi gọi LLM. LLM trước đây phân loại sai chúng là
+             "structured" vì thấy metric + date. Thêm pre-LLM shortcut.
+  
+  FIX-SR-2: "What caused/drove X" queries cũng route agent ngay.
+  
+  FIX-SR-3: Regex fallback được cải thiện — khi has_agent=True và không
+             có has_structured, luôn route agent (không check thêm điều kiện).
 """
 
 from __future__ import annotations
@@ -43,21 +23,11 @@ from typing import Any, Dict, List, Literal, Optional
 
 logger = logging.getLogger(__name__)
 
-# ── Type aliases ──────────────────────────────────────────────
 RouteMode = Literal["structured", "agent", "hybrid"]
 
 
 @dataclass
 class RouteDecision:
-    """
-    Result from SmartRouter.classify().
-
-    mode            : "structured" | "agent" | "hybrid"
-    structured_query: sub-query for SQL/rule path (hybrid only)
-    explain_query   : sub-query for agent path (hybrid only)
-    confidence      : 0.0–1.0, used for logging / fallback decisions
-    raw_llm_output  : original LLM JSON string for debugging
-    """
     mode: RouteMode
     structured_query: Optional[str] = None
     explain_query: Optional[str] = None
@@ -66,7 +36,6 @@ class RouteDecision:
     used_fallback: bool = False
 
 
-# ── Few-shot examples for the classifier prompt ───────────────
 _FEW_SHOT_EXAMPLES = """
 EXAMPLES:
 
@@ -87,6 +56,12 @@ Q: "what caused the revenue decline last quarter?"
 
 Q: "sales increased but profit decreased — why?"
 → {"mode":"agent","structured_query":null,"explain_query":"sales increased but profit decreased — why?"}
+
+Q: "why does heavy discounting hurt profitability?"
+→ {"mode":"agent","structured_query":null,"explain_query":"why does heavy discounting hurt profitability?"}
+
+Q: "why is Furniture underperforming?"
+→ {"mode":"agent","structured_query":null,"explain_query":"why is Furniture underperforming?"}
 
 Q: "explain the sales trend by region"
 → {"mode":"hybrid","structured_query":"sales trend by region","explain_query":"explain why sales trend differs across regions"}
@@ -136,23 +111,36 @@ USER QUESTION: "{query}"
 Return JSON only:"""
 
 
+# ── Pre-LLM shortcut patterns (FIX-SR-1, FIX-SR-2) ──────────────────────────
+# Các pattern này LUÔN route agent mà không cần gọi LLM.
+# Ngăn LLM phân loại sai "Why did profit drop" → structured.
+
+_WHY_VERB_RE = re.compile(
+    r'^why\s+(did|does|do|is|are|was|were|has|have|had|would|should|could|can)\b',
+    re.IGNORECASE,
+)
+
+_CAUSAL_START_RE = re.compile(
+    r'^(what\s+(caused?|drove|is\s+causing|triggered|led\s+to|drove)|'
+    r'how\s+come\b|'
+    r'reason\s+(for|why)\b)',
+    re.IGNORECASE,
+)
+
+
 class SmartRouter:
     """
     LLM-based query router with regex fallback.
 
-    Usage:
-        router = SmartRouter(gemini_client, model_name)
-        decision = router.classify("explain sales trend by region")
-        # decision.mode == "hybrid"
-        # decision.structured_query == "sales trend by region"
-        # decision.explain_query == "explain why sales trend differs across regions"
+    FIX-SR-1: Thêm pre-LLM shortcut cho "why did/does/is" và "what caused" queries.
+    Các query này LUÔN là agent — không cần tốn LLM call để confirm.
     """
 
     def __init__(
         self,
         gemini_client: Any,
         model_name: str,
-        fallback_router: Optional[Any] = None,  # existing QueryRouter instance
+        fallback_router: Optional[Any] = None,
         cache_size: int = 128,
     ) -> None:
         self.client = gemini_client
@@ -161,13 +149,7 @@ class SmartRouter:
         self._cache: Dict[str, RouteDecision] = {}
         self._cache_size = cache_size
 
-    # ── Public API ────────────────────────────────────────────
-
     def classify(self, query: str) -> RouteDecision:
-        """
-        Classify query and return RouteDecision.
-        Falls back to regex router on any LLM failure.
-        """
         q = (query or "").strip()
         if not q:
             return RouteDecision(mode="structured")
@@ -176,42 +158,45 @@ class SmartRouter:
         if q in self._cache:
             return self._cache[q]
 
+        # ── FIX-SR-1: Pre-LLM shortcut cho causal queries ─────────────────
+        # "Why did/does/is/are X" và "What caused X" LUÔN là agent.
+        # LLM trước đây phân loại sai khi thấy metric+date → "structured".
+        if _WHY_VERB_RE.search(q) or _CAUSAL_START_RE.search(q):
+            decision = RouteDecision(
+                mode="agent",
+                explain_query=q,
+                confidence=0.97,
+                used_fallback=False,
+            )
+            self._store_cache(q, decision)
+            return decision
+
         # Try LLM classification
         decision = self._llm_classify(q)
+        self._store_cache(q, decision)
+        return decision
 
-        # Evict cache if full (simple FIFO)
+    def _store_cache(self, q: str, decision: RouteDecision) -> None:
         if len(self._cache) >= self._cache_size:
             oldest = next(iter(self._cache))
             del self._cache[oldest]
-
         self._cache[q] = decision
-        return decision
 
     def route(self, query: str) -> str:
-        """
-        Backward-compatible with old QueryRouter.route().
-        Returns "structured" | "agent" (hybrid → "agent" for simple callers).
-        """
         decision = self.classify(query)
         if decision.mode == "hybrid":
-            return "agent"   # caller should use classify() for full hybrid support
+            return "agent"
         return decision.mode
-
-    # ── LLM classifier ────────────────────────────────────────
 
     def _llm_classify(self, query: str) -> RouteDecision:
         if not self.client:
             return self._regex_fallback(query)
 
         try:
-            # Build prompt
             prompt = _CLASSIFIER_PROMPT.format(
                 few_shot=_FEW_SHOT_EXAMPLES,
                 query=query,
             )
-
-            # Call LLM — use duck-typing, avoid hard import of google.genai
-            # so the class works even when google-genai is not installed
             try:
                 from google.genai import types as genai_types
                 resp = self.client.models.generate_content(
@@ -223,7 +208,6 @@ class SmartRouter:
                     ),
                 )
             except ImportError:
-                # google.genai not available — call without config kwarg
                 resp = self.client.models.generate_content(
                     model=self.model_name,
                     contents=prompt,
@@ -237,14 +221,11 @@ class SmartRouter:
             return self._regex_fallback(query)
 
     def _parse_llm_response(self, raw: str, original_query: str) -> RouteDecision:
-        """Parse LLM JSON response into RouteDecision."""
-        # Strip markdown fences if present
         cleaned = re.sub(r"```(?:json)?", "", raw).strip().rstrip("`").strip()
 
         try:
             obj = json.loads(cleaned)
         except json.JSONDecodeError:
-            # Try extracting JSON object
             m = re.search(r"\{.*?\}", cleaned, re.DOTALL)
             if m:
                 try:
@@ -270,7 +251,7 @@ class SmartRouter:
             used_fallback=False,
         )
 
-    # ── Regex fallback (existing logic preserved) ─────────────
+    # ── Regex fallback ─────────────────────────────────────────────────────────
 
     _AGENT_RE = re.compile(
         r"\b("
@@ -298,8 +279,6 @@ class SmartRouter:
         r")\b",
         re.IGNORECASE,
     )
-    # NEW: signals that indicate hybrid even without "why"
-    # Covers Limitation 1: "explain", "describe", "what drives"
     _EXPLAIN_RE = re.compile(
         r"\b("
         r"explain|describe\s+why|describe\s+the"
@@ -310,9 +289,6 @@ class SmartRouter:
         r")\b",
         re.IGNORECASE,
     )
-
-    # NEW: Limitation 2 — implicit causal in compound questions
-    # Catches "X and why?", "X and what caused?", "X, what accounts for?"
     _COMPOUND_CAUSAL_RE = re.compile(
         r"\b(and\s+why|and\s+what\s+(caused|is\s+causing|drove|drives?|accounts?\s+for)"
         r"|,\s*what\s+(caused|is\s+causing|drove|drives?|accounts?\s+for)"
@@ -321,14 +297,10 @@ class SmartRouter:
         r")\b",
         re.IGNORECASE,
     )
-
-    # NEW: standalone "explain" or "what drives" without other signals
     _STANDALONE_EXPLAIN_RE = re.compile(
         r"^(explain|what\s+drives?|what\s+is\s+driving|describe\s+the)\b",
         re.IGNORECASE,
     )
-
-    # NEW: advisory/qualitative signals that imply agent
     _QUALITATIVE_RE = re.compile(
         r"\b(healthy|normal|good|bad|worth\s+it|too\s+(high|low)"
         r"|performing\s+well|underperform|struggling|concern"
@@ -337,7 +309,6 @@ class SmartRouter:
     )
 
     def _regex_fallback(self, query: str) -> RouteDecision:
-        """Regex-based fallback — enhanced version of old QueryRouter."""
         has_agent      = bool(self._AGENT_RE.search(query))
         has_divergence = bool(self._DIVERGENCE_RE.search(query))
         has_structured = bool(self._STRUCTURED_RE.search(query))
@@ -351,7 +322,7 @@ class SmartRouter:
             return RouteDecision(mode="agent", used_fallback=True,
                                  explain_query=query)
 
-        # Limitation 2: compound causal ("X and why?", "X and what caused?")
+        # Compound causal → hybrid
         if has_compound:
             return RouteDecision(
                 mode="hybrid",
@@ -360,12 +331,19 @@ class SmartRouter:
                 used_fallback=True,
             )
 
-        # Qualitative questions with no strong structured component → agent
+        # Qualitative without structured → agent
         if has_qualitative and not has_structured:
             return RouteDecision(mode="agent", used_fallback=True,
                                  explain_query=query)
 
-        # Limitation 1: "explain X" + structured data component → hybrid
+        # FIX-SR-3: Agent pattern (has_agent=True) WITHOUT structured → luôn agent
+        # Original code chỉ check "why" khi has_structured cũng True, nhưng
+        # "Why is Furniture underperforming?" không match _STRUCTURED_RE → phải agent
+        if has_agent and not has_structured:
+            return RouteDecision(mode="agent", used_fallback=True,
+                                 explain_query=query)
+
+        # explain + structured → hybrid
         if has_explain and has_structured:
             return RouteDecision(
                 mode="hybrid",
@@ -374,21 +352,16 @@ class SmartRouter:
                 used_fallback=True,
             )
 
-        # Standalone "explain ..." or "what drives ..." without metric keywords → agent
+        # Standalone explain → agent or hybrid
         if has_standalone and not has_structured:
             return RouteDecision(mode="agent", used_fallback=True,
                                  explain_query=query)
 
-        # "explain X" even without explicit structured keyword → hybrid
-        # e.g. "explain profit differences across segments"
-        # BUT "describe why X" = strong agent (has explicit "why")
         if has_explain:
             has_why = bool(re.search(r"\bwhy\b", query, re.IGNORECASE))
             if has_why:
-                # "describe why X" → agent (causal, no data lookup needed)
                 return RouteDecision(mode="agent", used_fallback=True,
                                      explain_query=query)
-            # "explain X across Y" — check if there's a dimension breakdown
             has_dimension = bool(re.search(
                 r"\b(by|across|per|for each|between|among|within)\s+"
                 r"(region|segment|category|sub.?category|area|zone|market)s?\b"
@@ -403,16 +376,10 @@ class SmartRouter:
                     explain_query=query,
                     used_fallback=True,
                 )
-            # "explain X" without dimension → agent
             return RouteDecision(mode="agent", used_fallback=True,
                                  explain_query=query)
 
-        # Pure agent signals
-        if has_agent and not has_structured:
-            return RouteDecision(mode="agent", used_fallback=True,
-                                 explain_query=query)
-
-        # Agent + structured with "why" → agent wins
+        # Agent + structured: nếu có "why" → agent wins
         if has_agent and has_structured:
             if re.search(r"\bwhy\b", query, re.IGNORECASE):
                 return RouteDecision(mode="agent", used_fallback=True,
