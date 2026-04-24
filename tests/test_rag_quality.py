@@ -1,18 +1,3 @@
-"""
-tests/test_rag_quality.py  — v2
-────────────────────────────────────────────────────────────────────────────────
-Changes vs v1:
-  FIX-1: relevant_ids redefined as "minimum sufficient" — 1-2 chunks that are
-          strictly necessary for a correct answer, not exhaustive coverage.
-          This gives a fair P@6 score that reflects system utility.
-  FIX-2: HyDE pattern added for "drain/erode/deplete profitability" queries
-          (was returning expansion_added="(none)" → P@6 = 0.000)
-
-Usage:
-    cd /path/to/project
-    python tests/test_rag_quality.py
-"""
-
 import os, sys, json, re, time
 from dotenv import load_dotenv
 
@@ -20,7 +5,6 @@ _THIS_DIR     = os.path.dirname(os.path.abspath(__file__))
 _PROJECT_ROOT = os.path.dirname(_THIS_DIR)
 sys.path.insert(0, _PROJECT_ROOT)
 load_dotenv(os.path.join(_PROJECT_ROOT, ".env"))
-
 from config import Config
 from google import genai
 from core.data_loader import load_filtered_data_safe, calculate_kpis, get_filter_options
