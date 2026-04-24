@@ -273,6 +273,27 @@ class AgentOrchestrator:
         date_pairs = _extract_date_pairs(question)
 
         if not date_pairs:
+            # Dùng full range — compare overall vs year trước
+            for metric in ("sales", "profit", "orders"):
+                args = {
+                    "metric":        metric,
+                    "current_start": self.default_start,
+                    "current_end":   self.default_end,
+                }
+                result = execute_tool("compare_periods", args,
+                                    self.default_start, self.default_end)
+                results.append(f"[compare_periods / {metric}]\n{result}")
+            # Thêm query_metric theo category/segment để agent có context
+            for breakdown in ("category", "region"):
+                args = {
+                    "metric":        "profit",
+                    "breakdown_by":  breakdown,
+                    "start_date":    self.default_start,
+                    "end_date":      self.default_end,
+                }
+                result = execute_tool("query_metric", args,
+                                    self.default_start, self.default_end)
+                results.append(f"[query_metric / profit by {breakdown}]\n{result}")
             return results
 
         if len(date_pairs) >= 2:

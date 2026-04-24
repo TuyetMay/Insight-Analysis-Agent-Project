@@ -2,25 +2,18 @@
 chatbot/nl_parser.py — PATCHED
 
 FIXES vs original:
-  FIX-NLP-1: fast_kpi_answer() không còn bắt "which [dim] has X" và "top N X"
-             → chúng cần breakdown, không phải simple KPI
+  FIX-NLP-1: fast_kpi_answer() no longer catches "which [dim] has X" and "top N X"
+  FIX-NLP-2: fast_kpi_answer() no longer catches "distribution" queries
+  FIX-NLP-3: rule_based_plan() handles "discount impact on profit by [dim]"
+  FIX-NLP-4: rule_based_plan() handles "[metric] distribution across [dim]"
+  FIX-NLP-5: rule_based_plan() handles "trend by [segment/region] year over year"
+  FIX-NLP-6: rule_based_plan() handles "top N [dim] by [metric] with [metric2]"
+  FIX-NLP-7: kpi_detail queries not filtered by sidebar filters unless user
+             explicitly mentions region/category in the question
 
-  FIX-NLP-2: fast_kpi_answer() không còn bắt "distribution" queries
-
-  FIX-NLP-3: rule_based_plan() xử lý "discount impact on profit by [dim]"
-             → trả kpi_value profit by dim thay vì bị hiểu nhầm
-
-  FIX-NLP-4: rule_based_plan() xử lý "[metric] distribution across [dim]"
-             → trả kpi_rank với top_k=50 (show all)
-
-  FIX-NLP-5: rule_based_plan() xử lý "trend by [segment/region] year over year"
-             → kpi_trend với breakdown_by=[dim], time_grain=year
-
-  FIX-NLP-6: rule_based_plan() xử lý "top N [dim] by [metric] with [metric2]"
-             → kpi_rank với metrics=[metric, metric2]
-
-  FIX-NLP-7: kpi_detail queries không bị filter bởi sidebar filters trừ khi
-             user explicitly mention region/category trong câu hỏi
+  FIX-NLP-8 (NEW): Initialize explicit_dates = None at the top of rule_based_plan
+             to prevent UnboundLocalError when early-return branches reference
+             it before the main assignment lower in the function.
 """
 
 from __future__ import annotations
@@ -175,8 +168,6 @@ _DATE_RANGE_SEP_RE = re.compile(
     re.IGNORECASE,
 )
 
-# ── FIX-NLP: New patterns ──────────────────────────────────────────────────────
-
 # FIX-NLP-4: Detect "[metric] distribution/spread across [dim]"
 _DISTRIBUTION_RE = re.compile(
     r"\b(distribution|spread|across\s+all)\b",
@@ -195,7 +186,7 @@ _TOP_WITH_SECONDARY_RE = re.compile(
     re.IGNORECASE,
 )
 
-# FIX-NLP-5: Detect "trend by [dim]" hay "[dim] trend" với year
+# FIX-NLP-5: Detect "trend by [dim]" or "[dim] trend" with year
 _TREND_BY_DIM_RE = re.compile(
     r"\b(trend|growth|change)\s+by\s+(region|segment|category|sub.?category)\b"
     r"|\b(region|segment|category|sub.?category)\s+(trend|growth|over\s+years?)\b",
@@ -237,7 +228,7 @@ def _parse_numeric_date(raw: str) -> Optional[date]:
 
 
 class NLParser:
-    """Three-tier NL → plan parser. PATCHED with FIX-NLP-1 through FIX-NLP-7."""
+    """Three-tier NL → plan parser. PATCHED with FIX-NLP-1 through FIX-NLP-8."""
 
     def __init__(self, df: pd.DataFrame, filters: Dict[str, Any],
                  gemini_client: Any = None, model_name: str = "") -> None:
@@ -266,8 +257,8 @@ class NLParser:
 
     def fast_kpi_answer(self, q: str) -> Optional[str]:
         """Return instant KPI answer.
-        
-        FIX-NLP-1: Không bắt queries có "which [dim]", "top N", "distribution"
+
+        FIX-NLP-1: Don't catch queries with "which [dim]", "top N", "distribution"
         """
         ql = (q or "").strip().lower()
         if _DETAIL_NEGATIVE_RE.search(q):
@@ -275,19 +266,15 @@ class NLParser:
         if not ql or self._has_breakdown_hint(q) or self._has_time_hint(q):
             return None
 
-        # FIX-NLP-1: "which [dim] has best/highest [metric]" cần breakdown
         if _WHICH_DIM_RE.search(ql):
             return None
 
-        # FIX-NLP-1: "top N [dim] by [metric]" cần kpi_rank
         if _TOP_RE.search(ql):
             return None
 
-        # FIX-NLP-2: "distribution across [dim]" cần kpi_rank
         if _DISTRIBUTION_RE.search(ql):
             return None
 
-        # FIX-NLP-3: "discount impact" cần kpi_value by dim
         if _DISCOUNT_IMPACT_RE.search(ql):
             return None
 
@@ -331,7 +318,6 @@ class NLParser:
                 f" These orders generated **{money(ts)}** in revenue and **{money(tp)}** in profit."
             )
         if re.search(r"\b(profit\s+margin|margin)\b", ql):
-            # FIX-NLP-2: chỉ fast-answer nếu KHÔNG có breakdown intent
             if not re.search(r"\b(by|per|across|segment|region|category|sub.?category)\b", ql):
                 benchmark = "above" if pm >= 12 else "below"
                 return (
@@ -356,7 +342,12 @@ class NLParser:
             ql = re.sub(pattern, canonical, ql)
         s0, e0 = self._date_range()
 
-        # ── Detect loss-making (kpi_detail) ────────────────────────────────────
+        # FIX-NLP-8: Initialize explicit_dates to None so early-return branches
+        # that reference it (e.g. inside kpi_detail, discount, distribution blocks)
+        # don't raise UnboundLocalError.
+        explicit_dates: Optional[Tuple[str, str]] = None
+
+        # ── Detect loss-making (kpi_detail) ──────────────────────────────────
         if _DETAIL_NEGATIVE_RE.search(q):
             explicit_dates = self._extract_date_range(ql)
             if explicit_dates:
@@ -367,8 +358,6 @@ class NLParser:
                     breakdown = dim
                     break
 
-            # FIX-NLP-7: kpi_detail không auto-filter bởi sidebar trừ khi user
-            # explicitly mention region/category trong câu hỏi
             plan: Dict[str, Any] = {
                 "intent":              "kpi_detail",
                 "condition":           "profit_negative",
@@ -384,7 +373,6 @@ class NLParser:
                 "filters": {"region": [], "segment": [], "category": [], "sub_category": []},
             }
 
-            # Chỉ thêm filter nếu user explicitly mention giá trị cụ thể
             ql_lower = q.lower()
             f = self.filters or {}
             for dim, all_vals in [
@@ -402,7 +390,7 @@ class NLParser:
                     plan["filters"][dim] = mentioned
             return plan
 
-        # ── FIX-NLP-3: Discount impact on profit ──────────────────────────────
+        # ── FIX-NLP-3: Discount impact on profit ────────────────────────────
         if _DISCOUNT_IMPACT_RE.search(q):
             explicit_dates = self._extract_date_range(ql) or self._extract_relative_date(ql)
             if explicit_dates:
@@ -431,20 +419,18 @@ class NLParser:
                 "filters": {"region": [], "segment": [], "category": [], "sub_category": []},
             }, q)
 
-        # ── FIX-NLP-4: Distribution/spread across dimension ───────────────────
+        # ── FIX-NLP-4: Distribution/spread across dimension ──────────────────
         if _DISTRIBUTION_RE.search(q) and not _DETAIL_NEGATIVE_RE.search(q):
             explicit_dates = self._extract_date_range(ql) or self._extract_relative_date(ql)
             if explicit_dates:
                 s0, e0 = explicit_dates
 
-            # Detect metric
             dist_metric = "profit_margin"
             for kw, metric in sorted(_METRIC_KEYWORDS.items(), key=lambda x: -len(x[0])):
                 if kw in ql:
                     dist_metric = metric
                     break
 
-            # Detect dimension
             dist_dim = "sub_category"
             for kw, dim in sorted(_BREAKDOWN_KEYWORDS.items(), key=lambda x: -len(x[0])):
                 if kw in ql:
@@ -460,13 +446,13 @@ class NLParser:
                 "start_date": s0,
                 "end_date": e0,
                 "compare_period": None,
-                "top_k": 50,  # show all = distribution
+                "top_k": 50,
                 "order_by": dist_metric,
                 "show_extremes": False,
                 "filters": {"region": [], "segment": [], "category": [], "sub_category": []},
             }, q)
 
-        # ── FIX-NLP-6: "Top N [dim] by [metric] with [metric2]" ───────────────
+        # ── FIX-NLP-6: "Top N [dim] by [metric] with [metric2]" ─────────────
         top_with_match = _TOP_WITH_SECONDARY_RE.search(q)
         if top_with_match:
             top_match = _TOP_RE.search(ql)
@@ -482,7 +468,6 @@ class NLParser:
                     detected_metrics.append(metric)
             if not detected_metrics:
                 detected_metrics = ["profit"]
-            # Ensure profit_margin is included if "margin" or "details" mentioned
             secondary_text = top_with_match.group(1).lower()
             if "margin" in secondary_text and "profit_margin" not in detected_metrics:
                 detected_metrics.append("profit_margin")
@@ -511,6 +496,7 @@ class NLParser:
                 "filters": {"region": [], "segment": [], "category": [], "sub_category": []},
             }, q)
 
+        # Main date extraction (runs for all non-early-return paths)
         explicit_dates = self._extract_date_range(ql) or self._extract_relative_date(ql)
         if explicit_dates:
             s0, e0 = explicit_dates
@@ -527,7 +513,7 @@ class NLParser:
             "filters": {"region": [], "segment": [], "category": [], "sub_category": []},
         }
 
-        # ── Detect metrics ─────────────────────────────────────────────────────
+        # ── Detect metrics ───────────────────────────────────────────────────
         detected_metrics_list: List[str] = []
         for kw, metric in sorted(_METRIC_KEYWORDS.items(), key=lambda x: -len(x[0])):
             if kw in ql and metric not in detected_metrics_list:
@@ -539,7 +525,7 @@ class NLParser:
         plan["metrics"]  = detected_metrics_list
         plan["order_by"] = detected_metrics_list[0]
 
-        # ── Detect primary breakdown ───────────────────────────────────────────
+        # ── Detect primary breakdown ─────────────────────────────────────────
         detected_breakdown: Optional[str] = None
         for kw, dim in sorted(_BREAKDOWN_KEYWORDS.items(), key=lambda x: -len(x[0])):
             if kw in ql:
@@ -574,7 +560,7 @@ class NLParser:
                     detected_breakdown = dim
                     break
 
-        # ── Detect secondary breakdown ─────────────────────────────────────────
+        # ── Detect secondary breakdown ───────────────────────────────────────
         secondary_breakdown: Optional[str] = None
         if detected_breakdown:
             remaining_keywords = {
@@ -586,14 +572,14 @@ class NLParser:
                     secondary_breakdown = dim
                     break
 
-        # ── Detect top_k ───────────────────────────────────────────────────────
+        # ── Detect top_k ────────────────────────────────────────────────────
         top_match = _TOP_RE.search(ql)
         top_k: Optional[int] = int(top_match.group(1)) if top_match else None
 
         if top_k is None and _SUPERLATIVE_RE.search(q) and detected_breakdown:
             top_k = 1
 
-        # ── Detect time grain ──────────────────────────────────────────────────
+        # ── Detect time grain ────────────────────────────────────────────────
         detected_grain = "none"
         for kw, grain in sorted(_GRAIN_KEYWORDS.items(), key=lambda x: -len(x[0])):
             if kw in ql:
@@ -605,7 +591,7 @@ class NLParser:
         if explicit_dates and _THIS_PERIOD_RE.search(q):
             detected_grain = "none"
 
-        # ── Detect compare period ──────────────────────────────────────────────
+        # ── Detect compare period ────────────────────────────────────────────
         detected_compare: Optional[str] = None
         if _COMPARE_RE.search(ql) and not detected_breakdown:
             for kw, cp in sorted(_COMPARE_KEYWORDS.items(), key=lambda x: -len(x[0])):
@@ -639,7 +625,7 @@ class NLParser:
             plan["secondary_breakdown"]  = secondary_breakdown
             return self._inject_mentioned_filters(plan, q)
 
-        # ── FIX-NLP-5: "[metric] trend by [dim]" → kpi_trend with breakdown ───
+        # ── FIX-NLP-5: "[metric] trend by [dim]" → kpi_trend with breakdown ──
         trend_by_dim = _TREND_BY_DIM_RE.search(q)
         if trend_by_dim and detected_grain != "none" and detected_breakdown:
             plan.update(
@@ -651,7 +637,7 @@ class NLParser:
             plan["secondary_breakdown"] = secondary_breakdown
             return self._inject_mentioned_filters(plan, q)
 
-        # ── Growth rank ────────────────────────────────────────────────────────
+        # ── Growth rank ──────────────────────────────────────────────────────
         if is_growth_rank and detected_breakdown:
             plan.update(
                 intent="kpi_rank",
@@ -747,7 +733,7 @@ class NLParser:
             plan["secondary_breakdown"] = secondary_breakdown
             return self._inject_mentioned_filters(plan, q)
 
-        # ── Route to intent ────────────────────────────────────────────────────
+        # ── Route to intent ──────────────────────────────────────────────────
         if detected_compare:
             if detected_breakdown:
                 plan.update(

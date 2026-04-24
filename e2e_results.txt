@@ -1,0 +1,30 @@
+END-TO-END EVALUATION RESULTS — Section 5.8
+============================================================
+
+TABLE 5.17 — Response Latency per Processing Path
+  Path                   n  Mean (ms)   p95 (ms)  Mean API calls
+  -------------------- --- ---------- ---------- ---------------
+  Tier 1 — Regex KPI    12      591.0     2197.6             0.4
+  Tier 2 (no audit)     10     1916.8     2353.4             1.0
+  Tier 2 + Auditor       8     2432.1     2889.3             1.4
+  Tier 3 — Gemini+RAG    8     1731.5     2925.7             1.2
+  Agent path             7    10815.9    14308.3             0.0
+  SmartRouter classify   5      580.8      737.2             1.0
+
+TABLE 5.18 — API Call Rate vs No-Routing Baseline
+  Full system:          100.0%  with API call  |  1.5 mean calls/query
+  No-routing baseline:  100%  with API call  |  1.0 mean calls/query
+  Relative API cost:    150% of baseline
+
+TABLE 5.19 — Answer Quality (fill after human rating)
+  Query type        | Full system | No-RAG | No-routing | Δ (Full vs No-RAG)
+  ----------------------------------------------------------------------
+  simple_kpi        | [X.X]       | [X.X]  | [X.X]      | [+X.X]
+  structured        | [X.X]       | [X.X]  | [X.X]      | [+X.X]
+  agent             | [X.X]       | [X.X]  | [X.X]      | [+X.X]
+  hybrid            | [X.X]       | [X.X]  | [X.X]      | [+X.X]
+  Overall mean      | [X.X]       | [X.X]  | [X.X]      | [+X.X]
+  Cohen's κ         | [X.XX]      | —      | —          | —
+
+  → See 5_8_rating_sheet.txt for response collection
+  → Compute κ: sklearn.metrics.cohen_kappa_score(rater1_scores, rater2_scores)

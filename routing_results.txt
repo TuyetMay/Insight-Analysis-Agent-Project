@@ -77,7 +77,7 @@ Q76: Smart: agent      | Regex: agent      | GT: agent
 Q77: Smart: agent      | Regex: agent      | GT: agent
 Q78: Smart: agent      | Regex: structured | GT: agent
 Q79: Smart: agent      | Regex: agent      | GT: agent
-Q80: Smart: hybrid     | Regex: agent      | GT: agent
+Q80: Smart: agent      | Regex: agent      | GT: agent
 Q81: Smart: agent      | Regex: agent      | GT: agent
 Q82: Smart: agent      | Regex: agent      | GT: agent
 Q83: Smart: agent      | Regex: agent      | GT: agent
@@ -101,7 +101,7 @@ Q100: Smart: hybrid     | Regex: structured | GT: hybrid
 
 ============================================================
 OVERALL ACCURACY
-  SmartRouter : 97/100 = 97.0%
+  SmartRouter : 98/100 = 98.0%
   RegexRouter : 87/100 = 87.0%
 
   [STRUCTURED] n=65
@@ -109,7 +109,7 @@ OVERALL ACCURACY
     RegexRouter : 65/65 = 100.0%
 
   [AGENT] n=20
-    SmartRouter : 19/20 = 95.0%
+    SmartRouter : 20/20 = 100.0%
     RegexRouter : 18/20 = 90.0%
 
   [HYBRID] n=15

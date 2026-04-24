@@ -1,0 +1,24 @@
+END-TO-END EVALUATION RESULTS — Section 5.8
+============================================================
+
+TABLE 5.17 — Response Latency per Processing Path
+  Processing Path                       n    Mean(ms)     p95(ms)   API/query
+  ------------------------------------------------------------------------
+  Tier 1 — Regex KPI                   12        35.0       164.2         0.0
+  Tier 2 — NLParser (no audit)         10       440.3       807.1         0.0
+  Tier 2 — NLParser + Auditor           8      1158.1      4156.4         0.4
+  Tier 3 — Gemini + RAG                 8      2212.9      2982.2         1.5
+  Agent path (diagnostic)               7     12043.5     13662.9         1.9
+  SmartRouter classification            5       523.9       697.0         0.8
+
+TABLE 5.18 — API Call Rate vs No-Routing Baseline
+  Full system (n=100):          100.0% with API call  |  2.94 mean/query
+    Structured queries (n=65): 100% with API  mean=2.45/query
+    Agent queries      (n=20): 100% with API  mean=2.40/query
+    Hybrid queries     (n=15): 100% with API  mean=5.80/query
+  No-routing baseline (n=100): 100% with API call  |  1.00 mean/query
+  Relative API cost:   294% of baseline
+  Queries with 0 API calls (Tier-1 KPI, no LLM): 0/100 (0%)
+
+TABLE 5.19 — Answer Quality (fill after human rating)
+  [See 5_8_rating_sheet.txt]

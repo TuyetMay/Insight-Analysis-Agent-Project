@@ -88,28 +88,59 @@ class RAGSuggestionEngine:
         start_date = defaults.get("start_date", "unknown")
         end_date   = defaults.get("end_date",   "unknown")
         filters    = defaults.get("filters", {})
-        plan_str   = f"\nLast plan: {json.dumps(last_plan)}" if last_plan else ""
-
-        return f"""You are a BI assistant for the Superstore Dashboard.
-
-=== VERIFIED DATA FACTS ===
-{rag_context.as_prompt_section(max_chunks=8)}
-
-=== RECENT CONVERSATION ===
-{rag_context.chat_summary or "(none)"}
-
-=== PREVIOUS Q&A ===
-User: {last_question}
-Bot: {last_answer[:300]}...{plan_str}
-
-=== TASK ===
-Generate exactly {self.max_suggestions} smart follow-up questions.
+        plan_str   = f"\nLast structured plan: {json.dumps(last_plan)}" if last_plan else ""
+ 
+        # Detect response type để điều chỉnh prompt
+        is_agent_response = (
+            "Diagnostic Analysis" in last_answer
+            or "Root Cause" in last_answer
+            or "Supporting Evidence" in last_answer
+            or last_answer.startswith("⚠️ **Data Check")
+            or last_answer.startswith("❌ Could not")
+        )
+ 
+        if is_agent_response:
+            task_instructions = f"""Generate exactly {self.max_suggestions} follow-up questions after a DIAGNOSTIC analysis.
+ 
+The user just asked: "{last_question}"
+The system gave a diagnostic/causal answer (see PREVIOUS Q&A above).
+ 
+Rules for diagnostic follow-ups:
+1. Drill deeper into the root cause identified — ask for evidence or breakdown
+2. Ask for data to VERIFY or CHALLENGE the diagnosis
+3. Suggest related anomalies the user hasn't checked yet
+4. Ask for actionable next steps based on what was found
+5. Each question should be different from the original question
+ 
+BAD examples (too generic): "Show sales by region", "Profit trend over years"
+GOOD examples: "Which sub-category drove the discount increase in that period?",
+               "Compare Tables vs Bookcases loss by region — is it concentrated?",
+               "What is the profit margin trend for Furniture category year by year?"
+"""
+        else:
+            task_instructions = f"""Generate exactly {self.max_suggestions} smart follow-up questions.
 Rules:
 1. Only suggest questions the DATA ABOVE can answer — no hallucination.
-2. Each question explores a different angle not yet covered.
-3. Prioritise: comparisons, trends, rankings, breakdowns.
+2. Each question explores a DIFFERENT angle not yet covered.
+3. Prioritise: comparisons, trends, rankings, drill-downs.
 4. English, max 60 chars per text.
-
+"""
+ 
+        return f"""You are a BI assistant for the Superstore Dashboard.
+ 
+=== VERIFIED DATA FACTS ===
+{rag_context.as_prompt_section(max_chunks=8)}
+ 
+=== RECENT CONVERSATION ===
+{rag_context.chat_summary or "(none)"}
+ 
+=== PREVIOUS Q&A ===
+User: {last_question}
+Bot: {last_answer[:400]}...{plan_str}
+ 
+=== TASK ===
+{task_instructions}
+ 
 === CONSTRAINTS ===
 Date range: {start_date} to {end_date}
 Active filters: {json.dumps(filters)}
@@ -117,14 +148,16 @@ Valid metrics: sales, profit, orders, profit_margin
 Valid dimensions: region, segment, category, sub_category
 Valid time grains: week, month, quarter, year
 Valid compare periods: yoy, mom, prev_period
-Valid intents: kpi_value, kpi_trend, kpi_rank, kpi_compare
-
+Valid intents: kpi_value, kpi_trend, kpi_rank, kpi_compare, kpi_detail
+ 
 === OUTPUT ===
 Return ONLY a valid JSON array — no markdown, no explanation.
 Each element:
-{{"text":"<question>","plan":{{"intent":"kpi_value","metrics":["sales"],"time_grain":"none","breakdown_by":null,"start_date":"{start_date}","end_date":"{end_date}","compare_period":null,"top_k":null,"order_by":"sales","filters":{{"region":[],"segment":[],"category":[]}}}}}}
-
+{{"text":"<question under 60 chars>","plan":{{"intent":"kpi_value","metrics":["sales"],"time_grain":"none","breakdown_by":null,"start_date":"{start_date}","end_date":"{end_date}","compare_period":null,"top_k":null,"order_by":"sales","filters":{{"region":[],"segment":[],"category":[]}}}}}}
+ 
 JSON array:""".strip()
+ 
+
 
     # ── Helpers ───────────────────────────────────────────────
 

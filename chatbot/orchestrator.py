@@ -235,40 +235,45 @@ class DashboardChatbot:
             return answer
 
     def get_suggestions(self, *, language: str = "en") -> List[Dict[str, Any]]:
+        defaults = self._dashboard_defaults()
+ 
+        # ── Bước 1: Luôn thử LLM trước nếu có question và GCP ready ────────
+        if self._gemini_ready and self._last_question and self._rag_suggestions:
+            rag_ctx = self._rag.retrieve_for_suggestions(
+                self._last_question, self._last_answer, k=8
+            )
+            try:
+                suggs = self._rag_suggestions.suggest(
+                    self._last_question,
+                    self._last_answer,
+                    rag_ctx,
+                    self._last_plan,
+                    defaults,
+                )
+                if suggs:
+                    return self._serialise(suggs)
+            except Exception as e:
+                logger.warning("RAGSuggestionEngine failed: %s", e)
+                # fall through to fallbacks
+ 
+        # ── Bước 2: Fallback cho agent — diagnostic regex suggestions ────────
         if self._last_was_agent and self._last_question:
             diag_suggs = get_diagnostic_suggestions(
                 question=self._last_question,
                 agent_response=self._last_answer,
-                plan_defaults=self._dashboard_defaults(),
+                plan_defaults=defaults,
             )
             if diag_suggs:
                 return diag_suggs
  
-        defaults = self._dashboard_defaults()
-        if not self._last_question:
-            suggs = self._rule_suggestions.suggest(
-                self._last_plan or {},
-                defaults,
-                last_answer=self._last_answer,         
-            )
-            return self._serialise(suggs)
- 
-        rag_ctx = self._rag.retrieve_for_suggestions(
-            self._last_question, self._last_answer, k=8
+        # ── Bước 3: Rule-based fallback ──────────────────────────────────────
+        suggs = self._rule_suggestions.suggest(
+            self._last_plan or {},
+            defaults,
+            last_answer=self._last_answer,
         )
-        engine = self._rag_suggestions or self._rule_suggestions
-        if isinstance(engine, RAGSuggestionEngine):
-            suggs = engine.suggest(
-                self._last_question, self._last_answer,
-                rag_ctx, self._last_plan, defaults
-            )
-        else:
-            suggs = engine.suggest(
-                self._last_plan or {},
-                defaults,
-                last_answer=self._last_answer,          # ← FIX: truyền last_answer
-            )
         return self._serialise(suggs)
+ 
  
 
     # ── Public: run a suggestion plan directly ────────────────
