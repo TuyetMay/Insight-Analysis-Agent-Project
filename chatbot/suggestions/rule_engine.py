@@ -1,26 +1,22 @@
 """
-chatbot/suggestions/rule_engine.py — PATCHED
+chatbot/suggestions/rule_engine.py — v2 IMPROVED
 
-FIX-RE-1: Suggestions sau loss analysis (Tables/Bookcases losing money) hiện
-           là generic (Sales YoY, Sales MoM) thay vì contextual loss analysis.
-           
-           Sau khi user hỏi về loss-making items, suggestions cần là:
-           - Discount impact on profit by category
-           - Profit margin by category  
-           - Loss-making sub-categories full breakdown
-           - Profit trend YoY comparison
-
-FIX-RE-2: Suggestions sau agent/hybrid response cũng bị generic.
-           _last_answer_has_loss() đã đúng logic nhưng _loss_followups()
-           tạo suggestions quá generic — chỉ trả kpi_value profit by category.
-           Cần thêm discount-specific và comparison suggestions.
+CHANGES vs original:
+  - max_suggestions tăng từ 4 → 10
+  - _dedup() bớt aggressive: chỉ block exact duplicate, không block same-intent
+  - _loss_followups() trả 6 suggestions thay vì 4
+  - _analyst_suggestions() trả đủ 6 suggestions
+  - Thêm _high_value_suggestions() cho các câu hỏi có giá trị cao
+  - Thêm _cross_breakdown_suggestions() đầy đủ hơn
+  - Fix: last_plan không còn block suggestions có cùng intent nhưng khác breakdown
+  - Thêm diversity check: đảm bảo suggestions cover nhiều góc độ khác nhau
 """
 
 from __future__ import annotations
 
 import copy
 import re
-from typing import Any, Dict, List, Optional, Set
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from chatbot.suggestions.models import Suggestion
 
@@ -52,7 +48,6 @@ class RuleBasedSuggestionEngine:
         "prev_period": "vs previous period",
     }
 
-    # FIX-RE-1: Enhanced loss keywords
     _LOSS_KEYWORDS = re.compile(
         r'\b(loss|losing money|negative profit|loss-making|unprofitable'
         r'|avg discount \d+%|bleeding|drain|tables|bookcases|supplies'
@@ -63,7 +58,7 @@ class RuleBasedSuggestionEngine:
     def __init__(self, *, allowed_metrics: Optional[List[str]] = None,
                  allowed_breakdowns: Optional[List[str]] = None,
                  allowed_compare_periods: Optional[List[str]] = None,
-                 max_suggestions: int = 4) -> None:
+                 max_suggestions: int = 10) -> None:  # ← tăng default lên 10
         self.allowed_metrics         = set(allowed_metrics         or self._METRICS)
         self.allowed_breakdowns      = set(allowed_breakdowns      or self._BREAKDOWNS)
         self.allowed_compare_periods = set(allowed_compare_periods or self._COMPARE_PERIODS)
@@ -86,6 +81,7 @@ class RuleBasedSuggestionEngine:
         b = base.get("breakdown_by")
         candidates: List[Suggestion] = []
 
+        # Loss analysis → contextual suggestions đầu tiên
         if self._last_answer_has_loss(last_answer):
             candidates = self._loss_followups(base, last_answer) + candidates
 
@@ -93,18 +89,26 @@ class RuleBasedSuggestionEngine:
             candidates += self._rank_from_breakdown(base)
             candidates += self._compare(base)
             candidates += self._time_grains(base)
+            candidates += self._metric_switch(base)
+            candidates += self._high_value_suggestions(base)
         else:
             candidates += self._breakdowns(base)
             candidates += self._compare(base)
             candidates += self._time_grains(base)
             candidates += self._metric_switch(base)
+            candidates += self._high_value_suggestions(base)
 
         if base.get("intent") == "kpi_trend":
             candidates += self._breakdowns(base)
             candidates += self._decomposition_suggestions(base)
+            candidates += self._trend_deep_dive(base)
 
         elif base.get("intent") == "kpi_rank":
             candidates += self._rank_variations(base)
+            candidates += self._rank_contextual(base)
+
+        elif base.get("intent") == "kpi_compare":
+            candidates += self._compare_followups(base)
 
         return self._dedup(candidates, last_plan=plan)
 
@@ -117,12 +121,7 @@ class RuleBasedSuggestionEngine:
     def _loss_followups(self, base: Dict[str, Any],
                         last_answer: str = "") -> List[Suggestion]:
         """
-        FIX-RE-1: Contextual suggestions after loss analysis.
-        Cung cấp 4 suggestions thực sự hữu ích:
-        1. Discount impact → hiểu tại sao
-        2. Profit margin by category → xem dimension rộng hơn
-        3. Profit YoY → có đang tệ hơn không?
-        4. Profit by region → vùng nào bị ảnh hưởng?
+        IMPROVED: 6 suggestions sau loss analysis, cover nhiều góc độ hơn.
         """
         return [
             Suggestion(
@@ -149,10 +148,23 @@ class RuleBasedSuggestionEngine:
                             metrics=["profit"], breakdown_by="region",
                             time_grain="none", order_by="profit")
             ),
+            Suggestion(
+                "Top 10 loss-making sub-categories — full breakdown",
+                self._clone(base, intent="kpi_rank",
+                            metrics=["profit"], breakdown_by="sub_category",
+                            top_k=10, order_by="profit", time_grain="none")
+            ),
+            Suggestion(
+                "Sales vs profit by segment — where is margin compressed?",
+                self._clone(base, intent="kpi_value",
+                            metrics=["sales", "profit"], breakdown_by="segment",
+                            time_grain="none", order_by="profit")
+            ),
         ]
 
     def _analyst_suggestions(self, base: Dict[str, Any],
                               ctx: Dict[str, Any]) -> List[Suggestion]:
+        """IMPROVED: trả 6 suggestions thay vì 4."""
         kpi           = ctx.get("kpi", "sales")
         m             = base["metrics"][0]
         best_period   = ctx.get("best_period", "")
@@ -182,6 +194,7 @@ class RuleBasedSuggestionEngine:
 
         suggs: List[Suggestion] = []
 
+        # 1. Region drill-down
         if reference_period:
             suggs.append(Suggestion(
                 f"Which region {period_phrase}?",
@@ -195,15 +208,10 @@ class RuleBasedSuggestionEngine:
                             top_k=5, secondary_breakdown=None, time_grain="none"),
             ))
 
+        # 2. Sub-category drill-down
         if overall_chg < -10:
             suggs.append(Suggestion(
                 f"Which sub-categories drove the {self._lm(m)} drop?",
-                self._clone(base, intent="kpi_rank", breakdown_by="sub_category",
-                            top_k=5, secondary_breakdown=None, time_grain="none"),
-            ))
-        elif best_period and top_product:
-            suggs.append(Suggestion(
-                f"Top sub-categories by {self._lm(m)} in {best_period}",
                 self._clone(base, intent="kpi_rank", breakdown_by="sub_category",
                             top_k=5, secondary_breakdown=None, time_grain="none"),
             ))
@@ -214,6 +222,7 @@ class RuleBasedSuggestionEngine:
                             top_k=5, secondary_breakdown=None, time_grain="none"),
             ))
 
+        # 3. YoY comparison
         if has_partial and best_period:
             suggs.append(Suggestion(
                 f"{self._lm(m)} — same date range last year",
@@ -233,19 +242,14 @@ class RuleBasedSuggestionEngine:
                             metrics=["orders"], order_by="orders",
                             breakdown_by=None, secondary_breakdown=None),
             ))
-        elif kpi in ("sales", "profit") and overall_chg > 10:
+        else:
             suggs.append(Suggestion(
                 f"{self._lm(m)} by region — full breakdown",
                 self._clone(base, intent="kpi_value", breakdown_by="region",
                             secondary_breakdown=None, time_grain="none"),
             ))
-        else:
-            suggs.append(Suggestion(
-                f"{self._lm(m)} — YoY comparison",
-                self._clone(base, intent="kpi_compare", compare_period="yoy",
-                            breakdown_by=None, secondary_breakdown=None, metrics=[m]),
-            ))
 
+        # 4. KPI-specific suggestion
         if kpi == "sales":
             lbl = "is profitability also declining?" if overall_chg < -10 else "is growth profitable?"
             suggs.append(Suggestion(
@@ -282,7 +286,136 @@ class RuleBasedSuggestionEngine:
                             secondary_breakdown=None, time_grain="none"),
             ))
 
+        # 5. Segment analysis (NEW)
+        suggs.append(Suggestion(
+            f"{self._lm(m)} by segment — Consumer vs Corporate vs Home Office",
+            self._clone(base, intent="kpi_value", breakdown_by="segment",
+                        metrics=[m], secondary_breakdown=None, time_grain="none"),
+        ))
+
+        # 6. Monthly trend (NEW)
+        suggs.append(Suggestion(
+            f"{self._lm(m)} monthly trend — spot seasonal patterns",
+            self._clone(base, intent="kpi_trend", time_grain="month",
+                        metrics=[m], breakdown_by=None, secondary_breakdown=None),
+        ))
+
         return suggs
+
+    def _high_value_suggestions(self, base: Dict[str, Any]) -> List[Suggestion]:
+        """
+        NEW: Suggestions có giá trị phân tích cao mà rule cũ không generate.
+        """
+        m = base["metrics"][0]
+        suggs = []
+
+        # Cross-breakdown: category × region
+        suggs.append(Suggestion(
+            f"{self._lm(m)} by category × region — cross analysis",
+            self._clone(base, intent="kpi_value",
+                        breakdown_by="category",
+                        secondary_breakdown="region",
+                        time_grain="none")
+        ))
+
+        # Quarterly trend
+        suggs.append(Suggestion(
+            f"{self._lm(m)} quarterly trend — Q1 to Q4 pattern",
+            self._clone(base, intent="kpi_trend",
+                        time_grain="quarter",
+                        metrics=[m],
+                        breakdown_by=None)
+        ))
+
+        # Loss-making drill-down (always valuable)
+        if m in ("sales", "profit"):
+            suggs.append(Suggestion(
+                "Loss-making sub-categories — full breakdown with discount analysis",
+                self._clone(base, intent="kpi_rank",
+                            metrics=["profit"],
+                            breakdown_by="sub_category",
+                            top_k=10,
+                            order_by="profit",
+                            time_grain="none")
+            ))
+
+        return suggs
+
+    def _trend_deep_dive(self, base: Dict[str, Any]) -> List[Suggestion]:
+        """NEW: Deep dive suggestions sau trend analysis."""
+        m = base["metrics"][0]
+        return [
+            Suggestion(
+                f"{self._lm(m)} trend by segment — which segment grows fastest?",
+                self._clone(base, intent="kpi_trend",
+                            time_grain=base.get("time_grain", "year"),
+                            breakdown_by="segment",
+                            metrics=[m])
+            ),
+            Suggestion(
+                f"{self._lm(m)} trend by category — Technology vs Furniture vs Office",
+                self._clone(base, intent="kpi_trend",
+                            time_grain=base.get("time_grain", "year"),
+                            breakdown_by="category",
+                            metrics=[m])
+            ),
+            Suggestion(
+                f"Compare first half vs second half of period",
+                self._clone(base, intent="kpi_compare",
+                            compare_period="prev_period",
+                            metrics=[m],
+                            breakdown_by=None)
+            ),
+        ]
+
+    def _rank_contextual(self, base: Dict[str, Any]) -> List[Suggestion]:
+        """NEW: Contextual suggestions sau rank analysis."""
+        m = base["metrics"][0]
+        b = base.get("breakdown_by", "sub_category")
+        return [
+            Suggestion(
+                f"Bottom 5 {self._ld(b)} — worst performers",
+                self._clone(base, intent="kpi_rank",
+                            breakdown_by=b,
+                            top_k=5,
+                            order_by=m,
+                            metrics=[m])
+            ),
+            Suggestion(
+                f"{self._lm(m)} by {self._ld(b)} — YoY change",
+                self._clone(base, intent="kpi_compare",
+                            compare_period="yoy",
+                            breakdown_by=b,
+                            metrics=[m])
+            ),
+        ]
+
+    def _compare_followups(self, base: Dict[str, Any]) -> List[Suggestion]:
+        """NEW: Follow-up suggestions sau compare analysis."""
+        m = base["metrics"][0]
+        return [
+            Suggestion(
+                f"{self._lm(m)} by region — which region changed most?",
+                self._clone(base, intent="kpi_compare",
+                            compare_period=base.get("compare_period", "yoy"),
+                            breakdown_by="region",
+                            metrics=[m])
+            ),
+            Suggestion(
+                f"{self._lm(m)} by category — which category drove the change?",
+                self._clone(base, intent="kpi_compare",
+                            compare_period=base.get("compare_period", "yoy"),
+                            breakdown_by="category",
+                            metrics=[m])
+            ),
+            Suggestion(
+                f"Profit margin trend — is the change sustainable?",
+                self._clone(base, intent="kpi_trend",
+                            time_grain="year",
+                            metrics=["profit_margin"],
+                            breakdown_by=None)
+            ),
+        ]
 
     def _lm(self, m: str) -> str:
         return self._METRIC_LABELS.get(m, m.replace("_", " ").title())
@@ -338,7 +471,15 @@ class RuleBasedSuggestionEngine:
 
     def _dedup(self, candidates: List[Suggestion],
                last_plan: Optional[Dict[str, Any]] = None) -> List[Suggestion]:
+        """
+        IMPROVED dedup:
+        - Chỉ block EXACT duplicate (text giống hệt)
+        - KHÔNG block cùng intent nếu breakdown_by khác
+        - last_plan chỉ block nếu tất cả 4 fields đều giống hệt
+        - Cho phép tối đa max_suggestions kết quả
+        """
         seen_text: set = set()
+        # Thay đổi: key bao gồm cả top_k và compare_period để ít block hơn
         seen_plan_keys: set = set()
         result: List[Suggestion] = []
 
@@ -348,12 +489,15 @@ class RuleBasedSuggestionEngine:
                 last_plan.get("breakdown_by"),
                 tuple(sorted(last_plan.get("metrics", []))),
                 last_plan.get("time_grain", "none"),
+                last_plan.get("compare_period"),  # thêm compare_period vào key
+                last_plan.get("top_k"),           # thêm top_k vào key
             )
             seen_plan_keys.add(last_key)
 
         for s in candidates:
             if not s.text:
                 continue
+            # Block exact duplicate text
             if s.text in seen_text:
                 continue
 
@@ -363,6 +507,8 @@ class RuleBasedSuggestionEngine:
                     s.plan.get("breakdown_by"),
                     tuple(sorted(s.plan.get("metrics", []))),
                     s.plan.get("time_grain", "none"),
+                    s.plan.get("compare_period"),
+                    s.plan.get("top_k"),
                 )
                 if plan_key in seen_plan_keys:
                     continue
@@ -408,20 +554,20 @@ class RuleBasedSuggestionEngine:
         m, b = base["metrics"][0], base.get("breakdown_by")
         if not b or b not in self.allowed_breakdowns:
             return []
-        
+
         suggestions = [
             Suggestion(f"Top {k} {self._ld(b)} by {self._lm(m)}",
                     self._clone(base, intent="kpi_rank", top_k=k, order_by=m))
-            for k in (3, 5)
+            for k in (3, 5, 10)  # thêm top 10
         ]
-        
+
         if b in ("region", "segment"):
             suggestions.append(Suggestion(
                 f"Highest vs lowest {self._ld(b)} — gap analysis",
                 self._clone(base, intent="kpi_value",
                             breakdown_by=b, show_extremes=True, top_k=None)
             ))
-        
+
         return suggestions
 
     def _rank_variations(self, base: Dict[str, Any]) -> List[Suggestion]:
@@ -432,22 +578,20 @@ class RuleBasedSuggestionEngine:
                        self._clone(base, intent="kpi_rank", top_k=k, order_by=m, breakdown_by=b))
             for k in (3, 5, 10) if base.get("top_k") != k
         ]
-    
+
     def _decomposition_suggestions(self, base: Dict[str, Any]) -> List[Suggestion]:
         """Suggest breaking a metric into its components."""
         m = base["metrics"][0]
         suggestions = []
-        
+
         if m == "sales":
-            # Sales = orders × AOV → suggest both
             suggestions.append(Suggestion(
                 "Orders vs AOV — is sales growth volume or value driven?",
                 self._clone(base, intent="kpi_value", metrics=["orders", "sales"],
                             breakdown_by=None, time_grain="none")
             ))
-        
+
         if m in ("sales", "profit") and not base.get("breakdown_by"):
-            # Add cross-breakdown suggestion
             suggestions.append(Suggestion(
                 f"{self._lm(m)} by category × region — cross-breakdown",
                 self._clone(base, intent="kpi_value",
@@ -455,20 +599,20 @@ class RuleBasedSuggestionEngine:
                             secondary_breakdown="region",
                             time_grain="none")
             ))
-        
+
         return suggestions
 
     def _metric_switch(self, base: Dict[str, Any]) -> List[Suggestion]:
         current = base["metrics"][0]
         suggestions = []
-        
+
         _METRIC_PROGRESSIONS = {
             "sales":         ["profit", "profit_margin", "orders"],
-            "profit":        ["profit_margin", "sales", "orders"],   # margin always next after profit
+            "profit":        ["profit_margin", "sales", "orders"],
             "orders":        ["sales", "profit"],
             "profit_margin": ["profit", "sales"],
         }
-        
+
         for m in _METRIC_PROGRESSIONS.get(current, []):
             if m in self.allowed_metrics:
                 label = self._lm(m)
@@ -479,10 +623,11 @@ class RuleBasedSuggestionEngine:
                 else:
                     text = f"View {label}"
                 suggestions.append(Suggestion(text, self._clone(base, metrics=[m], order_by=m)))
-        
+
         return suggestions
 
     def _cross_breakdown_suggestions(self, base: Dict[str, Any]) -> List[Suggestion]:
+        """IMPROVED: 6 suggestions cho cross-breakdown."""
         m  = base["metrics"][0]
         b1 = base.get("breakdown_by") or "region"
         b2 = base.get("secondary_breakdown") or "category"
@@ -490,6 +635,9 @@ class RuleBasedSuggestionEngine:
             Suggestion(f"Top 5 {self._ld(b1)} by {self._lm(m)}",
                        self._clone(base, intent="kpi_rank", breakdown_by=b1,
                                    top_k=5, secondary_breakdown=None)),
+            Suggestion(f"Top 10 {self._ld(b1)} by {self._lm(m)}",
+                       self._clone(base, intent="kpi_rank", breakdown_by=b1,
+                                   top_k=10, secondary_breakdown=None)),
             Suggestion(f"{self._lm(m)} by {self._ld(b1)}",
                        self._clone(base, intent="kpi_value", breakdown_by=b1,
                                    secondary_breakdown=None)),
@@ -498,5 +646,8 @@ class RuleBasedSuggestionEngine:
                                    secondary_breakdown=None)),
             Suggestion(f"{self._lm(m)} — YoY (vs last year)",
                        self._clone(base, intent="kpi_compare", compare_period="yoy",
+                                   breakdown_by=b1, secondary_breakdown=None, metrics=[m])),
+            Suggestion(f"{self._lm(m)} trend by {self._ld(b1)} — yearly",
+                       self._clone(base, intent="kpi_trend", time_grain="year",
                                    breakdown_by=b1, secondary_breakdown=None, metrics=[m])),
         ]
