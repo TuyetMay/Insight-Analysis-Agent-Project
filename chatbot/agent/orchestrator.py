@@ -11,7 +11,7 @@ from chatbot.agent.assumption_validator import validate_assumptions
 
 logger = logging.getLogger(__name__)
 
-_MAX_TOOL_CALLS = 8
+_MAX_TOOL_CALLS = 12
 
 _MONTH_MAP = {
     "january": 1, "jan": 1, "february": 2, "feb": 2, "march": 3, "mar": 3,
@@ -29,6 +29,14 @@ _MONTH_YEAR_RE = re.compile(
 _YEAR_ONLY_RE = re.compile(r'\b(20\d{2})\b')
 _FROM_TO_RE   = re.compile(
     r'\bfrom\s+(\w+\s+20\d{2})\s+to\s+(\w+\s+20\d{2})\b', re.IGNORECASE
+)
+_DISCOUNT_QUERY_RE = re.compile(
+    r'\b(discount|discounting|markdown|price.?cut|hurt.*profit|profit.*hurt)\b',
+    re.IGNORECASE,
+)
+_SUBCATEGORY_LOSS_RE = re.compile(
+    r'\b(tables?|bookcases?|chairs?|los[st]ing|loss|unprofitable|sub.?categor|why.*losing|losing money)\b',
+    re.IGNORECASE,
 )
 
 def _parse_month_year(text: str) -> Optional[Tuple[str, str]]:
@@ -114,17 +122,21 @@ CRITICAL RULES — violation = your answer is discarded:
    COGS, cost of goods sold, inventory, operating expenses, overhead, headcount, employees, tax, depreciation.
 7. MARGIN MATH: profit_margin = profit / sales x 100. Never invert.
 8. Use AT LEAST 3 tool calls before writing your final answer.
+9. SOURCE PERIOD REQUIRED: For EVERY metric you cite, include the exact date window.
+   Format: "Full-year 2016 sales: $733,215 (2016-01-01 → 2016-12-31)"
+   Never write a dollar figure or percentage without its source period.
 
 REQUIRED OUTPUT FORMAT — use ALL four sections with REAL numbers from tools:
 
 **📊 Key Metrics:**
-- [exact metric] before: $X → after: $Y (Z% change, from tool result)
+- [exact metric] [PERIOD]: $X → [PERIOD]: $Y (Z% change, from tool result)
+  Example: Full-year 2016 sales (2016-01-01→2016-12-31): $733,215 vs Full-year 2015: $625,588 (+17.2%)
 
 **🔍 Root Cause:**
-[2-3 sentences with the actual numbers from tool results explaining WHY]
+[2-3 sentences with exact numbers AND their source periods explaining WHY]
 
 **📉 Supporting Evidence:**
-- [Specific finding with exact numbers from tool calls]
+- [Specific finding with exact numbers and date window from tool calls]
 
 **✅ Recommended Actions:**
 1. [Action with specific target]
@@ -272,8 +284,10 @@ class AgentOrchestrator:
         results: List[str] = []
         date_pairs = _extract_date_pairs(question)
 
+        needs_discount   = bool(_DISCOUNT_QUERY_RE.search(question))
+        needs_subcategory = bool(_SUBCATEGORY_LOSS_RE.search(question))
+
         if not date_pairs:
-            # Dùng full range — compare overall vs year trước
             for metric in ("sales", "profit", "orders"):
                 args = {
                     "metric":        metric,
@@ -281,19 +295,40 @@ class AgentOrchestrator:
                     "current_end":   self.default_end,
                 }
                 result = execute_tool("compare_periods", args,
-                                    self.default_start, self.default_end)
+                                      self.default_start, self.default_end)
                 results.append(f"[compare_periods / {metric}]\n{result}")
-            # Thêm query_metric theo category/segment để agent có context
             for breakdown in ("category", "region"):
                 args = {
-                    "metric":        "profit",
-                    "breakdown_by":  breakdown,
-                    "start_date":    self.default_start,
-                    "end_date":      self.default_end,
+                    "metric":       "profit",
+                    "breakdown_by": breakdown,
+                    "start_date":   self.default_start,
+                    "end_date":     self.default_end,
                 }
                 result = execute_tool("query_metric", args,
-                                    self.default_start, self.default_end)
+                                      self.default_start, self.default_end)
                 results.append(f"[query_metric / profit by {breakdown}]\n{result}")
+
+            if needs_discount or needs_subcategory:
+                args = {
+                    "breakdown_by": "sub_category",
+                    "start_date":   self.default_start,
+                    "end_date":     self.default_end,
+                }
+                result = execute_tool("find_anomalies", args,
+                                      self.default_start, self.default_end)
+                results.append(f"[find_anomalies / loss-making sub_categories]\n{result}")
+
+            if needs_discount:
+                args = {
+                    "metric":       "profit",
+                    "breakdown_by": "sub_category",
+                    "start_date":   self.default_start,
+                    "end_date":     self.default_end,
+                }
+                result = execute_tool("query_metric", args,
+                                      self.default_start, self.default_end)
+                results.append(f"[query_metric / profit by sub_category (discount context)]\n{result}")
+
             return results
 
         if len(date_pairs) >= 2:
@@ -323,6 +358,13 @@ class AgentOrchestrator:
                 result = execute_tool("compare_periods", args, self.default_start, self.default_end)
                 results.append(f"[compare_periods / {metric}]\n{result}")
 
+        if needs_discount or needs_subcategory:
+            start = date_pairs[0][0] if date_pairs else self.default_start
+            end   = date_pairs[0][1] if date_pairs else self.default_end
+            args  = {"breakdown_by": "sub_category", "start_date": start, "end_date": end}
+            result = execute_tool("find_anomalies", args, self.default_start, self.default_end)
+            results.append(f"[find_anomalies / loss-making sub_categories]\n{result}")
+
         return results
 
     @staticmethod
@@ -351,17 +393,19 @@ class AgentOrchestrator:
 
             RULES:
             - Use ONLY the numbers shown above. Do NOT invent any figures.
+            - For EVERY metric cited, include the exact date window in parentheses.
+              Format: "Full-year 2016 sales (2016-01-01→2016-12-31): $733,215"
             - If the user's premise contradicts the data, state the correction clearly at the top.
             - Output ALL 4 sections using only real numbers from the data above:
 
             **📊 Key Metrics:**
-            - [before/after values with % change — from data above]
+            - [metric] [PERIOD]: $X → [PERIOD]: $Y (Z% change — from data above)
 
             **🔍 Root Cause:**
-            [WHY — 2-3 sentences with exact numbers from data]
+            [WHY — 2-3 sentences with exact numbers and their source periods]
 
             **📉 Supporting Evidence:**
-            - [finding with numbers from data]
+            - [finding with exact numbers and date window from data]
 
             **✅ Recommended Actions:**
             1. [action with number]
