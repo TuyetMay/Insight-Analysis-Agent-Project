@@ -344,28 +344,28 @@ class AgentOrchestrator:
             period_hint = f"\nThe question asks about the period(s): {date_pairs}\n"
 
         prompt = f"""You are a senior business analyst. Answer: "{question}"
-{period_hint}
-=== REAL DATA FROM DATABASE (USE ONLY THESE NUMBERS) ===
-{chr(10).join(tool_log)}
-=== END DATA ===
+            {period_hint}
+            === REAL DATA FROM DATABASE (USE ONLY THESE NUMBERS) ===
+            {chr(10).join(tool_log)}
+            === END DATA ===
 
-RULES:
-- Use ONLY the numbers shown above. Do NOT invent any figures.
-- If the user's premise contradicts the data, state the correction clearly at the top.
-- Output ALL 4 sections using only real numbers from the data above:
+            RULES:
+            - Use ONLY the numbers shown above. Do NOT invent any figures.
+            - If the user's premise contradicts the data, state the correction clearly at the top.
+            - Output ALL 4 sections using only real numbers from the data above:
 
-**📊 Key Metrics:**
-- [before/after values with % change — from data above]
+            **📊 Key Metrics:**
+            - [before/after values with % change — from data above]
 
-**🔍 Root Cause:**
-[WHY — 2-3 sentences with exact numbers from data]
+            **🔍 Root Cause:**
+            [WHY — 2-3 sentences with exact numbers from data]
 
-**📉 Supporting Evidence:**
-- [finding with numbers from data]
+            **📉 Supporting Evidence:**
+            - [finding with numbers from data]
 
-**✅ Recommended Actions:**
-1. [action with number]
-2. [action with number]"""
+            **✅ Recommended Actions:**
+            1. [action with number]
+            2. [action with number]"""
 
         try:
             resp = self.client.models.generate_content(

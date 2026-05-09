@@ -933,15 +933,12 @@ class NLParser:
         s0, e0 = self._date_range()
         rag_section = rag_context.as_prompt_section(max_chunks=7)
         return f"""
-        You are a STRICT JSON query planner for a Postgres "Superstore" analytics dataset.
-        Output ONLY one valid JSON object. No markdown, no SQL, no explanations.
-
+        You are a STRICT JSON query planner for a Postgres "Superstore" analytics dataset. Output ONLY one valid JSON object. 
+        No markdown, no SQL, no explanations.
         === VERIFIED DATA FACTS ===
         {rag_section}
-
         === SUPPORTED INTENTS ===
         kpi_value | kpi_trend | kpi_rank | kpi_compare | kpi_detail | clarify
-
         === SUPPORTED VALUES ===
         metrics: sales | profit | orders | profit_margin
         time_grain: none | week | month | quarter | year
@@ -949,13 +946,11 @@ class NLParser:
         secondary_breakdown: null | region | segment | category | sub_category
         compare_period: null | prev_period | mom | yoy
         condition (only for kpi_detail): profit_negative | high_discount | loss_orders
-
         === CURRENT DASHBOARD FILTERS (available values only) ===
         regions={json.dumps(regions)}
         segments={json.dumps(segments)}
         categories={json.dumps(categories)}
         default_start="{s0}", default_end="{e0}"
-
         === RULES ===
         - filters values must be ONLY from current selections above ([] = no extra filter)
         - intent="clarify" when question cannot be answered or is ambiguous
@@ -974,12 +969,10 @@ class NLParser:
         - "compare 2017 and 2016" → kpi_compare with start_date=2017-01-01, end_date=2017-12-31
         - "distribution across sub-categories" → kpi_rank with breakdown_by=sub_category, top_k=50
         - "top N [dim] by [metric] with margin" → kpi_rank, metrics=[metric, profit_margin]
-
         === JSON SCHEMA ===
-        {{"intent":"kpi_value","metrics":["sales"],"time_grain":"none","breakdown_by":null,"secondary_breakdown":null,"start_date":"{s0}","end_date":"{e0}","compare_period":null,"top_k":null,"order_by":"sales","filters":{{"region":[],"segment":[],"category":[]}}}}
-
+        {{"intent":"kpi_value","metrics":["sales"],"time_grain":"none","breakdown_by":null,"secondary_breakdown":null,"start_date":"{s0}","end_date":"{e0}",
+        "compare_period":null,"top_k":null,"order_by":"sales","filters":{{"region":[],"segment":[],"category":[]}}}}
         USER QUESTION: {q}
-
         Return ONLY the JSON object:""".strip()
 
     def _inject_mentioned_filters(self, plan: Dict[str, Any], q: str) -> Dict[str, Any]:

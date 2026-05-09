@@ -121,8 +121,8 @@ class RAGEngine:
     def __init__(self) -> None:
         self._static_chunks:  List[Chunk] = []
         self._dynamic_chunks: List[Chunk] = []
-        self._static_retriever  = TFIDFRetriever()
-        self._dynamic_retriever = TFIDFRetriever()
+        self._static_retriever  = TFIDFRetriever(layer="static")
+        self._dynamic_retriever = TFIDFRetriever(layer="dynamic")
         self._history: List[Dict[str, str]] = []
         self._built:       bool = False
         self._static_built: bool = False

@@ -9,7 +9,7 @@ from config import Config
 from google import genai
 from core.data_loader import load_filtered_data_safe, calculate_kpis, get_filter_options
 from rag.engine import RAGEngine
-from rag.retriever import DenseRetriever, TFIDFFallback
+from rag.retriever import TFIDFFallback
 from rag.knowledge_builder import KnowledgeBaseBuilder
 from rag.hyde import HyDEExpander
 import pandas as pd

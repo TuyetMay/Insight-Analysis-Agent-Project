@@ -105,32 +105,32 @@ class LLMPlanAuditor:
                       if k in _AUDITABLE_FIELDS}
         return f"""You are a strict BI query plan auditor.
 
-USER QUESTION: "{question}"
+        USER QUESTION: "{question}"
 
-CURRENT PLAN (from rule-based parser):
-{json.dumps(plan_clean, indent=2)}
+        CURRENT PLAN (from rule-based parser):
+        {json.dumps(plan_clean, indent=2)}
 
-TASK: Check if the plan correctly reflects the question.
-Output ONLY a JSON object with fields that need correction.
-Output {{}} if the plan is already correct.
+        TASK: Check if the plan correctly reflects the question.
+        Output ONLY a JSON object with fields that need correction.
+        Output {{}} if the plan is already correct.
 
-VALID VALUES:
-- intent: {sorted(_VALID_INTENTS)}
-- compare_period: {sorted(_VALID_COMPARES)} or null
-- time_grain: {sorted(_VALID_GRAINS)}
-- breakdown_by: {sorted(_VALID_BREAKDOWNS)} or null
-- breakdown_cols: list of breakdown dimensions (for multi-group queries), e.g. ["region", "category"]
+        VALID VALUES:
+        - intent: {sorted(_VALID_INTENTS)}
+        - compare_period: {sorted(_VALID_COMPARES)} or null
+        - time_grain: {sorted(_VALID_GRAINS)}
+        - breakdown_by: {sorted(_VALID_BREAKDOWNS)} or null
+        - breakdown_cols: list of breakdown dimensions (for multi-group queries), e.g. ["region", "category"]
 
-COMMON CORRECTIONS:
-- "X compared to Y" / "X vs Y" / "2023 vs 2022" → intent: kpi_compare, compare_period: prev_period or yoy
-- "distribution / histogram / buckets" → intent: kpi_distribution
-- "correlation / relationship between X and Y" → intent: kpi_correlation
-- "trend / over time / monthly / yearly" → intent: kpi_trend
-- "by region AND by category" (2 dimensions) → breakdown_cols: ["region", "category"]
-- "top N" → intent: kpi_rank, top_k: N
+        COMMON CORRECTIONS:
+        - "X compared to Y" / "X vs Y" / "2023 vs 2022" → intent: kpi_compare, compare_period: prev_period or yoy
+        - "distribution / histogram / buckets" → intent: kpi_distribution
+        - "correlation / relationship between X and Y" → intent: kpi_correlation
+        - "trend / over time / monthly / yearly" → intent: kpi_trend
+        - "by region AND by category" (2 dimensions) → breakdown_cols: ["region", "category"]
+        - "top N" → intent: kpi_rank, top_k: N
 
-FORBIDDEN: Do not change metrics, filters, start_date, end_date unless clearly wrong.
-Output ONLY the corrections as JSON, or {{}} if nothing needs fixing:""".strip()
+        FORBIDDEN: Do not change metrics, filters, start_date, end_date unless clearly wrong.
+        Output ONLY the corrections as JSON, or {{}} if nothing needs fixing:""".strip()
 
     def _parse_correction(self, raw: str) -> Optional[Dict[str, Any]]:
         for attempt in (raw, re.sub(r"```(?:json)?", "", raw).strip()):
