@@ -132,6 +132,14 @@ def execute_tool(
         return f"Tool error ({tool_name}): {str(e)}"
 
 
+def _fmt_metric(metric: str, val: float) -> str:
+    if metric == "orders":
+        return f"{val:,.0f} orders"
+    if metric == "profit_margin":
+        return f"{val:.1f}%"
+    return f"${val:,.0f}"
+
+
 def _build_filters(raw: Any) -> Dict[str, list]:
     if not isinstance(raw, dict):
         return {"region": [], "segment": [], "category": [], "sub_category": []}
@@ -173,7 +181,7 @@ def _query_metric(args: Dict, s0: str, e0: str) -> str:
 
     r0  = df.iloc[0]
     val = float(r0[metric])
-    return f"Total {metric}: ${val:,.0f}" if metric in ("sales","profit") else f"{metric}: {val:.2f}"
+    return f"Total {metric}: {_fmt_metric(metric, val)}"
 
 
 def _find_anomalies(args: Dict, s0: str, e0: str) -> str:
@@ -232,11 +240,12 @@ def _get_trend(args: Dict, s0: str, e0: str) -> str:
     for _, r in sdf.iterrows():
         p = str(r["period"])[:7]
         v = float(r[metric])
+        fv = _fmt_metric(metric, v)
         if prev_v:
             chg = (v - prev_v) / abs(prev_v) * 100 if prev_v else 0
-            lines.append(f"  {p}: ${v:,.0f} ({chg:+.1f}%)")
+            lines.append(f"  {p}: {fv} ({chg:+.1f}%)")
         else:
-            lines.append(f"  {p}: ${v:,.0f} (baseline)")
+            lines.append(f"  {p}: {fv} (baseline)")
         prev_v = v
     return "\n".join(lines)
 
@@ -250,7 +259,8 @@ def _compare_periods(args: Dict, s0: str, e0: str) -> str:
     ce     = args.get("current_end",    e0)
 
     # Default previous = same length window before current
-    if "previous_start" not in args:
+    explicit_previous = "previous_start" in args
+    if not explicit_previous:
         sd  = datetime.strptime(cs, "%Y-%m-%d")
         ed  = datetime.strptime(ce, "%Y-%m-%d")
         gap = (ed - sd).days + 1
@@ -276,13 +286,21 @@ def _compare_periods(args: Dict, s0: str, e0: str) -> str:
             return 0.0
         return float(df.iloc[0][metric]) if metric in df.columns else 0.0
 
-    cur  = _run(cs, ce)
+    cur = _run(cs, ce)
+
+    # If computed previous period predates available data, skip comparison
+    if not explicit_previous and ps < s0:
+        return (
+            f"{metric} ({cs} → {ce}): {_fmt_metric(metric, cur)}\n"
+            f"  (no prior comparison period available for this date range)"
+        )
+
     prev = _run(ps, pe)
     chg  = (cur - prev) / abs(prev) * 100 if prev else 0
 
     return (
         f"{metric} comparison:\n"
-        f"  Current  ({cs} → {ce}): ${cur:,.0f}\n"
-        f"  Previous ({ps} → {pe}): ${prev:,.0f}\n"
-        f"  Change: {chg:+.1f}% (${abs(cur-prev):,.0f})"
+        f"  Current  ({cs} → {ce}): {_fmt_metric(metric, cur)}\n"
+        f"  Previous ({ps} → {pe}): {_fmt_metric(metric, prev)}\n"
+        f"  Change: {chg:+.1f}%"
     )
