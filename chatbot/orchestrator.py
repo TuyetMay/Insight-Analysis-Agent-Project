@@ -25,6 +25,7 @@ from chatbot.insight_generator import InsightGenerator
 from chatbot.suggestions.models import Suggestion
 from chatbot.suggestions.rule_engine import RuleBasedSuggestionEngine
 from chatbot.suggestions.rag_engine import RAGSuggestionEngine
+from chatbot.answer_validator import AnswerValidator, Layer3Validator
 from rag.engine import RAGEngine
 
 logger = logging.getLogger(__name__)
@@ -93,7 +94,9 @@ class DashboardChatbot:
             default_end    = e0,
         ) if self._gemini_ready else None
 
-        self._plan_auditor = LLMPlanAuditor(self._gemini_client, self._model)
+        self._plan_auditor      = LLMPlanAuditor(self._gemini_client, self._model)
+        self._answer_validator  = AnswerValidator()
+        self._layer3            = Layer3Validator()
 
         # ── NEW: Smart router (replaces QueryRouter) ──────────────────
         self._smart_router = SmartRouter(
@@ -104,7 +107,7 @@ class DashboardChatbot:
         self._hybrid = HybridExecutor(
             structured_runner = self._run_structured_query,
             agent_runner      = (
-                lambda q: self._agent.run(q)
+                lambda q: self._agent.run(q, history=self._rag._history_summary())
                 if self._agent
                 else "❌ Agent not available (no API key)."
             ),
@@ -158,7 +161,7 @@ class DashboardChatbot:
                 if self._is_stop_requested():
                     self._clear_stop()
                     return "⏹️ *Generation stopped.*"
-                answer = self._agent.run(q)
+                answer = self._agent.run(q, history=self._rag._history_summary())
                 self._last_was_agent = True
                 self._record(q, answer)
                 self._clear_stop()
@@ -191,13 +194,12 @@ class DashboardChatbot:
         # ── Tier 2: Rule-based ────────────────────────────────
         rule_plan = self._parser.rule_based_plan(q)
         if rule_plan:
-            if rule_plan.get("intent") == "kpi_detail":  # FIX: strip filter contamination
+            if rule_plan.get("intent") == "kpi_detail": 
                 rule_plan["filters"] = {
                     "region": [], "segment": [], "category": [], "sub_category": []
                 }
             rule_plan = self._plan_auditor.audit(q, rule_plan)
-        if rule_plan:
-            rule_plan = self._plan_auditor.audit(q, rule_plan)
+       
 
         if not self._gemini_ready:
             result = self._execute_plan(rule_plan, q) or "⚠️ Gemini API Key not configured."
@@ -221,8 +223,38 @@ class DashboardChatbot:
             raw_plan  = self._parser.gemini_plan(q, rag_ctx)
             plan      = self._validator.validate(raw_plan)
             result_df = self._sql.run(plan)
-            insight   = self._insights.generate(plan, result_df)
-            answer    = self._formatter.format(plan, result_df, insight)
+
+            # ── Layer 1: rule-based result validation ──────────────
+            l1 = self._answer_validator.validate_result_df(plan, result_df)
+            if not l1.is_valid and l1.reason == "all_zero":
+                widened = self._widen_filters(plan)
+                if widened:
+                    result_df = self._sql.run(widened)
+                    plan = widened
+
+            base_answer = self._formatter.format(plan, result_df)
+            insight     = self._insights.generate(plan, result_df)
+
+            if l1.reason == "invalid_margin":
+                base_answer += self._answer_validator.disclaimer_tag()
+
+            # ── Layer 2: grounding score (base answer only, before insight) ──
+            score  = self._answer_validator.grounding_score(base_answer, result_df)
+            answer = self._answer_validator.warning_tag(score) + base_answer + insight
+
+            # ── Layer 3: hybrid question-answer consistency ────────
+            verdict, reason = self._layer3.validate(
+                q, answer, plan,
+                self._gemini_client, self._model,
+            )
+            if verdict != Layer3Validator.PASS and self._agent:
+                logger.info("Layer3 fail (Tier3→Agent escalation): %s", reason)
+                agent_answer = self._agent.run(q)
+                self._last_was_agent = True
+                self._record(q, agent_answer)
+                self._clear_stop()
+                return agent_answer
+
             self._last_plan = plan
             self._rag.record_example(q, plan.get("intent", ""), plan)
             self._record(q, answer)
@@ -348,7 +380,7 @@ Output:""".strip()
                     "region": [], "segment": [], "category": [], "sub_category": []
                 }
             rule_plan = self._plan_auditor.audit(query, rule_plan)
-            result = self._execute_plan(rule_plan, query)
+            result = self._execute_plan(rule_plan, query, apply_l3=False)
             if result and not result.startswith("❌"):
                 return result
 
@@ -390,20 +422,52 @@ Output:""".strip()
 
     # ── Private helpers ───────────────────────────────────────
 
-    def _execute_plan(self, rule_plan, q: str, _retry: int = 0) -> Optional[str]:
+    def _execute_plan(
+        self,
+        rule_plan,
+        q: str,
+        _retry: int = 0,
+        apply_l3: bool = True,
+    ) -> Optional[str]:
         if not rule_plan:
             return None
         try:
             plan      = self._validator.validate(rule_plan)
             result_df = self._sql.run(plan)
 
-            if result_df.empty and _retry < 2:
-                repaired = self._repair_plan(plan)
-                if repaired:
-                    return self._execute_plan(repaired, q, _retry + 1)
+            # ── Layer 1: rule-based result validation ──────────────────────
+            l1 = self._answer_validator.validate_result_df(plan, result_df)
 
-            insight = self._insights.generate(plan, result_df)
-            answer  = self._formatter.format(plan, result_df, insight)
+            if not l1.is_valid and _retry < 2:
+                if l1.reason == "empty":
+                    repaired = self._repair_plan(plan)
+                    if repaired:
+                        return self._execute_plan(repaired, q, _retry + 1, apply_l3)
+                elif l1.reason == "all_zero":
+                    widened = self._widen_filters(plan)
+                    if widened:
+                        return self._execute_plan(widened, q, _retry + 1, apply_l3)
+
+            base_answer = self._formatter.format(plan, result_df)
+            insight     = self._insights.generate(plan, result_df)
+
+            if l1.reason == "invalid_margin":
+                base_answer += self._answer_validator.disclaimer_tag()
+
+            # ── Layer 2: grounding score (base answer only, before insight) ──
+            score  = self._answer_validator.grounding_score(base_answer, result_df)
+            answer = self._answer_validator.warning_tag(score) + base_answer + insight
+
+            # ── Layer 3: hybrid question-answer consistency ────────────────
+            if apply_l3 and _retry == 0:
+                verdict, reason = self._layer3.validate(
+                    q, answer, plan,
+                    self._gemini_client, self._model,
+                )
+                if verdict != Layer3Validator.PASS:
+                    logger.info("Layer3 fail (Tier2→Tier3 escalation): %s", reason)
+                    return None  # falsy → caller falls through to Tier 3
+
             self._last_plan = plan
             self._record(q, answer)
             return answer
@@ -424,6 +488,14 @@ Output:""".strip()
         except Exception:
             pass
         return None
+
+    @staticmethod
+    def _widen_filters(plan: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Remove dimension filters when all metric values are zero."""
+        empty_filters = {"region": [], "segment": [], "category": [], "sub_category": []}
+        if plan.get("filters") == empty_filters:
+            return None  # already at widest — no point retrying
+        return {**plan, "filters": empty_filters}
 
     def _record(self, question: str, answer: str) -> None:
         self._last_answer = answer

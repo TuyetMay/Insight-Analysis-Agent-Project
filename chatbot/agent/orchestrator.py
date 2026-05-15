@@ -153,9 +153,9 @@ class AgentOrchestrator:
         self.default_start = default_start
         self.default_end   = default_end
 
-    def run(self, question: str) -> str:
+    def run(self, question: str, history: str = "") -> str:
         try:
-            return self._agentic_loop(question)
+            return self._agentic_loop(question, history)
         except Exception as e:
             err = str(e)
             if "429" in err or "RESOURCE_EXHAUSTED" in err:
@@ -165,7 +165,7 @@ class AgentOrchestrator:
                 )
             return f"⚠️ Could not complete diagnostic. ({type(e).__name__})"
 
-    def _agentic_loop(self, question: str) -> str:
+    def _agentic_loop(self, question: str, history: str = "") -> str:
         tools = [
             genai_types.Tool(
                 function_declarations=[
@@ -197,10 +197,18 @@ class AgentOrchestrator:
                 "Use them directly. Do not invent alternative numbers.\n\n"
             )
 
+        history_block = ""
+        if history:
+            history_block = (
+                "\n\n=== CONVERSATION HISTORY ===\n"
+                + history
+                + "\n=== END HISTORY ===\n\n"
+            )
+
         messages = [
             genai_types.Content(
                 role="user",
-                parts=[genai_types.Part(text=f"{_SYSTEM_PROMPT}\n\n{forced_context}Question: {question}")]
+                parts=[genai_types.Part(text=f"{_SYSTEM_PROMPT}{history_block}\n\n{forced_context}Question: {question}")]
             )
         ]
         tool_results_log: List[str] = list(forced_tool_results)
